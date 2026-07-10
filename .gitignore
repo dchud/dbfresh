@@ -13,15 +13,26 @@ dist/
 .ruff_cache/
 .mypy_cache/
 
+# Secrets — per-user, never committed
+.env
+.env.*
+!.env.example
+
 # dbfresh observation store (data, not config)
 dbfresh.db
 *.db-wal
 *.db-shm
 
-# Beads: commit the JSONL export, not the local DB
+# Beads: commit the JSONL export, not the local DB (see .beads/.gitignore)
 .beads/*.db
 .beads/*.db-wal
 .beads/*.db-shm
+
+# Python version pin (local tooling)
+.python-version
+
+# Local tool state
+.abacus/
 
 # Project-local scratch
 tmp/
