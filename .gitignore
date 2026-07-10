@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtualenv / uv
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# dbfresh observation store (data, not config)
+dbfresh.db
+*.db-wal
+*.db-shm
+
+# Beads: commit the JSONL export, not the local DB
+.beads/*.db
+.beads/*.db-wal
+.beads/*.db-shm
+
+# Project-local scratch
+tmp/

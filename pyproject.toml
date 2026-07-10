@@ -1,0 +1,33 @@
+[project]
+name = "dbfresh"
+version = "0.1.0"
+description = "External, value-level freshness and constraint checks for SQL Server and Databricks data sources."
+readme = "README.md"
+authors = [
+    { name = "Daniel Chudnov", email = "dchud@umich.edu" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "rich>=15.0.0",
+    "structlog>=26.1.0",
+]
+
+[project.scripts]
+dbfresh = "dbfresh.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.15.21",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
