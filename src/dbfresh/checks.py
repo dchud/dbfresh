@@ -111,6 +111,7 @@ class Check:
     column: str | None = None
     key: str | None = None
     where: str | None = None
+    assert_: str | None = None
     expect: Expectation | None = None
     allow_empty: bool = False
     severity: str = "error"

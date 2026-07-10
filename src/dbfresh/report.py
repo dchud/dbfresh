@@ -25,10 +25,16 @@ def render_digest(run: RunResult, now: datetime | None = None) -> str:
         if result.status in (Status.OK, Status.SKIPPED):
             continue
         obj = f"{result.source}.{result.object}" if result.source else result.object
+        label = result.label or result.metric or "assert"
         lines.append("")
-        lines.append(f"✗ {obj} · {result.metric or 'assert'}")
+        lines.append(f"✗ {obj} · {label}")
         if result.error:
             lines.append(f"    {result.error}")
+        elif result.samples is not None:
+            lines.append(f"    {result.value} row(s) violate the constraint")
+            for row in result.samples[:10]:
+                cells = "  ".join(f"{key}={value}" for key, value in row.items())
+                lines.append(f"      {cells}")
         else:
             lines.append(f"    expected {result.expected}   observed {result.value}")
 

@@ -28,6 +28,8 @@ class Result:
     value: Any = None
     expected: str | None = None
     error: str | None = None
+    label: str | None = None
+    samples: list | None = None
 
 
 def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
@@ -36,6 +38,8 @@ def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> R
     Any connection or query failure maps to ``ERROR`` — never a silent pass.
     """
     now = now or datetime.now(UTC)
+    if check.assert_ is not None:
+        return _evaluate_assertion(check, adapter)
     if check.metric == "freshness":
         return _evaluate_freshness(check, adapter, now)
     sql = compile_metric_sql(check, adapter.dialect)
@@ -88,6 +92,44 @@ def _empty_result(check: Check, expected: str | None) -> Result:
         status=status,
         source=check.source,
         expected=expected,
+    )
+
+
+def _evaluate_assertion(check: Check, adapter: Any) -> Result:
+    """Run an assert predicate; any row for which it is false is a violation."""
+    violation = f"FROM {check.object} WHERE NOT ({check.assert_})"
+    label = f"assert {check.assert_}"
+    try:
+        count = adapter.scalar(f"SELECT COUNT(*) {violation}")
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return Result(
+            object=check.object,
+            metric=None,
+            status=Status.ERROR,
+            source=check.source,
+            label=label,
+            error=str(exc),
+        )
+    if count == 0:
+        return Result(
+            object=check.object,
+            metric=None,
+            status=Status.OK,
+            source=check.source,
+            value=0,
+            label=label,
+            samples=[],
+        )
+    samples = adapter.rows(adapter.dialect.limit(f"SELECT * {violation}", 20))
+    status = Status.WARN if check.severity == "warn" else Status.FAIL
+    return Result(
+        object=check.object,
+        metric=None,
+        status=status,
+        source=check.source,
+        value=count,
+        label=label,
+        samples=samples,
     )
 
 
