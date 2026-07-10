@@ -45,10 +45,35 @@ class SourceConfig:
     params: dict
 
 
+_DEFAULT_RETAIN_DAYS = 400
+
+
+@dataclass
+class StoreConfig:
+    """Observation-store settings (spec section 8.1)."""
+
+    path: str | None = None
+    retain_days: int = _DEFAULT_RETAIN_DAYS
+
+
+def _parse_store(raw: Any) -> StoreConfig | None:
+    """A bare string is shorthand for ``{path: ...}``; else a full mapping."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        return StoreConfig(path=raw)
+    return StoreConfig(
+        path=raw.get("path"),
+        retain_days=raw.get("retain_days", _DEFAULT_RETAIN_DAYS),
+    )
+
+
 @dataclass
 class Config:
     sources: dict[str, SourceConfig]
     checks: list[Check]
+    config_dir: Path
+    store: StoreConfig | None = None
 
 
 def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
@@ -89,4 +114,9 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
         if check.source not in sources:
             raise ValueError(f"check references unknown source: {check.source!r}")
 
-    return Config(sources=sources, checks=checks)
+    return Config(
+        sources=sources,
+        checks=checks,
+        config_dir=path.resolve().parent,
+        store=_parse_store(data.get("store")),
+    )
