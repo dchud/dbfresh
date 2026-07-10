@@ -183,6 +183,32 @@ class Store:
         ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
+    def find_checks(
+        self,
+        object_: str,
+        source: str | None = None,
+        metric: str | None = None,
+    ) -> list[dict]:
+        """Distinct checks observed for ``object_``, optionally narrowed.
+
+        Used to disambiguate ``dbfresh history OBJECT`` when more than one
+        check_id has been observed against the same object.
+        """
+        query = (
+            "SELECT DISTINCT check_id, source, object, metric, label "
+            "FROM observation WHERE object = ?"
+        )
+        params: list[Any] = [object_]
+        if source is not None:
+            query += " AND source = ?"
+            params.append(source)
+        if metric is not None:
+            query += " AND metric = ?"
+            params.append(metric)
+        query += " ORDER BY source, object, metric, label"
+        rows = self._conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
     def prune(self, retain_days: int, now: datetime | None = None) -> int:
         """Delete observations (and now-orphaned runs) older than retention."""
         now = _to_utc(now)

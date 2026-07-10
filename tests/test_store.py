@@ -277,3 +277,57 @@ def test_resolve_store_path_default_used_when_config_has_no_path(tmp_path):
         config_dir=tmp_path, store_config=StoreConfig(retain_days=10)
     )
     assert path == tmp_path / "dbfresh.db"
+
+
+def test_find_checks_matches_by_object(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id, _result(object="dbo.fct_sales", metric="row_count", check_id="a")
+    )
+    store.record_observation(
+        run_id, _result(object="dbo.other", metric="row_count", check_id="b")
+    )
+    candidates = store.find_checks("dbo.fct_sales")
+    assert [c["check_id"] for c in candidates] == ["a"]
+    store.close()
+
+
+def test_find_checks_returns_multiple_candidates_for_ambiguous_object(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id, _result(object="dbo.fct_sales", metric="row_count", check_id="a")
+    )
+    store.record_observation(
+        run_id,
+        _result(
+            object="dbo.fct_sales", metric="null_rate", check_id="b", source="other"
+        ),
+    )
+    candidates = store.find_checks("dbo.fct_sales")
+    assert {c["check_id"] for c in candidates} == {"a", "b"}
+    store.close()
+
+
+def test_find_checks_filters_by_source_and_metric(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(object="t", metric="row_count", check_id="a", source="warehouse"),
+    )
+    store.record_observation(
+        run_id,
+        _result(object="t", metric="null_rate", check_id="b", source="other"),
+    )
+    assert [c["check_id"] for c in store.find_checks("t", source="warehouse")] == ["a"]
+    assert [c["check_id"] for c in store.find_checks("t", metric="null_rate")] == ["b"]
+    store.close()
+
+
+def test_find_checks_returns_empty_for_unknown_object(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    store.start_run()
+    assert store.find_checks("nonexistent") == []
+    store.close()
