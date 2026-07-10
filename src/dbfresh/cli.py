@@ -41,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("-c", "--config", default="config.yaml")
     history.add_argument("--store", default=None, help="observation store path")
 
+    prune = subcommands.add_parser("prune", help="enforce observation retention")
+    prune.add_argument("-c", "--config", default="config.yaml")
+    prune.add_argument("--store", default=None, help="observation store path")
+
     return parser
 
 
@@ -130,6 +134,27 @@ def _history_command(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _prune_command(args: argparse.Namespace) -> int:
+    from dbfresh.config import StoreConfig
+    from dbfresh.store import Store, resolve_store_path
+
+    config_dir, store_config = _resolve_read_context(Path(args.config))
+    store_path = resolve_store_path(
+        config_dir=config_dir,
+        store_config=store_config,
+        cli_store=args.store,
+        env_store=os.environ.get("DBFRESH_STORE"),
+    )
+    retain_days = (store_config or StoreConfig()).retain_days
+    store = Store(store_path)
+    try:
+        deleted = store.prune(retain_days=retain_days)
+        print(f"pruned {deleted} observation(s) older than {retain_days} days")
+        return 0
+    finally:
+        store.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -137,6 +162,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_command(args)
     if args.command == "history":
         return _history_command(args)
+    if args.command == "prune":
+        return _prune_command(args)
     parser.print_help()
     return 0
 
