@@ -25,6 +25,34 @@ def test_exit_codes():
     assert exit_code(Status.ERROR) == 3
 
 
+def test_run_checks_across_multiple_sources():
+    a = SqliteAdapter()
+    a.rows("CREATE TABLE t (id INTEGER)")
+    a.rows("INSERT INTO t (id) VALUES (1), (2)")
+    b = SqliteAdapter()
+    b.rows("CREATE TABLE u (id INTEGER)")
+    b.rows("INSERT INTO u (id) VALUES (1)")
+    checks = [
+        Check(
+            source="a",
+            object="t",
+            metric="row_count",
+            expect=parse_expectation({"between": [1, 5]}),
+        ),
+        Check(
+            source="b",
+            object="u",
+            metric="row_count",
+            expect=parse_expectation({"max": 0}),
+        ),
+    ]
+    run = run_checks({"a": a, "b": b}, checks)
+    assert len(run.results) == 2
+    assert run.status == Status.FAIL  # source b has 1 row, expected max 0
+    a.close()
+    b.close()
+
+
 def test_run_checks_aggregates_worst_status():
     a = SqliteAdapter()
     a.rows("CREATE TABLE t (id INTEGER)")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -203,7 +204,25 @@ class RunResult:
 
 
 def run_checks(adapters: dict[str, Any], checks: list[Check]) -> RunResult:
-    """Evaluate every check against its source's adapter and aggregate status."""
+    """Evaluate checks per source and aggregate the worst status.
+
+    Sources run in parallel, one worker thread each; a source's own checks run
+    serially on its single connection, which is never shared across threads.
+    """
     now = datetime.now(UTC)
-    results = [evaluate_check(check, adapters[check.source], now) for check in checks]
+    by_source: dict[str, list[Check]] = {}
+    for check in checks:
+        by_source.setdefault(check.source, []).append(check)
+
+    def run_source(source_checks: list[Check]) -> list[Result]:
+        return [
+            evaluate_check(check, adapters[check.source], now)
+            for check in source_checks
+        ]
+
+    results: list[Result] = []
+    if by_source:
+        with ThreadPoolExecutor(max_workers=len(by_source)) as pool:
+            for source_results in pool.map(run_source, by_source.values()):
+                results.extend(source_results)
     return RunResult(results=results, status=worst_status(r.status for r in results))
