@@ -13,9 +13,21 @@ dependencies = [
     "rich>=15.0.0",
     "structlog>=26.1.0",
 ]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+]
 
 [project.scripts]
 dbfresh = "dbfresh.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dchud/dbfresh"
+Repository = "https://github.com/dchud/dbfresh"
+Issues = "https://github.com/dchud/dbfresh/issues"
 
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
