@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -56,3 +57,36 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
         value=value,
         expected=expected,
     )
+
+
+_SEVERITY = {
+    Status.OK: 0,
+    Status.SKIPPED: 0,
+    Status.WARN: 1,
+    Status.FAIL: 2,
+    Status.ERROR: 3,
+}
+_RANK_STATUS = {0: Status.OK, 1: Status.WARN, 2: Status.FAIL, 3: Status.ERROR}
+
+
+def worst_status(statuses: Iterable[Status]) -> Status:
+    """The most severe status; OK when empty. ERROR (3) outranks FAIL (2)."""
+    rank = max((_SEVERITY[s] for s in statuses), default=0)
+    return _RANK_STATUS[rank]
+
+
+def exit_code(status: Status) -> int:
+    """Map a status to a process exit code: OK/SKIPPED 0, WARN 1, FAIL 2, ERROR 3."""
+    return _SEVERITY[status]
+
+
+@dataclass
+class RunResult:
+    results: list[Result]
+    status: Status
+
+
+def run_checks(adapters: dict[str, Any], checks: list[Check]) -> RunResult:
+    """Evaluate every check against its source's adapter and aggregate status."""
+    results = [evaluate_check(check, adapters[check.source]) for check in checks]
+    return RunResult(results=results, status=worst_status(r.status for r in results))
