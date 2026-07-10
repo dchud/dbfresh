@@ -11,6 +11,7 @@ license = "MIT"
 license-files = ["LICENSE.md"]
 dependencies = [
     "rich>=15.0.0",
+    "sqlalchemy>=2.0.51",
     "structlog>=26.1.0",
 ]
 classifiers = [
