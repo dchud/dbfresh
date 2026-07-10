@@ -125,4 +125,14 @@ def compile_metric_sql(check: Check, dialect: Any) -> str:
         numerator = f"SUM(CASE WHEN {check.column} IS NULL THEN 1 ELSE 0 END)"
         ratio = dialect.float_ratio(numerator, "COUNT(*)")
         return f"SELECT {ratio} FROM {check.object}{where}"
+    if check.metric == "duplicate_count":
+        guard = f"WHERE {check.key} IS NOT NULL"
+        if check.where:
+            guard = f"{guard} AND {check.where}"
+        return (
+            f"SELECT COUNT(*) - COUNT(DISTINCT {check.key}) FROM {check.object} {guard}"
+        )
+    if check.metric in ("sum", "avg", "min", "max"):
+        agg = check.metric.upper()
+        return f"SELECT {agg}({check.column}) FROM {check.object}{where}"
     raise ValueError(f"unsupported metric: {check.metric!r}")
