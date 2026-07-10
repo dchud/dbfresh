@@ -108,13 +108,21 @@ class Check:
     key: str | None = None
     where: str | None = None
     expect: Expectation | None = None
+    allow_empty: bool = False
     severity: str = "error"
     id: str | None = None
 
 
-def compile_metric_sql(check: Check) -> str:
-    """Compile a metric check to a single scalar-returning SQL query."""
+def compile_metric_sql(check: Check, dialect: Any) -> str:
+    """Compile a metric check to a single scalar-returning SQL query.
+
+    Engine variances (float coercion, row capping) come from ``dialect``.
+    """
     where = f" WHERE {check.where}" if check.where else ""
     if check.metric == "row_count":
         return f"SELECT COUNT(*) FROM {check.object}{where}"
+    if check.metric == "null_rate":
+        numerator = f"SUM(CASE WHEN {check.column} IS NULL THEN 1 ELSE 0 END)"
+        ratio = dialect.float_ratio(numerator, "COUNT(*)")
+        return f"SELECT {ratio} FROM {check.object}{where}"
     raise ValueError(f"unsupported metric: {check.metric!r}")

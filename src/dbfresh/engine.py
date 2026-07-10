@@ -34,7 +34,7 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
 
     Any connection or query failure maps to ``ERROR`` — never a silent pass.
     """
-    sql = compile_metric_sql(check)
+    sql = compile_metric_sql(check, adapter.dialect)
     expected = check.expect.describe() if check.expect else None
     try:
         value = adapter.scalar(sql)
@@ -47,6 +47,8 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
             expected=expected,
             error=str(exc),
         )
+    if value is None:
+        return _empty_result(check, expected)
     passed = check.expect.evaluate(value) if check.expect else True
     if passed:
         status = Status.OK
@@ -58,6 +60,29 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
         status=status,
         source=check.source,
         value=value,
+        expected=expected,
+    )
+
+
+def _empty_result(check: Check, expected: str | None) -> Result:
+    """Handle a null scalar (empty table / MAX of no rows)."""
+    if check.metric == "null_rate":
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            expected=expected,
+            error="empty result: cannot compute null_rate",
+        )
+    status = Status.OK if check.allow_empty else Status.FAIL
+    if not check.allow_empty and check.severity == "warn":
+        status = Status.WARN
+    return Result(
+        object=check.object,
+        metric=check.metric,
+        status=status,
+        source=check.source,
         expected=expected,
     )
 

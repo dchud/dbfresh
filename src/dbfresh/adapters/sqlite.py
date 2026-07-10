@@ -5,7 +5,11 @@ from __future__ import annotations
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 
-from dbfresh.adapters.base import SqlAlchemyAdapter
+from dbfresh.adapters.base import Dialect, SqlAlchemyAdapter
+
+
+class SqliteDialect(Dialect):
+    name = "sqlite"
 
 
 class SqliteAdapter(SqlAlchemyAdapter):
@@ -28,4 +32,4 @@ class SqliteAdapter(SqlAlchemyAdapter):
                 f"sqlite:///{database}",
                 connect_args={"check_same_thread": False},
             )
-        super().__init__(engine)
+        super().__init__(engine, SqliteDialect())
