@@ -53,6 +53,7 @@ def render_json(run: RunResult) -> str:
 
 def _result_dict(result: Result) -> dict:
     return {
+        "check_id": result.check_id,
         "source": result.source,
         "object": result.object,
         "metric": result.metric,

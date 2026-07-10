@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from dbfresh.checks import Check, compile_metric_sql
+from dbfresh.checks import Check, check_id, compile_metric_sql
 
 
 class Status(StrEnum):
@@ -31,13 +31,21 @@ class Result:
     error: str | None = None
     label: str | None = None
     samples: list | None = None
+    check_id: str | None = None
 
 
 def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
-    Any connection or query failure maps to ``ERROR`` — never a silent pass.
+    Wraps :func:`_evaluate_check` to stamp the stable ``check_id`` (§8.2) on
+    every returned ``Result``, regardless of which branch produced it.
     """
+    result = _evaluate_check(check, adapter, now)
+    result.check_id = check_id(check)
+    return result
+
+
+def _evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
     now = now or datetime.now(UTC)
     if check.assert_ is not None:
         return _evaluate_assertion(check, adapter)

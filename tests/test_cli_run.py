@@ -49,3 +49,4 @@ def test_run_json_output(tmp_path, capsys):
     assert data["status"] == "OK"
     assert data["results"][0]["metric"] == "row_count"
     assert data["results"][0]["value"] == 3
+    assert data["results"][0]["check_id"]
