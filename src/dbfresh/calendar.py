@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import holidays as holidays_pkg
 
@@ -30,9 +31,14 @@ class BusinessCalendar:
     ) -> None:
         self.timezone = timezone
         self.workdays = workdays
+        self._zone = ZoneInfo(timezone)
         self._country_holidays = country_holidays
         self._extra = extra
         self._remove = remove
+
+    def local_date(self, when: dt.datetime) -> dt.date:
+        """``when`` converted to the calendar timezone, then reduced to a date."""
+        return when.astimezone(self._zone).date()
 
     def is_holiday(self, day: dt.date) -> bool:
         """A holiday: country holidays unioned with ``extra``, minus ``remove``."""
@@ -44,6 +50,30 @@ class BusinessCalendar:
 
     def is_business_day(self, day: dt.date) -> bool:
         return day.weekday() in self.workdays and not self.is_holiday(day)
+
+    def previous_business_day(self, day: dt.date) -> dt.date:
+        candidate = day - dt.timedelta(days=1)
+        while not self.is_business_day(candidate):
+            candidate -= dt.timedelta(days=1)
+        return candidate
+
+    def business_time_between(self, t0: dt.datetime, t1: dt.datetime) -> dt.timedelta:
+        """Wall-clock elapsed minus 24h per non-business date strictly between
+        ``t0`` and ``t1``'s calendar dates (spec section 7.3).
+
+        Both timestamps are converted to the calendar timezone before their
+        dates are compared; ``t0`` must be at or before ``t1``.
+        """
+        elapsed = t1 - t0
+        d0 = self.local_date(t0)
+        d1 = self.local_date(t1)
+        non_business_days = 0
+        day = d0 + dt.timedelta(days=1)
+        while day < d1:
+            if not self.is_business_day(day):
+                non_business_days += 1
+            day += dt.timedelta(days=1)
+        return elapsed - dt.timedelta(hours=24) * non_business_days
 
 
 def _parse_workdays(raw: Any) -> frozenset[int]:
