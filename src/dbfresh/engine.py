@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -27,14 +29,21 @@ class Result:
     value: Any = None
     expected: str | None = None
     error: str | None = None
+    label: str | None = None
+    samples: list | None = None
 
 
-def evaluate_check(check: Check, adapter: Any) -> Result:
+def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
     Any connection or query failure maps to ``ERROR`` — never a silent pass.
     """
-    sql = compile_metric_sql(check)
+    now = now or datetime.now(UTC)
+    if check.assert_ is not None:
+        return _evaluate_assertion(check, adapter)
+    if check.metric == "freshness":
+        return _evaluate_freshness(check, adapter, now)
+    sql = compile_metric_sql(check, adapter.dialect)
     expected = check.expect.describe() if check.expect else None
     try:
         value = adapter.scalar(sql)
@@ -47,6 +56,8 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
             expected=expected,
             error=str(exc),
         )
+    if value is None:
+        return _empty_result(check, expected)
     passed = check.expect.evaluate(value) if check.expect else True
     if passed:
         status = Status.OK
@@ -60,6 +71,109 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
         value=value,
         expected=expected,
     )
+
+
+def _empty_result(check: Check, expected: str | None) -> Result:
+    """Handle a null scalar (empty table / MAX of no rows)."""
+    if check.metric == "null_rate":
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            expected=expected,
+            error="empty result: cannot compute null_rate",
+        )
+    status = Status.OK if check.allow_empty else Status.FAIL
+    if not check.allow_empty and check.severity == "warn":
+        status = Status.WARN
+    return Result(
+        object=check.object,
+        metric=check.metric,
+        status=status,
+        source=check.source,
+        expected=expected,
+    )
+
+
+def _evaluate_assertion(check: Check, adapter: Any) -> Result:
+    """Run an assert predicate; any row for which it is false is a violation."""
+    violation = f"FROM {check.object} WHERE NOT ({check.assert_})"
+    label = f"assert {check.assert_}"
+    try:
+        count = adapter.scalar(f"SELECT COUNT(*) {violation}")
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return Result(
+            object=check.object,
+            metric=None,
+            status=Status.ERROR,
+            source=check.source,
+            label=label,
+            error=str(exc),
+        )
+    if count == 0:
+        return Result(
+            object=check.object,
+            metric=None,
+            status=Status.OK,
+            source=check.source,
+            value=0,
+            label=label,
+            samples=[],
+        )
+    samples = adapter.rows(adapter.dialect.limit(f"SELECT * {violation}", 20))
+    status = Status.WARN if check.severity == "warn" else Status.FAIL
+    return Result(
+        object=check.object,
+        metric=None,
+        status=status,
+        source=check.source,
+        value=count,
+        label=label,
+        samples=samples,
+    )
+
+
+def _evaluate_freshness(check: Check, adapter: Any, now: datetime) -> Result:
+    """Compute freshness lag (now - MAX(column)) and evaluate it against max_lag."""
+    sql = compile_metric_sql(check, adapter.dialect)
+    expected = check.expect.describe() if check.expect else None
+    try:
+        raw = adapter.scalar(sql)
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            expected=expected,
+            error=str(exc),
+        )
+    if raw is None:
+        return _empty_result(check, expected)
+    lag_seconds = (now - _to_aware_utc(raw)).total_seconds()
+    passed = check.expect.evaluate(lag_seconds) if check.expect else True
+    if passed:
+        status = Status.OK
+    else:
+        status = Status.WARN if check.severity == "warn" else Status.FAIL
+    return Result(
+        object=check.object,
+        metric=check.metric,
+        status=status,
+        source=check.source,
+        value=lag_seconds,
+        expected=expected,
+    )
+
+
+def _to_aware_utc(value: Any) -> datetime:
+    """Coerce a DB timestamp to a tz-aware UTC datetime; naive is assumed UTC."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 _SEVERITY = {
@@ -90,6 +204,25 @@ class RunResult:
 
 
 def run_checks(adapters: dict[str, Any], checks: list[Check]) -> RunResult:
-    """Evaluate every check against its source's adapter and aggregate status."""
-    results = [evaluate_check(check, adapters[check.source]) for check in checks]
+    """Evaluate checks per source and aggregate the worst status.
+
+    Sources run in parallel, one worker thread each; a source's own checks run
+    serially on its single connection, which is never shared across threads.
+    """
+    now = datetime.now(UTC)
+    by_source: dict[str, list[Check]] = {}
+    for check in checks:
+        by_source.setdefault(check.source, []).append(check)
+
+    def run_source(source_checks: list[Check]) -> list[Result]:
+        return [
+            evaluate_check(check, adapters[check.source], now)
+            for check in source_checks
+        ]
+
+    results: list[Result] = []
+    if by_source:
+        with ThreadPoolExecutor(max_workers=len(by_source)) as pool:
+            for source_results in pool.map(run_source, by_source.values()):
+                results.extend(source_results)
     return RunResult(results=results, status=worst_status(r.status for r in results))

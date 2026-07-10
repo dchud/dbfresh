@@ -66,6 +66,8 @@ class Expectation:
             return value < x
         if op == "gt":
             return value > x
+        if op == "max_lag":
+            return value <= parse_duration(x).total_seconds()
         raise AssertionError(f"unhandled operator: {op!r}")
 
     def describe(self) -> str:
@@ -88,9 +90,11 @@ def parse_expectation(expect: dict) -> Expectation:
             f"a check takes exactly one expectation operator, got {sorted(expect)}"
         )
     [(operator, operand)] = expect.items()
-    if operator not in _NUMERIC_OPERATORS:
+    if operator not in _NUMERIC_OPERATORS and operator != "max_lag":
         raise ValueError(f"unknown or unsupported expectation operator: {operator!r}")
-    if operator == "between" and (
+    if operator == "max_lag":
+        parse_duration(operand)  # validate the duration up front
+    elif operator == "between" and (
         not isinstance(operand, (list, tuple)) or len(operand) != 2
     ):
         raise ValueError("'between' requires exactly [lo, hi]")
@@ -107,14 +111,35 @@ class Check:
     column: str | None = None
     key: str | None = None
     where: str | None = None
+    assert_: str | None = None
     expect: Expectation | None = None
+    allow_empty: bool = False
     severity: str = "error"
     id: str | None = None
 
 
-def compile_metric_sql(check: Check) -> str:
-    """Compile a metric check to a single scalar-returning SQL query."""
+def compile_metric_sql(check: Check, dialect: Any) -> str:
+    """Compile a metric check to a single scalar-returning SQL query.
+
+    Engine variances (float coercion, row capping) come from ``dialect``.
+    """
     where = f" WHERE {check.where}" if check.where else ""
     if check.metric == "row_count":
         return f"SELECT COUNT(*) FROM {check.object}{where}"
+    if check.metric == "null_rate":
+        numerator = f"SUM(CASE WHEN {check.column} IS NULL THEN 1 ELSE 0 END)"
+        ratio = dialect.float_ratio(numerator, "COUNT(*)")
+        return f"SELECT {ratio} FROM {check.object}{where}"
+    if check.metric == "duplicate_count":
+        guard = f"WHERE {check.key} IS NOT NULL"
+        if check.where:
+            guard = f"{guard} AND {check.where}"
+        return (
+            f"SELECT COUNT(*) - COUNT(DISTINCT {check.key}) FROM {check.object} {guard}"
+        )
+    if check.metric in ("sum", "avg", "min", "max"):
+        agg = check.metric.upper()
+        return f"SELECT {agg}({check.column}) FROM {check.object}{where}"
+    if check.metric == "freshness":
+        return f"SELECT MAX({check.column}) FROM {check.object}{where}"
     raise ValueError(f"unsupported metric: {check.metric!r}")

@@ -69,12 +69,33 @@ def _split_object(obj: str) -> tuple[str | None, str]:
     return None, obj
 
 
+class Dialect:
+    """SQL variances and capabilities for one engine family.
+
+    The base implements the portable ANSI defaults; an engine's dialect
+    overrides only what differs. The compiler asks the dialect for each
+    variance — it never branches on an engine name.
+    """
+
+    name: str = "ansi"
+    freshness_sources: frozenset[str] = frozenset({"column"})
+
+    def limit(self, sql: str, n: int) -> str:
+        """Cap a query's returned rows to ``n``."""
+        return f"{sql} LIMIT {n}"
+
+    def float_ratio(self, numerator: str, denominator: str) -> str:
+        """Null-safe float division (portable ``* 1.0`` form)."""
+        return f"{numerator} * 1.0 / NULLIF({denominator}, 0)"
+
+
 class SqlAlchemyAdapter:
     """Base adapter over a SQLAlchemy :class:`~sqlalchemy.Engine`."""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, dialect: Dialect | None = None) -> None:
         self._engine = engine
         self._conn = engine.connect()
+        self.dialect = dialect or Dialect()
 
     def scalar(self, sql: str) -> Any:
         """Run a query expected to return a single value."""

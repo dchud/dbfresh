@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subcommands.add_parser("run", help="run checks and report")
     run.add_argument("-c", "--config", default="config.yaml")
+    run.add_argument("--json", action="store_true", help="machine-readable output")
 
     return parser
 
@@ -36,7 +37,7 @@ def _run_command(args: argparse.Namespace) -> int:
     from dbfresh.adapters.factory import create_adapter
     from dbfresh.config import load_config
     from dbfresh.engine import exit_code, run_checks
-    from dbfresh.report import render_digest
+    from dbfresh.report import render_digest, render_json
 
     config_path = Path(args.config)
     load_dotenv(config_path.parent / ".env")
@@ -52,7 +53,7 @@ def _run_command(args: argparse.Namespace) -> int:
         for adapter in adapters.values():
             adapter.close()
 
-    print(render_digest(run))
+    print(render_json(run) if args.json else render_digest(run))
     return exit_code(run.status)
 
 

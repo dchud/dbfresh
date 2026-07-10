@@ -77,7 +77,9 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
                 column=raw.get("column"),
                 key=raw.get("key"),
                 where=raw.get("where"),
+                assert_=raw.get("assert"),
                 expect=expect,
+                allow_empty=raw.get("allow_empty", False),
                 severity=raw.get("severity", "error"),
                 id=raw.get("id"),
             )
