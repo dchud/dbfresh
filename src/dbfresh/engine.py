@@ -23,6 +23,7 @@ class Result:
     object: str
     metric: str | None
     status: Status
+    source: str = ""
     value: Any = None
     expected: str | None = None
     error: str | None = None
@@ -42,6 +43,7 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
             object=check.object,
             metric=check.metric,
             status=Status.ERROR,
+            source=check.source,
             expected=expected,
             error=str(exc),
         )
@@ -54,6 +56,7 @@ def evaluate_check(check: Check, adapter: Any) -> Result:
         object=check.object,
         metric=check.metric,
         status=status,
+        source=check.source,
         value=value,
         expected=expected,
     )
