@@ -95,3 +95,26 @@ def parse_expectation(expect: dict) -> Expectation:
     ):
         raise ValueError("'between' requires exactly [lo, hi]")
     return Expectation(operator=operator, operand=operand)
+
+
+@dataclass
+class Check:
+    """A single check definition."""
+
+    source: str
+    object: str
+    metric: str | None = None
+    column: str | None = None
+    key: str | None = None
+    where: str | None = None
+    expect: Expectation | None = None
+    severity: str = "error"
+    id: str | None = None
+
+
+def compile_metric_sql(check: Check) -> str:
+    """Compile a metric check to a single scalar-returning SQL query."""
+    where = f" WHERE {check.where}" if check.where else ""
+    if check.metric == "row_count":
+        return f"SELECT COUNT(*) FROM {check.object}{where}"
+    raise ValueError(f"unsupported metric: {check.metric!r}")
