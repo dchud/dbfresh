@@ -33,7 +33,29 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-store", action="store_true", help="do not persist observations"
     )
 
+    history = subcommands.add_parser("history", help="show a check's recent history")
+    history.add_argument("object")
+    history.add_argument("--source", default=None)
+    history.add_argument("--metric", default=None)
+    history.add_argument("-n", type=int, default=30, help="observations to show")
+    history.add_argument("-c", "--config", default="config.yaml")
+    history.add_argument("--store", default=None, help="observation store path")
+
     return parser
+
+
+def _resolve_read_context(config_path: Path):
+    """Config dir and store settings for a read-only store command.
+
+    Tolerant of a missing config file: history/prune only need it for
+    default store-path resolution and retain_days, not sources/checks.
+    """
+    from dbfresh.config import load_config
+
+    if config_path.exists():
+        config = load_config(config_path)
+        return config.config_dir, config.store
+    return Path.cwd(), None
 
 
 def _run_command(args: argparse.Namespace) -> int:
@@ -79,11 +101,42 @@ def _run_command(args: argparse.Namespace) -> int:
     return exit_code(run.status)
 
 
+def _history_command(args: argparse.Namespace) -> int:
+    from dbfresh.report import render_candidates, render_history
+    from dbfresh.store import Store, resolve_store_path
+
+    config_dir, store_config = _resolve_read_context(Path(args.config))
+    store_path = resolve_store_path(
+        config_dir=config_dir,
+        store_config=store_config,
+        cli_store=args.store,
+        env_store=os.environ.get("DBFRESH_STORE"),
+    )
+    store = Store(store_path)
+    try:
+        candidates = store.find_checks(
+            args.object, source=args.source, metric=args.metric
+        )
+        if not candidates:
+            print(f"no observations found for {args.object!r}")
+            return 1
+        if len(candidates) > 1:
+            print(render_candidates(args.object, candidates))
+            return 2
+        rows = store.history(candidates[0]["check_id"], limit=args.n)
+        print(render_history(candidates[0], rows))
+        return 0
+    finally:
+        store.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "run":
         return _run_command(args)
+    if args.command == "history":
+        return _history_command(args)
     parser.print_help()
     return 0
 
