@@ -3,8 +3,9 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dbfresh.config import StoreConfig
 from dbfresh.engine import Result, Status
-from dbfresh.store import Store, capture_git_sha
+from dbfresh.store import Store, capture_git_sha, resolve_store_path
 
 
 def _result(**overrides) -> Result:
@@ -225,3 +226,54 @@ def test_capture_git_sha_inside_repo_matches_head(tmp_path):
 
 def test_capture_git_sha_outside_repo_is_none(tmp_path):
     assert capture_git_sha(tmp_path) is None
+
+
+def test_resolve_store_path_cli_flag_wins(tmp_path):
+    path = resolve_store_path(
+        config_dir=tmp_path,
+        store_config=StoreConfig(path="./configured.db"),
+        cli_store="./from-flag.db",
+        env_store="./from-env.db",
+    )
+    assert path == Path("./from-flag.db")
+
+
+def test_resolve_store_path_env_var_wins_over_config(tmp_path):
+    path = resolve_store_path(
+        config_dir=tmp_path,
+        store_config=StoreConfig(path="./configured.db"),
+        cli_store=None,
+        env_store="./from-env.db",
+    )
+    assert path == Path("./from-env.db")
+
+
+def test_resolve_store_path_config_relative_path_resolves_against_config_dir(
+    tmp_path,
+):
+    path = resolve_store_path(
+        config_dir=tmp_path,
+        store_config=StoreConfig(path="./obs.db"),
+    )
+    assert path == tmp_path / "obs.db"
+
+
+def test_resolve_store_path_config_absolute_path_used_verbatim(tmp_path):
+    absolute = tmp_path / "elsewhere" / "obs.db"
+    path = resolve_store_path(
+        config_dir=tmp_path,
+        store_config=StoreConfig(path=str(absolute)),
+    )
+    assert path == absolute
+
+
+def test_resolve_store_path_default_resolves_against_config_dir(tmp_path):
+    path = resolve_store_path(config_dir=tmp_path, store_config=None)
+    assert path == tmp_path / "dbfresh.db"
+
+
+def test_resolve_store_path_default_used_when_config_has_no_path(tmp_path):
+    path = resolve_store_path(
+        config_dir=tmp_path, store_config=StoreConfig(retain_days=10)
+    )
+    assert path == tmp_path / "dbfresh.db"

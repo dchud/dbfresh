@@ -8,7 +8,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from dbfresh.config import StoreConfig
 from dbfresh.engine import Result, Status
+
+_DEFAULT_STORE_FILENAME = "dbfresh.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS run (
@@ -63,6 +66,31 @@ def capture_git_sha(path: str | Path) -> str | None:
         return None
     sha = proc.stdout.strip()
     return sha or None
+
+
+def resolve_store_path(
+    config_dir: Path,
+    store_config: StoreConfig | None,
+    cli_store: str | None = None,
+    env_store: str | None = None,
+) -> Path:
+    """Store-path precedence: ``--store`` > ``DBFRESH_STORE`` > ``store.path``
+    in config > default ``./dbfresh.db`` (spec 8.1).
+
+    A path from the CLI flag or environment variable resolves against CWD,
+    like any other command-line path (spec 12.3). A relative ``store.path``
+    from config, and the hardcoded default, resolve against the root
+    config's directory instead — so a clone of the config repo gets its own
+    store file without a machine-specific path being committed.
+    """
+    if cli_store:
+        return Path(cli_store)
+    if env_store:
+        return Path(env_store)
+    if store_config and store_config.path:
+        candidate = Path(store_config.path)
+        return candidate if candidate.is_absolute() else config_dir / candidate
+    return config_dir / _DEFAULT_STORE_FILENAME
 
 
 def _to_utc(value: datetime | None) -> datetime:
