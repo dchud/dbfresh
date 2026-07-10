@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from dbfresh.checks import Check, check_id, compile_metric_sql
+from dbfresh.calendar import BusinessCalendar, weekday_key
+from dbfresh.checks import Check, Expectation, check_id, compile_metric_sql
 
 
 class Status(StrEnum):
@@ -34,25 +35,71 @@ class Result:
     check_id: str | None = None
 
 
-def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
+def evaluate_check(
+    check: Check,
+    adapter: Any,
+    now: datetime | None = None,
+    calendar: BusinessCalendar | None = None,
+) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
     Wraps :func:`_evaluate_check` to stamp the stable ``check_id`` (§8.2) on
     every returned ``Result``, regardless of which branch produced it.
     """
-    result = _evaluate_check(check, adapter, now)
+    result = _evaluate_check(check, adapter, now, calendar)
     result.check_id = check_id(check)
     return result
 
 
-def _evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
+def _effective_expectation(
+    check: Check, calendar: BusinessCalendar | None, now: datetime
+) -> Expectation | None:
+    """Select today's expectation: on_holiday -> by_weekday[today] -> expect."""
+    if calendar is None:
+        return check.expect
+    run_date = calendar.local_date(now)
+    if check.on_holiday is not None and calendar.is_holiday(run_date):
+        return check.on_holiday
+    if check.by_weekday:
+        key = weekday_key(run_date)
+        if key in check.by_weekday:
+            return check.by_weekday[key]
+    return check.expect
+
+
+def _should_skip(
+    check: Check, calendar: BusinessCalendar | None, now: datetime
+) -> bool:
+    """§7.4: skip a check when off-schedule and skip_off_schedule is set."""
+    if not check.skip_off_schedule or calendar is None:
+        return False
+    run_date = calendar.local_date(now)
+    return not calendar.is_business_day(run_date)
+
+
+def _evaluate_check(
+    check: Check,
+    adapter: Any,
+    now: datetime | None = None,
+    calendar: BusinessCalendar | None = None,
+) -> Result:
     now = now or datetime.now(UTC)
+    if _should_skip(check, calendar, now):
+        label = f"assert {check.assert_}" if check.assert_ is not None else None
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.SKIPPED,
+            source=check.source,
+            label=label,
+        )
+    expect = _effective_expectation(check, calendar, now)
     if check.assert_ is not None:
         return _evaluate_assertion(check, adapter)
     if check.metric == "freshness":
-        return _evaluate_freshness(check, adapter, now)
+        return _evaluate_freshness(check, adapter, now, expect, calendar)
     sql = compile_metric_sql(check, adapter.dialect)
-    expected = check.expect.describe() if check.expect else None
+    expected = expect.describe() if expect else None
     try:
         value = adapter.scalar(sql)
     except Exception as exc:  # unreachable source / query error -> ERROR
@@ -66,7 +113,7 @@ def _evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> 
         )
     if value is None:
         return _empty_result(check, expected)
-    passed = check.expect.evaluate(value) if check.expect else True
+    passed = expect.evaluate(value) if expect else True
     if passed:
         status = Status.OK
     else:
@@ -142,10 +189,16 @@ def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     )
 
 
-def _evaluate_freshness(check: Check, adapter: Any, now: datetime) -> Result:
+def _evaluate_freshness(
+    check: Check,
+    adapter: Any,
+    now: datetime,
+    expect: Expectation | None,
+    calendar: BusinessCalendar | None,
+) -> Result:
     """Compute freshness lag (now - MAX(column)) and evaluate it against max_lag."""
     sql = compile_metric_sql(check, adapter.dialect)
-    expected = check.expect.describe() if check.expect else None
+    expected = expect.describe() if expect else None
     try:
         raw = adapter.scalar(sql)
     except Exception as exc:  # unreachable source / query error -> ERROR
@@ -159,8 +212,12 @@ def _evaluate_freshness(check: Check, adapter: Any, now: datetime) -> Result:
         )
     if raw is None:
         return _empty_result(check, expected)
-    lag_seconds = (now - _to_aware_utc(raw)).total_seconds()
-    passed = check.expect.evaluate(lag_seconds) if check.expect else True
+    t0 = _to_aware_utc(raw)
+    if check.calendar == "business" and calendar is not None:
+        lag_seconds = calendar.business_time_between(t0, now).total_seconds()
+    else:
+        lag_seconds = (now - t0).total_seconds()
+    passed = expect.evaluate(lag_seconds) if expect else True
     if passed:
         status = Status.OK
     else:

@@ -117,6 +117,10 @@ class Check:
     allow_empty: bool = False
     severity: str = "error"
     id: str | None = None
+    by_weekday: dict[str, Expectation] | None = None
+    on_holiday: Expectation | None = None
+    calendar: str | None = None
+    skip_off_schedule: bool = False
 
 
 _TABLE_LEVEL_METRICS = frozenset({"row_count", "schema"})
