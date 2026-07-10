@@ -1,3 +1,5 @@
+import json
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.cli import main
 
@@ -35,3 +37,15 @@ def test_run_failure_exits_two(tmp_path):
     _seed_db(db)
     cfg = _config(tmp_path / "config.yaml", db, "{ max: 1 }")
     assert main(["run", "-c", str(cfg)]) == 2
+
+
+def test_run_json_output(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    code = main(["run", "-c", str(cfg), "--json"])
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "OK"
+    assert data["results"][0]["metric"] == "row_count"
+    assert data["results"][0]["value"] == 3

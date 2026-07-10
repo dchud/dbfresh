@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
-from dbfresh.engine import RunResult, Status
+from dbfresh.engine import Result, RunResult, Status
 
 
 def render_digest(run: RunResult, now: datetime | None = None) -> str:
@@ -39,3 +40,26 @@ def render_digest(run: RunResult, now: datetime | None = None) -> str:
             lines.append(f"    expected {result.expected}   observed {result.value}")
 
     return "\n".join(lines)
+
+
+def render_json(run: RunResult) -> str:
+    """Machine-readable output: the worst status and every result."""
+    payload = {
+        "status": run.status.value,
+        "results": [_result_dict(result) for result in run.results],
+    }
+    return json.dumps(payload, default=str)
+
+
+def _result_dict(result: Result) -> dict:
+    return {
+        "source": result.source,
+        "object": result.object,
+        "metric": result.metric,
+        "label": result.label,
+        "status": result.status.value,
+        "value": result.value,
+        "expected": result.expected,
+        "error": result.error,
+        "samples": result.samples,
+    }
