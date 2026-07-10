@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.calendar import build_calendar
 from dbfresh.checks import Check, parse_expectation
-from dbfresh.engine import Status, evaluate_check
+from dbfresh.engine import Status, evaluate_check, run_checks
 
 
 def _rows_adapter(n):
@@ -80,6 +80,21 @@ def test_on_holiday_not_used_when_today_is_not_a_holiday():
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday, not a holiday
     result = evaluate_check(check, a, now=now, calendar=_calendar())
     assert result.status == Status.FAIL
+    a.close()
+
+
+def test_run_checks_threads_calendar_and_now_through():
+    a = _rows_adapter(5)
+    check = Check(
+        source="s",
+        object="t",
+        metric="row_count",
+        expect=parse_expectation({"max": 1}),
+        by_weekday={"mon": parse_expectation({"max": 10})},
+    )
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday
+    run = run_checks({"s": a}, [check], calendar=_calendar(), now=now)
+    assert run.results[0].status == Status.OK
     a.close()
 
 

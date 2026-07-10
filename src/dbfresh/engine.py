@@ -268,20 +268,25 @@ class RunResult:
     status: Status
 
 
-def run_checks(adapters: dict[str, Any], checks: list[Check]) -> RunResult:
+def run_checks(
+    adapters: dict[str, Any],
+    checks: list[Check],
+    calendar: BusinessCalendar | None = None,
+    now: datetime | None = None,
+) -> RunResult:
     """Evaluate checks per source and aggregate the worst status.
 
     Sources run in parallel, one worker thread each; a source's own checks run
     serially on its single connection, which is never shared across threads.
     """
-    now = datetime.now(UTC)
+    now = now or datetime.now(UTC)
     by_source: dict[str, list[Check]] = {}
     for check in checks:
         by_source.setdefault(check.source, []).append(check)
 
     def run_source(source_checks: list[Check]) -> list[Result]:
         return [
-            evaluate_check(check, adapters[check.source], now)
+            evaluate_check(check, adapters[check.source], now, calendar)
             for check in source_checks
         ]
 
