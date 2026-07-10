@@ -66,6 +66,8 @@ class Expectation:
             return value < x
         if op == "gt":
             return value > x
+        if op == "max_lag":
+            return value <= parse_duration(x).total_seconds()
         raise AssertionError(f"unhandled operator: {op!r}")
 
     def describe(self) -> str:
@@ -88,9 +90,11 @@ def parse_expectation(expect: dict) -> Expectation:
             f"a check takes exactly one expectation operator, got {sorted(expect)}"
         )
     [(operator, operand)] = expect.items()
-    if operator not in _NUMERIC_OPERATORS:
+    if operator not in _NUMERIC_OPERATORS and operator != "max_lag":
         raise ValueError(f"unknown or unsupported expectation operator: {operator!r}")
-    if operator == "between" and (
+    if operator == "max_lag":
+        parse_duration(operand)  # validate the duration up front
+    elif operator == "between" and (
         not isinstance(operand, (list, tuple)) or len(operand) != 2
     ):
         raise ValueError("'between' requires exactly [lo, hi]")
@@ -135,4 +139,6 @@ def compile_metric_sql(check: Check, dialect: Any) -> str:
     if check.metric in ("sum", "avg", "min", "max"):
         agg = check.metric.upper()
         return f"SELECT {agg}({check.column}) FROM {check.object}{where}"
+    if check.metric == "freshness":
+        return f"SELECT MAX({check.column}) FROM {check.object}{where}"
     raise ValueError(f"unsupported metric: {check.metric!r}")

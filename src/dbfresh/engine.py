@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -29,11 +30,14 @@ class Result:
     error: str | None = None
 
 
-def evaluate_check(check: Check, adapter: Any) -> Result:
+def evaluate_check(check: Check, adapter: Any, now: datetime | None = None) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
     Any connection or query failure maps to ``ERROR`` — never a silent pass.
     """
+    now = now or datetime.now(UTC)
+    if check.metric == "freshness":
+        return _evaluate_freshness(check, adapter, now)
     sql = compile_metric_sql(check, adapter.dialect)
     expected = check.expect.describe() if check.expect else None
     try:
@@ -87,6 +91,48 @@ def _empty_result(check: Check, expected: str | None) -> Result:
     )
 
 
+def _evaluate_freshness(check: Check, adapter: Any, now: datetime) -> Result:
+    """Compute freshness lag (now - MAX(column)) and evaluate it against max_lag."""
+    sql = compile_metric_sql(check, adapter.dialect)
+    expected = check.expect.describe() if check.expect else None
+    try:
+        raw = adapter.scalar(sql)
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            expected=expected,
+            error=str(exc),
+        )
+    if raw is None:
+        return _empty_result(check, expected)
+    lag_seconds = (now - _to_aware_utc(raw)).total_seconds()
+    passed = check.expect.evaluate(lag_seconds) if check.expect else True
+    if passed:
+        status = Status.OK
+    else:
+        status = Status.WARN if check.severity == "warn" else Status.FAIL
+    return Result(
+        object=check.object,
+        metric=check.metric,
+        status=status,
+        source=check.source,
+        value=lag_seconds,
+        expected=expected,
+    )
+
+
+def _to_aware_utc(value: Any) -> datetime:
+    """Coerce a DB timestamp to a tz-aware UTC datetime; naive is assumed UTC."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 _SEVERITY = {
     Status.OK: 0,
     Status.SKIPPED: 0,
@@ -116,5 +162,6 @@ class RunResult:
 
 def run_checks(adapters: dict[str, Any], checks: list[Check]) -> RunResult:
     """Evaluate every check against its source's adapter and aggregate status."""
-    results = [evaluate_check(check, adapters[check.source]) for check in checks]
+    now = datetime.now(UTC)
+    results = [evaluate_check(check, adapters[check.source], now) for check in checks]
     return RunResult(results=results, status=worst_status(r.status for r in results))
