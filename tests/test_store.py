@@ -3,8 +3,10 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dbfresh.adapters.sqlite import SqliteAdapter
+from dbfresh.checks import Check, parse_expectation
 from dbfresh.config import StoreConfig
-from dbfresh.engine import Result, Status
+from dbfresh.engine import Result, Status, evaluate_check
 from dbfresh.store import Store, capture_git_sha, resolve_store_path
 
 
@@ -330,4 +332,28 @@ def test_find_checks_returns_empty_for_unknown_object(tmp_path):
     store = Store(tmp_path / "obs.db")
     store.start_run()
     assert store.find_checks("nonexistent") == []
+    store.close()
+
+
+def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
+    adapter = SqliteAdapter()
+    adapter.rows("CREATE TABLE t (created_at TEXT)")
+    adapter.rows("INSERT INTO t (created_at) VALUES ('2026-07-10 10:00:00')")
+    check = Check(
+        source="s",
+        object="t",
+        metric="freshness",
+        column="created_at",
+        expect=parse_expectation({"max_lag": "26h"}),
+    )
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)  # 10h after created_at
+    result = evaluate_check(check, adapter, now=now)
+    adapter.close()
+
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(run_id, result, observed_at=now)
+    row = store._conn.execute("SELECT value, value_text FROM observation").fetchone()
+    assert row["value"] == 36000.0  # 10h lag, in seconds
+    assert row["value_text"] is None
     store.close()
