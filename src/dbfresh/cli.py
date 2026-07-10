@@ -80,7 +80,7 @@ def _run_command(args: argparse.Namespace) -> int:
         for name, source in config.sources.items()
     }
     try:
-        run = run_checks(adapters, config.checks)
+        run = run_checks(adapters, config.checks, calendar=config.calendar)
     finally:
         for adapter in adapters.values():
             adapter.close()

@@ -107,6 +107,27 @@ def test_run_dbfresh_store_env_var_overrides_default(tmp_path, monkeypatch):
     assert not (tmp_path / "dbfresh.db").exists()
 
 
+def test_run_skips_check_off_schedule(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "calendar:\n"
+        "  timezone: UTC\n"
+        "  workdays: []\n"  # no day is ever a business day
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "    skip_off_schedule: true\n"
+    )
+    code = main(["run", "-c", str(cfg)])
+    assert code == 0
+    assert "1 skipped" in capsys.readouterr().out
+
+
 def test_run_store_flag_wins_over_env_var(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
     _seed_db(db)
