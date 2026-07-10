@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+import holidays as holidays_pkg
+
 WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _WEEKDAY_INDEX = {name: index for index, name in enumerate(WEEKDAY_NAMES)}
 _DEFAULT_WORKDAYS = ("mon", "tue", "wed", "thu", "fri")
@@ -22,12 +24,26 @@ class BusinessCalendar:
         self,
         timezone: str,
         workdays: frozenset[int],
+        country_holidays: Any | None = None,
+        extra: frozenset[dt.date] = frozenset(),
+        remove: frozenset[dt.date] = frozenset(),
     ) -> None:
         self.timezone = timezone
         self.workdays = workdays
+        self._country_holidays = country_holidays
+        self._extra = extra
+        self._remove = remove
+
+    def is_holiday(self, day: dt.date) -> bool:
+        """A holiday: country holidays unioned with ``extra``, minus ``remove``."""
+        if day in self._remove:
+            return False
+        if day in self._extra:
+            return True
+        return self._country_holidays is not None and day in self._country_holidays
 
     def is_business_day(self, day: dt.date) -> bool:
-        return day.weekday() in self.workdays
+        return day.weekday() in self.workdays and not self.is_holiday(day)
 
 
 def _parse_workdays(raw: Any) -> frozenset[int]:
@@ -38,10 +54,28 @@ def _parse_workdays(raw: Any) -> frozenset[int]:
         raise ValueError(f"unknown workday name: {exc.args[0]!r}") from exc
 
 
+def _parse_dates(raw: Any) -> frozenset[dt.date]:
+    return frozenset(dt.date.fromisoformat(text) for text in raw or [])
+
+
 def build_calendar(raw: dict) -> BusinessCalendar:
     """Build a :class:`BusinessCalendar` from the top-level ``calendar:`` block."""
     timezone = raw.get("timezone")
     if not timezone:
         raise ValueError("calendar.timezone is required")
     workdays = _parse_workdays(raw.get("workdays"))
-    return BusinessCalendar(timezone=timezone, workdays=workdays)
+    holiday_raw = raw.get("holidays") or {}
+    country = holiday_raw.get("country")
+    subdivision = holiday_raw.get("subdivision")
+    country_holidays = (
+        holidays_pkg.country_holidays(country, subdiv=subdivision) if country else None
+    )
+    extra = _parse_dates(holiday_raw.get("extra"))
+    remove = _parse_dates(holiday_raw.get("remove"))
+    return BusinessCalendar(
+        timezone=timezone,
+        workdays=workdays,
+        country_holidays=country_holidays,
+        extra=extra,
+        remove=remove,
+    )
