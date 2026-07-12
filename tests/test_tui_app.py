@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id
@@ -184,6 +185,83 @@ def test_selecting_a_check_node_opens_history_with_its_observations(tmp_path):
             assert "3.0" in str(text)
             assert "5.0" in str(text)
             assert cid in str(text)
+
+    asyncio.run(scenario())
+
+
+def _calendar_config(path, db):
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "calendar:\n"
+        "  timezone: America/New_York\n"
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    return path
+
+
+_OFFSET_TIMESTAMP = re.compile(r"T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}")
+
+
+def test_history_screen_uses_calendar_timezone(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _calendar_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        cid = check_id(_row_count_check())
+        run_id = store.start_run()
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="row_count",
+                status=Status.OK,
+                source="s",
+                value=3,
+                check_id=cid,
+            ),
+        )
+        store.finish_run(run_id, Status.OK)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("down", "down", "down")
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HistoryScreen)
+            text = str(app.screen.query_one("#history-text").content)
+            assert _OFFSET_TIMESTAMP.search(text)
+
+    asyncio.run(scenario())
+
+
+def test_report_screen_uses_calendar_timezone(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _calendar_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            text = str(app.screen.query_one("#report-text").content)
+            header = text.splitlines()[0]
+            assert _OFFSET_TIMESTAMP.search(header)
 
     asyncio.run(scenario())
 

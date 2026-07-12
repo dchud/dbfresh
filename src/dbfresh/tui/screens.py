@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import tzinfo
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -29,12 +31,17 @@ class ReportScreen(Screen):
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
-    def __init__(self, run: RunResult | None) -> None:
+    def __init__(self, run: RunResult | None, tz: tzinfo | None = None) -> None:
         super().__init__()
         self._run = run
+        self._tz = tz
 
     def compose(self) -> ComposeResult:
-        text = render_digest(self._run) if self._run is not None else _NO_RUN_MESSAGE
+        text = (
+            render_digest(self._run, tz=self._tz)
+            if self._run is not None
+            else _NO_RUN_MESSAGE
+        )
         yield Header()
         yield VerticalScroll(Static(text, id="report-text", markup=False))
         yield Footer()
@@ -53,10 +60,11 @@ class HistoryScreen(Screen):
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
-    def __init__(self, store: Store, check: Check) -> None:
+    def __init__(self, store: Store, check: Check, tz: tzinfo | None = None) -> None:
         super().__init__()
         self._store = store
         self._check = check
+        self._tz = tz
 
     def compose(self) -> ComposeResult:
         cid = check_id(self._check)
@@ -67,7 +75,7 @@ class HistoryScreen(Screen):
             "label": check_label(self._check),
         }
         rows = self._store.history(cid)
-        text = render_history(candidate, rows)
+        text = render_history(candidate, rows, tz=self._tz)
         yield Header()
         yield VerticalScroll(Static(text, id="history-text", markup=False))
         yield Footer()

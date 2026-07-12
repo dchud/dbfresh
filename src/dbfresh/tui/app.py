@@ -91,17 +91,21 @@ class DbfreshApp(App):
             self.refresh_dashboard()
 
     def action_report(self) -> None:
+        from dbfresh.report import display_timezone
         from dbfresh.tui.screens import ReportScreen
 
-        self.push_screen(ReportScreen(self.last_run))
+        tz = display_timezone(self.config.calendar)
+        self.push_screen(ReportScreen(self.last_run, tz=tz))
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """Selecting a check leaf opens its History drill-down."""
         info = event.node.data
         if isinstance(info, NodeInfo) and info.kind == "check" and info.check:
+            from dbfresh.report import display_timezone
             from dbfresh.tui.screens import HistoryScreen
 
-            self.push_screen(HistoryScreen(self.store, info.check))
+            tz = display_timezone(self.config.calendar)
+            self.push_screen(HistoryScreen(self.store, info.check, tz=tz))
 
     def on_unmount(self) -> None:
         if self.store is not None:
