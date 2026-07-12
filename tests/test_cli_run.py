@@ -128,6 +128,56 @@ def test_run_skips_check_off_schedule(tmp_path, capsys):
     assert "1 skipped" in capsys.readouterr().out
 
 
+def test_run_schema_check_establishes_baseline_then_detects_drift(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER, name TEXT)")
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    assert main(["run", "-c", str(cfg)]) == 0
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    adapter.close()
+
+    assert main(["run", "-c", str(cfg)]) == 2
+    out = capsys.readouterr().out
+    assert "+ email (TEXT)" in out
+
+
+def test_run_schema_check_no_store_always_passes(tmp_path):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER)")
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN extra TEXT")
+    adapter.close()
+
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+
+
 def test_run_store_flag_wins_over_env_var(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
     _seed_db(db)
