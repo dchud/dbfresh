@@ -10,7 +10,56 @@ emits YAML for the version-controlled config.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from dbfresh.adapters.base import Category, Column
+
+_CONVENTIONAL_TIMESTAMP_NAMES = frozenset(
+    {"modified_at", "updated_at", "loaded_at", "load_ts", "created_at"}
+)
+_CONVENTIONAL_TIMESTAMP_SUFFIXES = ("_at", "_ts", "_date")
+
+
+@dataclass(frozen=True)
+class TimestampChoice:
+    """Result of the freshness timestamp-column heuristic (§11.1).
+
+    ``column`` is set when a single unambiguous candidate was found.
+    ``needs_choice`` is set instead when several temporal columns match and
+    the wizard must ask rather than guess; ``candidates`` then lists them.
+    """
+
+    column: str | None = None
+    needs_choice: bool = False
+    candidates: list[str] = field(default_factory=list)
+
+
+def _is_conventional_timestamp_name(name: str) -> bool:
+    return name in _CONVENTIONAL_TIMESTAMP_NAMES or name.endswith(
+        _CONVENTIONAL_TIMESTAMP_SUFFIXES
+    )
+
+
+def pick_timestamp_column(columns: list[Column]) -> TimestampChoice:
+    """Auto-detect the freshness timestamp column among temporal columns.
+
+    Prefers conventional names; if exactly one temporal column exists at
+    all, uses it even when unconventionally named; otherwise several
+    candidates match and the caller must ask the user to pick (§11.1).
+    """
+    temporal = [c for c in columns if c.category == Category.TEMPORAL]
+    if not temporal:
+        return TimestampChoice()
+
+    conventional = [c for c in temporal if _is_conventional_timestamp_name(c.name)]
+    if len(conventional) == 1:
+        return TimestampChoice(column=conventional[0].name)
+    if len(temporal) == 1:
+        return TimestampChoice(column=temporal[0].name)
+
+    pool = conventional or temporal
+    return TimestampChoice(needs_choice=True, candidates=[c.name for c in pool])
+
 
 _CATEGORY_OFFERS: dict[Category, list[str]] = {
     Category.NUMERIC: ["null_rate", "sum", "avg", "min", "max", "duplicate_count"],
