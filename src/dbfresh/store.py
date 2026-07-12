@@ -174,6 +174,20 @@ class Store:
         )
         self._conn.commit()
 
+    def latest_observation(self, check_id: str) -> dict | None:
+        """The most recent prior observation for ``check_id``, or ``None``.
+
+        Used by history-based expectations (schema ``unchanged``, and
+        ``vs_previous``) to read the prior ``value`` / ``value_text`` /
+        ``status`` during evaluation, before the current run persists.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM observation WHERE check_id = ? "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (check_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def history(self, check_id: str, limit: int = 30) -> list[dict]:
         """A check's most recent observations, oldest first."""
         rows = self._conn.execute(

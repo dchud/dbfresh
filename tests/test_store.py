@@ -335,6 +335,40 @@ def test_find_checks_returns_empty_for_unknown_object(tmp_path):
     store.close()
 
 
+def test_latest_observation_returns_most_recent_row(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-old"),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-new"),
+        observed_at=datetime(2026, 7, 5, tzinfo=UTC),
+    )
+    obs = store.latest_observation("x")
+    assert obs["value_text"] == "fp-new"
+    store.close()
+
+
+def test_latest_observation_returns_none_when_no_history(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    assert store.latest_observation("nonexistent") is None
+    store.close()
+
+
+def test_latest_observation_ignores_other_check_ids(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    store.record_observation(run_id, _result(check_id="b", value=2))
+    obs = store.latest_observation("a")
+    assert obs["value"] == 1.0
+    store.close()
+
+
 def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
     adapter = SqliteAdapter()
     adapter.rows("CREATE TABLE t (created_at TEXT)")
