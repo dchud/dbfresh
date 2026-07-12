@@ -117,6 +117,8 @@ def _evaluate_check(
         return _evaluate_freshness(check, adapter, now, expect, calendar)
     if check.metric == "schema":
         return _evaluate_schema(check, adapter, expect, store)
+    if expect is not None and expect.operator == "vs_previous":
+        return _evaluate_vs_previous(check, adapter, now, expect, calendar, store)
     sql = compile_metric_sql(check, adapter.dialect)
     expected = expect.describe() if expect else None
     try:
@@ -316,6 +318,120 @@ def _evaluate_schema(
     if not passed and prior is not None:
         result.diff = diff_fingerprints(fingerprint, prior)
     return result
+
+
+_ON_MISSING_STATUS = {
+    "pass": Status.OK,
+    "warn": Status.WARN,
+    "skip": Status.SKIPPED,
+}
+
+
+def _evaluate_vs_previous(
+    check: Check,
+    adapter: Any,
+    now: datetime,
+    expect: Expectation,
+    calendar: BusinessCalendar | None,
+    store: Any | None,
+) -> Result:
+    """Compare the current scalar to a prior observation (§8.3).
+
+    The current value comes from the same SQL path as any other numeric
+    metric. The baseline is read from ``store`` per ``expect.operand``:
+    ``baseline: previous`` is the most recent prior observation excluding
+    ERROR/SKIPPED; ``baseline: last_same_weekday`` is the most recent prior
+    observation on today's calendar-tz weekday, at least 6 calendar days
+    back. No store, or no matching baseline, evaluates per ``on_missing``;
+    a zero baseline falls back to delta guards when configured, else is
+    also treated as missing.
+    """
+    sql = compile_metric_sql(check, adapter.dialect)
+    expected = expect.describe()
+    try:
+        value = adapter.scalar(sql)
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            expected=expected,
+            error=str(exc),
+        )
+    if value is None:
+        return _empty_result(check, expected)
+
+    spec = expect.operand
+    baseline = _read_vs_previous_baseline(check, now, calendar, store, spec)
+    has_delta = spec["min_delta"] is not None or spec["max_delta"] is not None
+    if baseline is not None and baseline == 0 and not has_delta:
+        baseline = None  # zero baseline with no delta fallback -> on_missing
+
+    if baseline is None:
+        status = _ON_MISSING_STATUS[spec["on_missing"]]
+        return Result(
+            object=check.object,
+            metric=check.metric,
+            status=status,
+            source=check.source,
+            value=value,
+            expected=expected,
+        )
+
+    passed = _vs_previous_passed(value, baseline, spec)
+    if passed:
+        status = Status.OK
+    else:
+        status = Status.WARN if check.severity == "warn" else Status.FAIL
+    return Result(
+        object=check.object,
+        metric=check.metric,
+        status=status,
+        source=check.source,
+        value=value,
+        expected=expected,
+    )
+
+
+def _read_vs_previous_baseline(
+    check: Check,
+    now: datetime,
+    calendar: BusinessCalendar | None,
+    store: Any | None,
+    spec: dict,
+) -> float | None:
+    """The baseline scalar for ``vs_previous``, or ``None`` if unavailable."""
+    if store is None:
+        return None
+    cid = check_id(check)
+    if spec["baseline"] == "previous":
+        observation = store.latest_clean_observation(cid)
+    else:  # last_same_weekday
+        run_date = calendar.local_date(now) if calendar is not None else now.date()
+        observation = store.last_same_weekday_observation(cid, run_date)
+    return observation.get("value") if observation is not None else None
+
+
+def _vs_previous_passed(value: float, baseline: float, spec: dict) -> bool:
+    """Ratio guards (when ``baseline`` != 0) and/or delta guards; every
+    configured guard must pass (§8.3)."""
+    min_ratio, max_ratio = spec["min_ratio"], spec["max_ratio"]
+    min_delta, max_delta = spec["min_delta"], spec["max_delta"]
+    passed = True
+    if baseline != 0 and (min_ratio is not None or max_ratio is not None):
+        ratio = value / baseline
+        if min_ratio is not None:
+            passed = passed and ratio >= min_ratio
+        if max_ratio is not None:
+            passed = passed and ratio <= max_ratio
+    if min_delta is not None or max_delta is not None:
+        delta = value - baseline
+        if min_delta is not None:
+            passed = passed and delta >= min_delta
+        if max_delta is not None:
+            passed = passed and delta <= max_delta
+    return passed
 
 
 def _to_aware_utc(value: Any) -> datetime:
