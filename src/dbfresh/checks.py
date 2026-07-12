@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+
+from dbfresh.adapters.base import Column
 
 _DURATION_TOKEN = re.compile(r"(\d+)([smhd])")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -179,3 +182,47 @@ def compile_metric_sql(check: Check, dialect: Any) -> str:
     if check.metric == "freshness":
         return f"SELECT MAX({check.column}) FROM {check.object}{where}"
     raise ValueError(f"unsupported metric: {check.metric!r}")
+
+
+def fingerprint_columns(columns: Iterable[Column]) -> str:
+    """A stable serialization of a column set for the ``schema`` metric (§6.2).
+
+    Order-insensitive over ``(name, data_type)`` pairs; column order and
+    nullability are excluded. Sorted, so identical column sets always
+    serialize identically regardless of reflection order.
+    """
+    pairs = sorted((column.name, column.type) for column in columns)
+    return "|".join(f"{name}:{data_type}" for name, data_type in pairs)
+
+
+def _parse_fingerprint(fingerprint: str) -> dict[str, str]:
+    """Parse a fingerprint string back into ``{name: data_type}``."""
+    if not fingerprint:
+        return {}
+    pairs = (part.partition(":")[::2] for part in fingerprint.split("|"))
+    return dict(pairs)
+
+
+def diff_fingerprints(current: str, prior: str) -> list[str]:
+    """Added / removed / retyped columns between two fingerprints (§6.2).
+
+    Each line is one of ``+ name (type)``, ``- name (type)``, or
+    ``~ name (old_type -> new_type)``. Sorted by column name within each
+    category so the result is deterministic.
+    """
+    current_cols = _parse_fingerprint(current)
+    prior_cols = _parse_fingerprint(prior)
+    lines = [
+        f"+ {name} ({current_cols[name]})"
+        for name in sorted(set(current_cols) - set(prior_cols))
+    ]
+    lines += [
+        f"- {name} ({prior_cols[name]})"
+        for name in sorted(set(prior_cols) - set(current_cols))
+    ]
+    lines += [
+        f"~ {name} ({prior_cols[name]} -> {current_cols[name]})"
+        for name in sorted(set(current_cols) & set(prior_cols))
+        if current_cols[name] != prior_cols[name]
+    ]
+    return lines
