@@ -313,7 +313,7 @@ def _evaluate_schema(
         value=fingerprint,
         expected=expected,
     )
-    if not passed and prior:
+    if not passed and prior is not None:
         result.diff = diff_fingerprints(fingerprint, prior)
     return result
 
