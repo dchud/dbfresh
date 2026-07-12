@@ -68,25 +68,21 @@ def _resolve_read_context(config_path: Path):
 def _run_command(args: argparse.Namespace) -> int:
     from dotenv import load_dotenv
 
-    from dbfresh.adapters.factory import create_adapter
     from dbfresh.config import load_config
-    from dbfresh.engine import exit_code, run_checks
+    from dbfresh.engine import exit_code
     from dbfresh.report import render_digest, render_json
-    from dbfresh.store import Store, capture_git_sha, resolve_store_path
+    from dbfresh.runner import run_and_persist
+    from dbfresh.store import Store, resolve_store_path
 
     config_path = Path(args.config)
     load_dotenv(config_path.parent / ".env")
     config = load_config(config_path)
 
-    adapters = {
-        name: create_adapter(source.type, source.params)
-        for name, source in config.sources.items()
-    }
-
-    # Opened before run_checks (not just after) so history-based
-    # expectations (schema unchanged; later vs_previous) can read prior
+    # Opened before run_and_persist (not just after) so history-based
+    # expectations (schema unchanged; vs_previous) can read prior
     # observations during evaluation; at that point the store holds only
-    # earlier runs, since this run's results are persisted below.
+    # earlier runs, since this run's results are persisted as part of the
+    # same call.
     store = None
     if not args.no_store:
         store_path = resolve_store_path(
@@ -98,18 +94,9 @@ def _run_command(args: argparse.Namespace) -> int:
         store = Store(store_path)
 
     try:
-        run = run_checks(adapters, config.checks, calendar=config.calendar, store=store)
+        run = run_and_persist(config, store)
     finally:
-        for adapter in adapters.values():
-            adapter.close()
-
-    if store is not None:
-        try:
-            run_id = store.start_run(git_sha=capture_git_sha(config_path))
-            for result in run.results:
-                store.record_observation(run_id, result, calendar=config.calendar)
-            store.finish_run(run_id, run.status)
-        finally:
+        if store is not None:
             store.close()
 
     print(render_json(run) if args.json else render_digest(run))
