@@ -204,3 +204,66 @@ def propose_checks(
             )
 
     return checks
+
+
+@dataclass(frozen=True)
+class ConnectionProbe:
+    """Result of a mandatory connection test for a new source (§11.3)."""
+
+    ok: bool
+    error: str | None = None
+
+
+def probe_connection(type_: str, params: dict) -> ConnectionProbe:
+    """Build the adapter and run a trivial query to confirm it connects.
+
+    Mandatory before writing a block for a brand-new source (§11.3); never
+    raises -- any failure (unknown type, bad credentials, unreachable host)
+    comes back as ``ConnectionProbe(ok=False, error=...)``.
+    """
+    from dbfresh.adapters.factory import create_adapter
+
+    try:
+        adapter = create_adapter(type_, params)
+    except Exception as exc:
+        return ConnectionProbe(ok=False, error=str(exc))
+    try:
+        adapter.scalar("SELECT 1")
+    except Exception as exc:
+        return ConnectionProbe(ok=False, error=str(exc))
+    finally:
+        adapter.close()
+    return ConnectionProbe(ok=True)
+
+
+@dataclass(frozen=True)
+class ExistenceCheck:
+    """Result of existence-checking a named object via ``describe()`` (§11.3).
+
+    ``verified`` is ``False`` only when the source itself could not be
+    reached (the caller passes ``adapter=None``), in which case ``exists``
+    is ``None`` -- degraded manual entry, not a false negative. When
+    ``verified`` is ``True``, ``exists`` reports whether ``describe()``
+    succeeded, and ``info`` carries its result.
+    """
+
+    verified: bool
+    exists: bool | None
+    info: ObjectInfo | None = None
+    error: str | None = None
+
+
+def check_object_exists(adapter: Any | None, object_name: str) -> ExistenceCheck:
+    """Existence-check ``object_name`` on ``adapter`` via ``describe()``.
+
+    ``adapter`` is ``None`` when an already-configured source was found
+    unreachable; the wizard degrades to manual entry and existence stays
+    unverified rather than being reported as missing.
+    """
+    if adapter is None:
+        return ExistenceCheck(verified=False, exists=None)
+    try:
+        info = adapter.describe(object_name)
+    except Exception as exc:
+        return ExistenceCheck(verified=True, exists=False, error=str(exc))
+    return ExistenceCheck(verified=True, exists=True, info=info)
