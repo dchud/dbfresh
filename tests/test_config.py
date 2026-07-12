@@ -99,3 +99,54 @@ def test_load_config_store_mapping_without_path(tmp_path):
     cfg = load_config(path, env={})
     assert cfg.store.path is None
     assert cfg.store.retain_days == 10
+
+
+def test_load_config_schema_check_accepts_unchanged(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: schema
+    expect: { unchanged: true }
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].expect.operator == "unchanged"
+
+
+def test_load_config_schema_check_rejects_numeric_operator(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: schema
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ValueError):
+        load_config(path, env={})
+
+
+def test_load_config_rejects_unchanged_on_non_schema_check(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { unchanged: true }
+""",
+    )
+    with pytest.raises(ValueError):
+        load_config(path, env={})

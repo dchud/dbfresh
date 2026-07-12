@@ -80,14 +80,14 @@ class Config:
     calendar: BusinessCalendar | None = None
 
 
-def _parse_by_weekday(raw: Any) -> dict[str, Any] | None:
+def _parse_by_weekday(raw: Any, metric: str | None = None) -> dict[str, Any] | None:
     if not raw:
         return None
     parsed = {}
     for day, expect in raw.items():
         if day not in WEEKDAY_NAMES:
             raise ValueError(f"unknown weekday in by_weekday: {day!r}")
-        parsed[day] = parse_expectation(expect)
+        parsed[day] = parse_expectation(expect, metric=metric)
     return parsed
 
 
@@ -119,13 +119,16 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
 
     checks = []
     for raw in data.get("checks") or []:
-        expect = parse_expectation(raw["expect"]) if "expect" in raw else None
+        metric = raw.get("metric")
+        expect = (
+            parse_expectation(raw["expect"], metric=metric) if "expect" in raw else None
+        )
         on_holiday = raw.get("on_holiday")
         checks.append(
             Check(
                 source=raw["source"],
                 object=raw["object"],
-                metric=raw.get("metric"),
+                metric=metric,
                 column=raw.get("column"),
                 key=raw.get("key"),
                 where=raw.get("where"),
@@ -134,8 +137,10 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
                 allow_empty=raw.get("allow_empty", False),
                 severity=raw.get("severity", "error"),
                 id=raw.get("id"),
-                by_weekday=_parse_by_weekday(raw.get("by_weekday")),
-                on_holiday=parse_expectation(on_holiday) if on_holiday else None,
+                by_weekday=_parse_by_weekday(raw.get("by_weekday"), metric=metric),
+                on_holiday=(
+                    parse_expectation(on_holiday, metric=metric) if on_holiday else None
+                ),
                 calendar=_parse_check_calendar_mode(raw.get("calendar")),
                 skip_off_schedule=raw.get(
                     "skip_off_schedule", default_skip_off_schedule

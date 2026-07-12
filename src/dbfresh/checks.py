@@ -78,14 +78,23 @@ class Expectation:
         if self.operator == "between":
             lo, hi = self.operand
             return f"between {lo} and {hi}"
+        if self.operator == "unchanged":
+            return "unchanged"
         return f"{self.operator} {self.operand}"
 
 
-def parse_expectation(expect: dict) -> Expectation:
+_SCHEMA_OPERATORS = frozenset({"unchanged", "equals", "eq"})
+_ALL_OPERATORS = _NUMERIC_OPERATORS | {"max_lag", "unchanged"}
+
+
+def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
     """Validate and build a single-operator :class:`Expectation`.
 
     Exactly one operator is allowed per check; ``{min, max}`` together is a
-    validation error (use ``between``).
+    validation error (use ``between``). When ``metric`` is given, operator
+    compatibility is enforced (§6.3): ``unchanged`` is valid only for a
+    ``schema`` check, and a ``schema`` check accepts only ``unchanged`` or
+    ``equals``/``eq`` — no numeric bound, ``max_lag``, or ``vs_previous``.
     """
     if not expect:
         raise ValueError("expectation is empty")
@@ -94,8 +103,14 @@ def parse_expectation(expect: dict) -> Expectation:
             f"a check takes exactly one expectation operator, got {sorted(expect)}"
         )
     [(operator, operand)] = expect.items()
-    if operator not in _NUMERIC_OPERATORS and operator != "max_lag":
+    if operator not in _ALL_OPERATORS:
         raise ValueError(f"unknown or unsupported expectation operator: {operator!r}")
+    if operator == "unchanged" and metric != "schema":
+        raise ValueError("'unchanged' is only valid for the schema metric")
+    if metric == "schema" and operator not in _SCHEMA_OPERATORS:
+        raise ValueError(
+            f"schema check does not support expectation operator: {operator!r}"
+        )
     if operator == "max_lag":
         parse_duration(operand)  # validate the duration up front
     elif operator == "between" and (
