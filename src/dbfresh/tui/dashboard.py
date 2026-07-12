@@ -141,3 +141,8 @@ def build_dashboard(tree: Tree, config: Config, store: Store) -> None:
 
         source_status = _worst_or_unknown(source_statuses)
         source_node.set_label(_status_label(source_name, source_status))
+
+    # The root itself carries no status (it is the tree's title, not a
+    # check tier); expand it so sources are visible without an extra
+    # keypress. Kept expanded across rebuilds since reset() preserves it.
+    tree.root.expand()
