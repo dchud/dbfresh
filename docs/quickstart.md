@@ -96,7 +96,7 @@ uv run dbfresh run -c config.yaml
 ```
 
 ```text
-DATA CHECK REPORT — 2026-07-12 17:45 EDT
+DATA CHECK REPORT — 2026-07-12T21:45:00Z
 2 checks · 2 passed · 0 failed · 0 warned · 0 skipped · 0 unreachable
 ```
 
