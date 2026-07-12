@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _resolve_read_context(config_path: Path):
-    """Config dir and store settings for a read-only store command.
+    """Config dir, store settings, and calendar for a read-only store command.
 
     Tolerant of a missing config file: history/prune only need it for
     default store-path resolution and retain_days, not sources/checks.
@@ -65,8 +65,8 @@ def _resolve_read_context(config_path: Path):
 
     if config_path.exists():
         config = load_config(config_path)
-        return config.config_dir, config.store
-    return Path.cwd(), None
+        return config.config_dir, config.store, config.calendar
+    return Path.cwd(), None, None
 
 
 def _run_command(args: argparse.Namespace) -> int:
@@ -74,7 +74,7 @@ def _run_command(args: argparse.Namespace) -> int:
 
     from dbfresh.config import load_config
     from dbfresh.engine import exit_code
-    from dbfresh.report import render_digest, render_json
+    from dbfresh.report import display_timezone, render_digest, render_json
     from dbfresh.runner import run_and_persist
     from dbfresh.store import Store, resolve_store_path
 
@@ -103,15 +103,18 @@ def _run_command(args: argparse.Namespace) -> int:
         if store is not None:
             store.close()
 
-    print(render_json(run) if args.json else render_digest(run))
+    if args.json:
+        print(render_json(run))
+    else:
+        print(render_digest(run, tz=display_timezone(config.calendar)))
     return exit_code(run.status)
 
 
 def _history_command(args: argparse.Namespace) -> int:
-    from dbfresh.report import render_candidates, render_history
+    from dbfresh.report import display_timezone, render_candidates, render_history
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config = _resolve_read_context(Path(args.config))
+    config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,
@@ -130,7 +133,7 @@ def _history_command(args: argparse.Namespace) -> int:
             print(render_candidates(args.object, candidates))
             return 2
         rows = store.history(candidates[0]["check_id"], limit=args.n)
-        print(render_history(candidates[0], rows))
+        print(render_history(candidates[0], rows, tz=display_timezone(calendar)))
         return 0
     finally:
         store.close()
@@ -140,7 +143,7 @@ def _prune_command(args: argparse.Namespace) -> int:
     from dbfresh.config import StoreConfig
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config = _resolve_read_context(Path(args.config))
+    config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,

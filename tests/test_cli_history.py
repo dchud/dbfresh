@@ -136,6 +136,19 @@ def test_history_limit_flag(tmp_path, capsys):
     assert "1.0" not in out
 
 
+def test_history_uses_calendar_timezone(tmp_path, capsys):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ncalendar:\n  timezone: America/New_York\nchecks: []\n")
+    store_path = tmp_path / "obs.db"
+    _seed(store_path, [(_result(value=100), datetime(2026, 7, 8, 12, tzinfo=UTC))])
+    code = main(
+        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "2026-07-08T08:00:00-04:00" in out
+
+
 def test_history_works_without_config_file(tmp_path, capsys):
     store_path = tmp_path / "obs.db"
     _seed(store_path, [(_result(value=1), None)])

@@ -1,4 +1,5 @@
 import json
+import re
 
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.cli import main
@@ -126,6 +127,27 @@ def test_run_skips_check_off_schedule(tmp_path, capsys):
     code = main(["run", "-c", str(cfg)])
     assert code == 0
     assert "1 skipped" in capsys.readouterr().out
+
+
+def test_run_digest_header_uses_calendar_timezone(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "calendar:\n"
+        "  timezone: America/New_York\n"
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    code = main(["run", "-c", str(cfg)])
+    assert code == 0
+    header = capsys.readouterr().out.splitlines()[0]
+    assert "DATA CHECK REPORT — " in header
+    assert re.search(r"T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$", header)
 
 
 def test_run_schema_check_establishes_baseline_then_detects_drift(tmp_path, capsys):
