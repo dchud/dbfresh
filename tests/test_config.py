@@ -63,3 +63,39 @@ checks:
     )
     with pytest.raises(ValueError):
         load_config(path, env={})
+
+
+def test_load_config_exposes_config_dir(tmp_path):
+    path = _write(tmp_path, "sources: {}\nchecks: []\n")
+    cfg = load_config(path, env={})
+    assert cfg.config_dir == tmp_path
+
+
+def test_load_config_defaults_store_to_none(tmp_path):
+    path = _write(tmp_path, "sources: {}\nchecks: []\n")
+    cfg = load_config(path, env={})
+    assert cfg.store is None
+
+
+def test_load_config_bare_string_store_is_path_shorthand(tmp_path):
+    path = _write(tmp_path, "store: ./obs.db\nsources: {}\nchecks: []\n")
+    cfg = load_config(path, env={})
+    assert cfg.store.path == "./obs.db"
+    assert cfg.store.retain_days == 400
+
+
+def test_load_config_store_mapping_with_retain_days(tmp_path):
+    path = _write(
+        tmp_path,
+        "store: { path: ./obs.db, retain_days: 90 }\nsources: {}\nchecks: []\n",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.store.path == "./obs.db"
+    assert cfg.store.retain_days == 90
+
+
+def test_load_config_store_mapping_without_path(tmp_path):
+    path = _write(tmp_path, "store: { retain_days: 10 }\nsources: {}\nchecks: []\n")
+    cfg = load_config(path, env={})
+    assert cfg.store.path is None
+    assert cfg.store.retain_days == 10

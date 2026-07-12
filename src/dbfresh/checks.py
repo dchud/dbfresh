@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import timedelta
@@ -116,6 +117,41 @@ class Check:
     allow_empty: bool = False
     severity: str = "error"
     id: str | None = None
+    by_weekday: dict[str, Expectation] | None = None
+    on_holiday: Expectation | None = None
+    calendar: str | None = None
+    skip_off_schedule: bool = False
+
+
+_TABLE_LEVEL_METRICS = frozenset({"row_count", "schema"})
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+
+def _normalize_assert_text(text: str) -> str:
+    """Strip and collapse internal whitespace runs to a single space."""
+    return _WHITESPACE_RUN.sub(" ", text.strip())
+
+
+def check_id(check: Check) -> str:
+    """A check's stable identity: the explicit ``id``, else a derived hash.
+
+    The derived form hashes the identity tuple (source, object, metric, and
+    the discriminating column/key, or the normalized assertion text) — never
+    the expectation, so tuning a threshold preserves history (§8.2).
+    """
+    if check.id:
+        return check.id
+    if check.assert_ is not None:
+        metric = ""
+        discriminant = _normalize_assert_text(check.assert_)
+    else:
+        metric = check.metric or ""
+        if metric in _TABLE_LEVEL_METRICS:
+            discriminant = ""
+        else:
+            discriminant = check.column or check.key or ""
+    identity = "\x1f".join((check.source, check.object, metric, discriminant))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
 
 
 def compile_metric_sql(check: Check, dialect: Any) -> str:
