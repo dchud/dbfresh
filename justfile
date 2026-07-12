@@ -23,3 +23,8 @@ check: lint test
 # Run the CLI (pass args after `--`, e.g. `just run -- --version`).
 run *args:
     uv run dbfresh {{args}}
+
+# Regenerate registry-derived reference pages, then build the docs site.
+docs:
+    uv run --group docs python -m dbfresh.docsgen
+    uv run --group docs mkdocs build --strict

@@ -1,0 +1,58 @@
+site_name: dbfresh
+site_description: >-
+  External, value-level freshness and constraint checks for SQL Server and
+  Databricks data sources.
+repo_url: https://github.com/dchud/dbfresh
+repo_name: dchud/dbfresh
+docs_dir: docs
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - content.code.copy
+    - toc.follow
+
+markdown_extensions:
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Concepts: concepts.md
+  - Check reference:
+      - Check reference: checks.md
+      - "Generated: metric reference": reference/metrics.md
+      - "Generated: applicability matrix": reference/matrix.md
+  - Expectations & durations:
+      - Expectations & durations: expectations.md
+      - "Generated: operator reference": reference/operators.md
+  - Calendar & scheduling: calendar.md
+  - History & trends: history.md
+  - CLI reference:
+      - "Generated: CLI reference": reference/cli.md
+  - TUI guide: tui.md
+  - Authoring checks: authoring-checks.md
+  - Configuration reference: configuration.md
+  - Team workflow: team-workflow.md
+  - Extending — adding a source type: extending.md

@@ -36,3 +36,7 @@ dbfresh.db
 
 # Project-local scratch
 tmp/
+
+# Docs: generated reference pages and the built site are build artifacts
+docs/reference/
+site/

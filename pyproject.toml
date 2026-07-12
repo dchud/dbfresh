@@ -49,6 +49,9 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.15.21",
 ]
+docs = [
+    "mkdocs-material>=9.7.6",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4"]
