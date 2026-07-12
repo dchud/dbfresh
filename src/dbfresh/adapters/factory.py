@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbfresh.adapters.postgres import PostgresAdapter
 from dbfresh.adapters.sqlite import SqliteAdapter
 
-_ADAPTERS = {"sqlite": SqliteAdapter}
+_ADAPTERS = {"sqlite": SqliteAdapter, "postgres": PostgresAdapter}
 
 
 def create_adapter(type_: str, params: dict[str, Any]):

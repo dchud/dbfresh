@@ -34,6 +34,11 @@ Homepage = "https://github.com/dchud/dbfresh"
 Repository = "https://github.com/dchud/dbfresh"
 Issues = "https://github.com/dchud/dbfresh/issues"
 
+[project.optional-dependencies]
+postgres = [
+    "psycopg>=3.3.4",
+]
+
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
 build-backend = "uv_build"
