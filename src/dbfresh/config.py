@@ -99,6 +99,43 @@ def _parse_check_calendar_mode(raw: Any) -> str | None:
     return raw
 
 
+def _build_check(raw: dict, defaults: dict) -> Check:
+    """Build one Check, merging ``defaults:`` fields the check itself omits.
+
+    Merged fields are ``severity``, ``calendar``, ``where``, ``allow_empty``,
+    and ``skip_off_schedule`` (§12.1); a per-check value always overrides the
+    default, including an explicit falsy value such as ``allow_empty: false``.
+    """
+    metric = raw.get("metric")
+    expect = (
+        parse_expectation(raw["expect"], metric=metric) if "expect" in raw else None
+    )
+    on_holiday = raw.get("on_holiday")
+    return Check(
+        source=raw["source"],
+        object=raw["object"],
+        metric=metric,
+        column=raw.get("column"),
+        key=raw.get("key"),
+        where=raw.get("where", defaults.get("where")),
+        assert_=raw.get("assert"),
+        expect=expect,
+        allow_empty=raw.get("allow_empty", defaults.get("allow_empty", False)),
+        severity=raw.get("severity", defaults.get("severity", "error")),
+        id=raw.get("id"),
+        by_weekday=_parse_by_weekday(raw.get("by_weekday"), metric=metric),
+        on_holiday=(
+            parse_expectation(on_holiday, metric=metric) if on_holiday else None
+        ),
+        calendar=_parse_check_calendar_mode(
+            raw.get("calendar", defaults.get("calendar"))
+        ),
+        skip_off_schedule=raw.get(
+            "skip_off_schedule", defaults.get("skip_off_schedule", False)
+        ),
+    )
+
+
 def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     """Parse a YAML config, interpolate secrets, and validate references."""
     path = Path(path)
@@ -115,38 +152,8 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     }
 
     defaults = data.get("defaults") or {}
-    default_skip_off_schedule = defaults.get("skip_off_schedule", False)
 
-    checks = []
-    for raw in data.get("checks") or []:
-        metric = raw.get("metric")
-        expect = (
-            parse_expectation(raw["expect"], metric=metric) if "expect" in raw else None
-        )
-        on_holiday = raw.get("on_holiday")
-        checks.append(
-            Check(
-                source=raw["source"],
-                object=raw["object"],
-                metric=metric,
-                column=raw.get("column"),
-                key=raw.get("key"),
-                where=raw.get("where"),
-                assert_=raw.get("assert"),
-                expect=expect,
-                allow_empty=raw.get("allow_empty", False),
-                severity=raw.get("severity", "error"),
-                id=raw.get("id"),
-                by_weekday=_parse_by_weekday(raw.get("by_weekday"), metric=metric),
-                on_holiday=(
-                    parse_expectation(on_holiday, metric=metric) if on_holiday else None
-                ),
-                calendar=_parse_check_calendar_mode(raw.get("calendar")),
-                skip_off_schedule=raw.get(
-                    "skip_off_schedule", default_skip_off_schedule
-                ),
-            )
-        )
+    checks = [_build_check(raw, defaults) for raw in data.get("checks") or []]
 
     for check in checks:
         if check.source not in sources:
