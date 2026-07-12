@@ -128,6 +128,56 @@ def test_run_skips_check_off_schedule(tmp_path, capsys):
     assert "1 skipped" in capsys.readouterr().out
 
 
+def test_run_schema_check_establishes_baseline_then_detects_drift(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER, name TEXT)")
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    assert main(["run", "-c", str(cfg)]) == 0
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    adapter.close()
+
+    assert main(["run", "-c", str(cfg)]) == 2
+    out = capsys.readouterr().out
+    assert "+ email (TEXT)" in out
+
+
+def test_run_schema_check_no_store_always_passes(tmp_path):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER)")
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN extra TEXT")
+    adapter.close()
+
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+
+
 def test_run_store_flag_wins_over_env_var(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
     _seed_db(db)
@@ -138,3 +188,38 @@ def test_run_store_flag_wins_over_env_var(tmp_path, monkeypatch):
     main(["run", "-c", str(cfg), "--store", str(flag_path)])
     assert flag_path.exists()
     assert not env_path.exists()
+
+
+_VS_PREVIOUS_EXPECT = (
+    "{ vs_previous: { baseline: previous, min_ratio: 0.5, max_ratio: 2.0 } }"
+)
+
+
+def _insert_n_rows(db, n, start=0):
+    adapter = SqliteAdapter(str(db))
+    values = ", ".join(f"({i})" for i in range(start, start + n))
+    adapter.rows(f"INSERT INTO t (id) VALUES {values}")
+    adapter.close()
+
+
+def test_run_vs_previous_establishes_baseline_then_detects_3x_swing(tmp_path):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER)")
+    adapter.close()
+    _insert_n_rows(db, 100)
+
+    cfg = _config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
+    assert main(["run", "-c", str(cfg)]) == 0  # first run: no baseline, on_missing pass
+
+    _insert_n_rows(db, 250, start=100)  # table now has 350 rows
+
+    assert main(["run", "-c", str(cfg)]) == 2  # 350 vs baseline 100 -> 3.5x swing
+
+
+def test_run_vs_previous_no_store_always_on_missing_pass(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+    assert main(["run", "-c", str(cfg), "--no-store"]) == 0

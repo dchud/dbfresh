@@ -31,6 +31,10 @@ def render_digest(run: RunResult, now: datetime | None = None) -> str:
         lines.append(f"✗ {obj} · {label}")
         if result.error:
             lines.append(f"    {result.error}")
+        elif result.diff:
+            lines.append(f"    schema drift (expected {result.expected})")
+            for change in result.diff:
+                lines.append(f"      {change}")
         elif result.samples is not None:
             lines.append(f"    {result.value} row(s) violate the constraint")
             for row in result.samples[:10]:

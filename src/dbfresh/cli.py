@@ -79,12 +79,12 @@ def _run_command(args: argparse.Namespace) -> int:
         name: create_adapter(source.type, source.params)
         for name, source in config.sources.items()
     }
-    try:
-        run = run_checks(adapters, config.checks, calendar=config.calendar)
-    finally:
-        for adapter in adapters.values():
-            adapter.close()
 
+    # Opened before run_checks (not just after) so history-based
+    # expectations (schema unchanged; later vs_previous) can read prior
+    # observations during evaluation; at that point the store holds only
+    # earlier runs, since this run's results are persisted below.
+    store = None
     if not args.no_store:
         store_path = resolve_store_path(
             config_dir=config.config_dir,
@@ -93,10 +93,18 @@ def _run_command(args: argparse.Namespace) -> int:
             env_store=os.environ.get("DBFRESH_STORE"),
         )
         store = Store(store_path)
+
+    try:
+        run = run_checks(adapters, config.checks, calendar=config.calendar, store=store)
+    finally:
+        for adapter in adapters.values():
+            adapter.close()
+
+    if store is not None:
         try:
             run_id = store.start_run(git_sha=capture_git_sha(config_path))
             for result in run.results:
-                store.record_observation(run_id, result)
+                store.record_observation(run_id, result, calendar=config.calendar)
             store.finish_run(run_id, run.status)
         finally:
             store.close()
