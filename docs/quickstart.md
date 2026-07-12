@@ -81,7 +81,10 @@ uv run python -c "
 from dbfresh.adapters.sqlite import SqliteAdapter
 a = SqliteAdapter('demo.db')
 a.rows('CREATE TABLE orders (id INTEGER, customer_email TEXT)')
-a.rows(\"INSERT INTO orders (id, customer_email) VALUES (1, 'a@example.com'), (2, 'b@example.com'), (3, NULL)\")
+a.rows('''
+    INSERT INTO orders (id, customer_email) VALUES
+    (1, \"a@example.com\"), (2, \"b@example.com\"), (3, NULL)
+''')
 a.close()
 "
 ```

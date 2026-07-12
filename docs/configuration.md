@@ -84,12 +84,12 @@ checks:
 | key | where | purpose |
 | --- | --- | --- |
 | `version` | root only | schema version (`1`) |
-| `include` | root only | path globs contributing additional checks, see Composition |
-| `store` | root only | observation-store path and retention; a bare string is shorthand for `{path: ...}` |
-| `calendar` | root only | business calendar; required by any check using `by_weekday` / `on_holiday` / `calendar: business` / `skip_off_schedule` |
+| `include` | root only | path globs for extra checks files (see Composition) |
+| `store` | root only | observation-store path and retention |
+| `calendar` | root only | business calendar (see Calendar & scheduling) |
 | `sources` | root only | named source connections |
-| `defaults` | root only | fields merged into every check that omits them: `severity`, `calendar`, `where`, `allow_empty`, `skip_off_schedule` |
-| `checks` | root and included files | the check list |
+| `defaults` | root only | fields merged into checks that omit them |
+| `checks` | root + included | the check list |
 
 A per-check value always overrides the corresponding `defaults:` entry,
 including an explicit falsy value (`allow_empty: false` on a check wins over

@@ -21,9 +21,9 @@ winning or losing against a real status, until the next run.
 
 | key | action |
 | --- | --- |
-| `r` | Run every configured check now, and refresh the dashboard from the new observations. |
+| `r` | Run every configured check now, refresh the dashboard. |
 | `c` | Open **Configure**. |
-| `p` | Open **Report** -- the digest from the most recent *in-session* run. |
+| `p` | Open **Report** -- the digest from the latest in-session run. |
 | `q` | Quit. |
 
 Selecting a check's leaf node in the dashboard tree opens that check's
