@@ -80,11 +80,68 @@ class Expectation:
             return f"between {lo} and {hi}"
         if self.operator == "unchanged":
             return "unchanged"
+        if self.operator == "vs_previous":
+            return _describe_vs_previous(self.operand)
         return f"{self.operator} {self.operand}"
 
 
+def _describe_vs_previous(spec: dict) -> str:
+    parts = [f"vs_previous({spec['baseline']})"]
+    if spec["min_ratio"] is not None or spec["max_ratio"] is not None:
+        lo = spec["min_ratio"] if spec["min_ratio"] is not None else "-"
+        hi = spec["max_ratio"] if spec["max_ratio"] is not None else "-"
+        parts.append(f"ratio [{lo}, {hi}]")
+    if spec["min_delta"] is not None or spec["max_delta"] is not None:
+        lo = spec["min_delta"] if spec["min_delta"] is not None else "-"
+        hi = spec["max_delta"] if spec["max_delta"] is not None else "-"
+        parts.append(f"delta [{lo}, {hi}]")
+    return " ".join(parts)
+
+
 _SCHEMA_OPERATORS = frozenset({"unchanged", "equals", "eq"})
-_ALL_OPERATORS = _NUMERIC_OPERATORS | {"max_lag", "unchanged"}
+_ALL_OPERATORS = _NUMERIC_OPERATORS | {"max_lag", "unchanged", "vs_previous"}
+_VS_PREVIOUS_BASELINES = frozenset({"previous", "last_same_weekday"})
+_ON_MISSING_MODES = frozenset({"pass", "warn", "skip"})
+
+
+def _parse_vs_previous(operand: Any) -> dict:
+    """Validate and normalize a ``vs_previous`` operand (§8.3).
+
+    Requires ``baseline`` (``previous`` | ``last_same_weekday``) and at
+    least one guard (a ratio pair and/or a delta pair); ``on_missing``
+    defaults to ``pass``.
+    """
+    if not isinstance(operand, dict):
+        raise ValueError("'vs_previous' requires a mapping operand")
+    baseline = operand.get("baseline")
+    if baseline not in _VS_PREVIOUS_BASELINES:
+        raise ValueError(
+            "vs_previous.baseline must be one of "
+            f"{sorted(_VS_PREVIOUS_BASELINES)}, got {baseline!r}"
+        )
+    on_missing = operand.get("on_missing", "pass")
+    if on_missing not in _ON_MISSING_MODES:
+        raise ValueError(
+            f"vs_previous.on_missing must be one of {sorted(_ON_MISSING_MODES)}, "
+            f"got {on_missing!r}"
+        )
+    min_ratio = operand.get("min_ratio")
+    max_ratio = operand.get("max_ratio")
+    min_delta = operand.get("min_delta")
+    max_delta = operand.get("max_delta")
+    if all(v is None for v in (min_ratio, max_ratio, min_delta, max_delta)):
+        raise ValueError(
+            "vs_previous requires at least one of "
+            "min_ratio/max_ratio/min_delta/max_delta"
+        )
+    return {
+        "baseline": baseline,
+        "min_ratio": min_ratio,
+        "max_ratio": max_ratio,
+        "min_delta": min_delta,
+        "max_delta": max_delta,
+        "on_missing": on_missing,
+    }
 
 
 def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
@@ -93,8 +150,9 @@ def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
     Exactly one operator is allowed per check; ``{min, max}`` together is a
     validation error (use ``between``). When ``metric`` is given, operator
     compatibility is enforced (§6.3): ``unchanged`` is valid only for a
-    ``schema`` check, and a ``schema`` check accepts only ``unchanged`` or
-    ``equals``/``eq`` — no numeric bound, ``max_lag``, or ``vs_previous``.
+    ``schema`` check, a ``schema`` check accepts only ``unchanged`` or
+    ``equals``/``eq``, and ``vs_previous`` is rejected on ``freshness`` and
+    ``schema`` (numeric metrics only).
     """
     if not expect:
         raise ValueError("expectation is empty")
@@ -111,12 +169,16 @@ def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
         raise ValueError(
             f"schema check does not support expectation operator: {operator!r}"
         )
+    if operator == "vs_previous" and metric == "freshness":
+        raise ValueError("'vs_previous' is not valid for a freshness check")
     if operator == "max_lag":
         parse_duration(operand)  # validate the duration up front
     elif operator == "between" and (
         not isinstance(operand, (list, tuple)) or len(operand) != 2
     ):
         raise ValueError("'between' requires exactly [lo, hi]")
+    elif operator == "vs_previous":
+        operand = _parse_vs_previous(operand)
     return Expectation(operator=operator, operand=operand)
 
 
