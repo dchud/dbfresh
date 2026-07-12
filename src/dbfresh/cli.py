@@ -48,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     add = subcommands.add_parser("add", help="interactive check-authoring wizard")
     add.add_argument("-c", "--config", default="config.yaml")
 
+    ui = subcommands.add_parser("ui", help="interactive Textual dashboard")
+    ui.add_argument("-c", "--config", default="config.yaml")
+    ui.add_argument("--store", default=None, help="observation store path")
+
     return parser
 
 
@@ -337,6 +341,14 @@ def _add_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ui_command(args: argparse.Namespace) -> int:
+    from dbfresh.tui.app import DbfreshApp
+
+    app = DbfreshApp(config_path=args.config, store_path=args.store)
+    app.run()
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -348,6 +360,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _prune_command(args)
     if args.command == "add":
         return _add_command(args)
+    if args.command == "ui":
+        return _ui_command(args)
     parser.print_help()
     return 0
 
