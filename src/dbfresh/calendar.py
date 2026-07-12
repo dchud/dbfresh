@@ -36,6 +36,11 @@ class BusinessCalendar:
         self._extra = extra
         self._remove = remove
 
+    @property
+    def zone(self) -> ZoneInfo:
+        """The calendar's timezone, as a :class:`~zoneinfo.ZoneInfo`."""
+        return self._zone
+
     def local_date(self, when: dt.datetime) -> dt.date:
         """``when`` converted to the calendar timezone, then reduced to a date."""
         return when.astimezone(self._zone).date()

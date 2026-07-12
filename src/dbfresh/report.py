@@ -3,20 +3,43 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 
+from dbfresh.calendar import BusinessCalendar
 from dbfresh.engine import Result, RunResult, Status
 
 
-def render_digest(run: RunResult, now: datetime | None = None) -> str:
+def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
+    """ISO 8601 at second precision, for consistent display everywhere.
+
+    A naive ``when`` is assumed to already be UTC. The result is converted
+    to ``tz`` (default UTC) and written with a trailing ``Z`` when that
+    offset is zero, otherwise a numeric ``+HH:MM``/``-HH:MM`` offset. No
+    microseconds.
+    """
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    when = when.astimezone(tz if tz is not None else UTC).replace(microsecond=0)
+    text = when.isoformat()
+    return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
+
+
+def display_timezone(calendar: BusinessCalendar | None) -> tzinfo | None:
+    """The report display timezone: a configured calendar's zone, else UTC."""
+    return calendar.zone if calendar is not None else None
+
+
+def render_digest(
+    run: RunResult, now: datetime | None = None, tz: tzinfo | None = None
+) -> str:
     """A plain-text digest: a header with counts, then one block per non-OK check."""
-    when = now if now is not None else datetime.now().astimezone()
+    when = now if now is not None else datetime.now(UTC)
     counts = dict.fromkeys(Status, 0)
     for result in run.results:
         counts[result.status] += 1
 
     lines = [
-        f"DATA CHECK REPORT — {when:%Y-%m-%d %H:%M %Z}",
+        f"DATA CHECK REPORT — {format_timestamp(when, tz)}",
         f"{len(run.results)} checks · {counts[Status.OK]} passed"
         f" · {counts[Status.FAIL]} failed · {counts[Status.WARN]} warned"
         f" · {counts[Status.SKIPPED]} skipped · {counts[Status.ERROR]} unreachable",
