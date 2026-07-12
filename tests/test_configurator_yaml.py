@@ -7,6 +7,7 @@ from dbfresh.adapters.factory import create_adapter
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.config import load_config
 from dbfresh.configurator import (
+    add_source,
     append_checks,
     build_check,
     propose_checks,
@@ -102,6 +103,28 @@ def test_append_checks_to_included_mapping_file(tmp_path):
     append_checks(included, [new_check])
     data = yaml.safe_load(included.read_text())
     assert [c["object"] for c in data["checks"]] == ["existing", "new"]
+
+
+def test_add_source_writes_a_new_source_into_the_root_config(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+    add_source(cfg, "s", "sqlite", {"database": ":memory:"})
+    data = yaml.safe_load(cfg.read_text())
+    assert data["sources"]["s"] == {"type": "sqlite", "database": ":memory:"}
+
+
+def test_add_source_preserves_existing_sources_and_checks(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n  existing: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "  - source: existing\n    object: t\n    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    add_source(cfg, "new", "sqlite", {"database": "other.db"})
+    data = yaml.safe_load(cfg.read_text())
+    assert set(data["sources"]) == {"existing", "new"}
+    assert len(data["checks"]) == 1
 
 
 def test_emitted_bundle_reparses_and_runs_under_load_config(tmp_path):

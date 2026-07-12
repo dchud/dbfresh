@@ -292,6 +292,22 @@ def target_files(config_path: str | Path) -> list[Path]:
     return sorted(matched, key=lambda p: p.as_posix())
 
 
+def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> None:
+    """Write a new source definition into the root config (§12.1, §12.2).
+
+    ``sources:`` is declared only in the root config, never an included
+    checks file, so this always targets ``config_path`` directly.
+    """
+    config_path = Path(config_path)
+    raw = yaml.safe_load(config_path.read_text()) if config_path.exists() else None
+    raw = dict(raw) if raw else {}
+    sources = dict(raw.get("sources") or {})
+    sources[name] = {"type": type_, **params}
+    raw["sources"] = sources
+    raw.setdefault("checks", [])
+    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+
 def append_checks(target_path: str | Path, new_checks: list[dict]) -> None:
     """Append proposed check blocks to ``target_path``.
 
