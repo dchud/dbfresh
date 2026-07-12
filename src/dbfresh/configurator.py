@@ -11,8 +11,13 @@ emits YAML for the version-controlled config.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from dbfresh.adapters.base import Category, Column
+from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
+
+_ROW_COUNT_MIN_RATIO = 0.5
+_ROW_COUNT_MAX_RATIO = 2.0
+_DEFAULT_MAX_LAG = "24h"
 
 _CONVENTIONAL_TIMESTAMP_NAMES = frozenset(
     {"modified_at", "updated_at", "loaded_at", "load_ts", "created_at"}
@@ -97,3 +102,105 @@ def offered_column_checks(columns: list[Column]) -> list[dict]:
             {"column": column.name, "category": column.category.value, "checks": checks}
         )
     return offers
+
+
+def build_check(
+    source: str,
+    obj: str,
+    metric: str,
+    *,
+    column: str | None = None,
+    key: str | None = None,
+    expect: dict,
+    **extra: Any,
+) -> dict:
+    """Assemble one YAML-ready check block (§12.1 shape).
+
+    The single builder used both by :func:`propose_checks` and by a wizard
+    turning an offered column check (or a fully manual entry) into a block,
+    so every emitted check has the same shape.
+    """
+    block: dict[str, Any] = {"source": source, "object": obj, "metric": metric}
+    if column is not None:
+        block["column"] = column
+    if key is not None:
+        block["key"] = key
+    block.update(extra)
+    block["expect"] = expect
+    return block
+
+
+def _row_count_baseline(has_calendar: bool) -> str:
+    return "last_same_weekday" if has_calendar else "previous"
+
+
+def propose_checks(
+    source: str,
+    obj: str,
+    info: ObjectInfo,
+    dialect: Dialect,
+    has_calendar: bool = False,
+    is_view: bool = False,
+) -> list[dict]:
+    """The metadata-driven proposal bundle for a named source + object (§11.1).
+
+    Always proposes ``schema`` (unchanged) and a ``row_count`` volume-stability
+    check. Proposes ``freshness`` on the auto-detected timestamp column
+    (:func:`pick_timestamp_column`); when no column candidate exists, a
+    Databricks-capable dialect on a table (not a view) falls back to
+    ``describe_history``, otherwise no freshness check is proposed. Proposes
+    one ``duplicate_count`` check per single-column key in ``info.keys``
+    (composite keys are out of scope, §6.2).
+    """
+    checks: list[dict] = [
+        build_check(source, obj, "schema", expect={"unchanged": True}),
+        build_check(
+            source,
+            obj,
+            "row_count",
+            expect={
+                "vs_previous": {
+                    "baseline": _row_count_baseline(has_calendar),
+                    "min_ratio": _ROW_COUNT_MIN_RATIO,
+                    "max_ratio": _ROW_COUNT_MAX_RATIO,
+                }
+            },
+        ),
+    ]
+
+    timestamp = pick_timestamp_column(info.columns)
+    if timestamp.column is not None:
+        checks.append(
+            build_check(
+                source,
+                obj,
+                "freshness",
+                column=timestamp.column,
+                freshness_source="column",
+                expect={"max_lag": _DEFAULT_MAX_LAG},
+            )
+        )
+    elif (
+        not timestamp.needs_choice
+        and not is_view
+        and "describe_history" in dialect.freshness_sources
+    ):
+        checks.append(
+            build_check(
+                source,
+                obj,
+                "freshness",
+                freshness_source="describe_history",
+                expect={"max_lag": _DEFAULT_MAX_LAG},
+            )
+        )
+
+    for key in info.keys or []:
+        if len(key) == 1:
+            checks.append(
+                build_check(
+                    source, obj, "duplicate_count", key=key[0], expect={"max": 0}
+                )
+            )
+
+    return checks
