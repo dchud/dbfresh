@@ -11,7 +11,10 @@ emits YAML for the version-controlled config.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
 
@@ -267,3 +270,43 @@ def check_object_exists(adapter: Any | None, object_name: str) -> ExistenceCheck
     except Exception as exc:
         return ExistenceCheck(verified=True, exists=False, error=str(exc))
     return ExistenceCheck(verified=True, exists=True, info=info)
+
+
+def target_files(config_path: str | Path) -> list[Path]:
+    """Files eligible to receive new checks (§11.3, §12.2).
+
+    When the root config declares ``include:``, the wizard asks which
+    included checks file receives the new block: this returns the resolved
+    matches (lexicographic order, matching load order). Without
+    ``include:``, the only target is the root config itself.
+    """
+    config_path = Path(config_path)
+    data = yaml.safe_load(config_path.read_text()) or {}
+    patterns = data.get("include")
+    if not patterns:
+        return [config_path]
+    config_dir = config_path.resolve().parent
+    matched: set[Path] = set()
+    for pattern in patterns:
+        matched.update(p for p in config_dir.glob(pattern) if p.is_file())
+    return sorted(matched, key=lambda p: p.as_posix())
+
+
+def append_checks(target_path: str | Path, new_checks: list[dict]) -> None:
+    """Append proposed check blocks to ``target_path``.
+
+    ``target_path`` is either the root config (a mapping with ``sources:``,
+    ``checks:``, etc. -- every other top-level key is preserved) or an
+    included checks file (a bare list, or a ``{checks: [...]}`` mapping).
+    Never writes to the observation store -- definitions stay in git.
+    """
+    target_path = Path(target_path)
+    raw = yaml.safe_load(target_path.read_text()) if target_path.exists() else None
+    if raw is None:
+        raw = {"checks": []}
+    if isinstance(raw, list):
+        raw = raw + new_checks
+    else:
+        raw = dict(raw)
+        raw["checks"] = list(raw.get("checks") or []) + new_checks
+    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
