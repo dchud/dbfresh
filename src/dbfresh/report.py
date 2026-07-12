@@ -3,20 +3,43 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime, tzinfo
 
+from dbfresh.calendar import BusinessCalendar
 from dbfresh.engine import Result, RunResult, Status
 
 
-def render_digest(run: RunResult, now: datetime | None = None) -> str:
+def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
+    """ISO 8601 at second precision, for consistent display everywhere.
+
+    A naive ``when`` is assumed to already be UTC. The result is converted
+    to ``tz`` (default UTC) and written with a trailing ``Z`` when that
+    offset is zero, otherwise a numeric ``+HH:MM``/``-HH:MM`` offset. No
+    microseconds.
+    """
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    when = when.astimezone(tz if tz is not None else UTC).replace(microsecond=0)
+    text = when.isoformat()
+    return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
+
+
+def display_timezone(calendar: BusinessCalendar | None) -> tzinfo | None:
+    """The report display timezone: a configured calendar's zone, else UTC."""
+    return calendar.zone if calendar is not None else None
+
+
+def render_digest(
+    run: RunResult, now: datetime | None = None, tz: tzinfo | None = None
+) -> str:
     """A plain-text digest: a header with counts, then one block per non-OK check."""
-    when = now if now is not None else datetime.now().astimezone()
+    when = now if now is not None else datetime.now(UTC)
     counts = dict.fromkeys(Status, 0)
     for result in run.results:
         counts[result.status] += 1
 
     lines = [
-        f"DATA CHECK REPORT — {when:%Y-%m-%d %H:%M %Z}",
+        f"DATA CHECK REPORT — {format_timestamp(when, tz)}",
         f"{len(run.results)} checks · {counts[Status.OK]} passed"
         f" · {counts[Status.FAIL]} failed · {counts[Status.WARN]} warned"
         f" · {counts[Status.SKIPPED]} skipped · {counts[Status.ERROR]} unreachable",
@@ -64,7 +87,7 @@ def render_candidates(object_: str, candidates: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_history(candidate: dict, rows: list[dict]) -> str:
+def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
     """A check's recent values, statuses, and a simple up/down trend."""
     header = f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
     lines = [f"CHECK HISTORY — {header}", f"check_id {candidate['check_id']}"]
@@ -74,7 +97,7 @@ def render_history(candidate: dict, rows: list[dict]) -> str:
         return "\n".join(lines)
 
     lines.append("")
-    lines.append(f"{'observed_at (UTC)':<28} {'status':<8} {'value':<16} trend")
+    lines.append(f"{'observed_at':<28} {'status':<8} {'value':<16} trend")
     previous: float | None = None
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
@@ -86,9 +109,8 @@ def render_history(candidate: dict, rows: list[dict]) -> str:
                 trend = "▼"
             else:
                 trend = "="
-        lines.append(
-            f"{row['observed_at']:<28} {row['status']:<8} {str(value):<16} {trend}"
-        )
+        observed = format_timestamp(datetime.fromisoformat(row["observed_at"]), tz)
+        lines.append(f"{observed:<28} {row['status']:<8} {str(value):<16} {trend}")
         if isinstance(value, (int, float)):
             previous = value
     return "\n".join(lines)
