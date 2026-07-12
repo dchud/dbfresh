@@ -87,7 +87,7 @@ def render_candidates(object_: str, candidates: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_history(candidate: dict, rows: list[dict]) -> str:
+def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
     """A check's recent values, statuses, and a simple up/down trend."""
     header = f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
     lines = [f"CHECK HISTORY — {header}", f"check_id {candidate['check_id']}"]
@@ -97,7 +97,7 @@ def render_history(candidate: dict, rows: list[dict]) -> str:
         return "\n".join(lines)
 
     lines.append("")
-    lines.append(f"{'observed_at (UTC)':<28} {'status':<8} {'value':<16} trend")
+    lines.append(f"{'observed_at':<28} {'status':<8} {'value':<16} trend")
     previous: float | None = None
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
@@ -109,9 +109,8 @@ def render_history(candidate: dict, rows: list[dict]) -> str:
                 trend = "▼"
             else:
                 trend = "="
-        lines.append(
-            f"{row['observed_at']:<28} {row['status']:<8} {str(value):<16} {trend}"
-        )
+        observed = format_timestamp(datetime.fromisoformat(row["observed_at"]), tz)
+        lines.append(f"{observed:<28} {row['status']:<8} {str(value):<16} {trend}")
         if isinstance(value, (int, float)):
             previous = value
     return "\n".join(lines)
