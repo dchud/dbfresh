@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from dbfresh.calendar import BusinessCalendar
 from dbfresh.config import StoreConfig
 from dbfresh.engine import Result, Status
+
+_CLEAN_STATUSES = (Status.OK.value, Status.WARN.value, Status.FAIL.value)
 
 _DEFAULT_STORE_FILENAME = "dbfresh.db"
 
@@ -150,12 +153,25 @@ class Store:
         self._conn.commit()
 
     def record_observation(
-        self, run_id: int, result: Result, observed_at: datetime | None = None
+        self,
+        run_id: int,
+        result: Result,
+        observed_at: datetime | None = None,
+        calendar: BusinessCalendar | None = None,
     ) -> None:
-        """Persist one observation for a check's result, OK or not."""
+        """Persist one observation for a check's result, OK or not.
+
+        ``weekday`` is stored in ``calendar``'s timezone when given, else UTC
+        (§8.1), so ``last_same_weekday_observation`` compares like for like.
+        """
         observed_at = _to_utc(observed_at)
         value, value_text = _split_value(result.value)
         label = result.label or result.metric or "assert"
+        weekday = (
+            calendar.local_date(observed_at).weekday()
+            if calendar is not None
+            else observed_at.weekday()
+        )
         self._conn.execute(
             "INSERT INTO observation (run_id, check_id, source, object, metric, "
             "label, value, value_text, status, observed_at, weekday) "
@@ -171,7 +187,7 @@ class Store:
                 value_text,
                 Status(result.status).value,
                 observed_at.isoformat(),
-                observed_at.weekday(),
+                weekday,
             ),
         )
         self._conn.commit()
@@ -189,6 +205,45 @@ class Store:
             (check_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def latest_clean_observation(self, check_id: str) -> dict | None:
+        """The most recent prior observation excluding ERROR/SKIPPED.
+
+        Used by ``vs_previous: {baseline: previous}`` (§8.3) so a broken or
+        skipped run's null value never becomes the comparison baseline.
+        """
+        placeholders = ", ".join("?" * len(_CLEAN_STATUSES))
+        row = self._conn.execute(
+            f"SELECT * FROM observation WHERE check_id = ? "
+            f"AND status IN ({placeholders}) "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (check_id, *_CLEAN_STATUSES),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def last_same_weekday_observation(
+        self, check_id: str, run_date: date
+    ) -> dict | None:
+        """The most recent prior same-weekday observation, 6+ days back (§8.3).
+
+        Used by ``vs_previous: {baseline: last_same_weekday}``: matches the
+        stored ``weekday`` (already in the calendar timezone, §8.1) against
+        ``run_date``'s weekday, and requires ``observed_at`` to be at least
+        6 calendar days before ``run_date`` so a same-week rerun is never
+        selected. Excludes ERROR/SKIPPED like :meth:`latest_clean_observation`.
+        """
+        floor = run_date - timedelta(days=6)
+        placeholders = ", ".join("?" * len(_CLEAN_STATUSES))
+        rows = self._conn.execute(
+            f"SELECT * FROM observation WHERE check_id = ? AND weekday = ? "
+            f"AND status IN ({placeholders}) "
+            "ORDER BY observed_at DESC",
+            (check_id, run_date.weekday(), *_CLEAN_STATUSES),
+        ).fetchall()
+        for row in rows:
+            if datetime.fromisoformat(row["observed_at"]).date() <= floor:
+                return dict(row)
+        return None
 
     def history(self, check_id: str, limit: int = 30) -> list[dict]:
         """A check's most recent observations, oldest first."""

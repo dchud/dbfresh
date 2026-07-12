@@ -104,7 +104,7 @@ def _run_command(args: argparse.Namespace) -> int:
         try:
             run_id = store.start_run(git_sha=capture_git_sha(config_path))
             for result in run.results:
-                store.record_observation(run_id, result)
+                store.record_observation(run_id, result, calendar=config.calendar)
             store.finish_run(run_id, run.status)
         finally:
             store.close()
