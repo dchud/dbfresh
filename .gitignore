@@ -40,3 +40,6 @@ tmp/
 # Docs: generated reference pages and the built site are build artifacts
 docs/reference/
 site/
+
+# Textual snapshot test failure report (regenerated per run, not a baseline)
+snapshot_report.html
