@@ -78,7 +78,7 @@ class DbfreshApp(App):
         self.refresh_dashboard()
 
     def action_configure(self) -> None:
-        from dbfresh.tui.screens import ConfigureScreen
+        from dbfresh.tui.configure import ConfigureScreen
 
         self.push_screen(
             ConfigureScreen(self.config_path, self.config),
