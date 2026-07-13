@@ -72,6 +72,76 @@ def test_offered_column_checks_includes_null_rate_for_nullable_column():
     assert offers[0]["checks"] == ["null_rate", "duplicate_count"]
 
 
+def test_offered_column_checks_excludes_metric_already_proposed_for_column():
+    # ``modified_at`` already has a proposed freshness check; offering it
+    # again would collide on check_id (which ignores `expect`) and get
+    # silently dropped by append_checks's dedup, so it's excluded.
+    # ``event_time`` has no proposal covering it, so freshness stays offered.
+    columns = [
+        Column(
+            name="modified_at",
+            type="TIMESTAMP",
+            nullable=True,
+            category=Category.TEMPORAL,
+        ),
+        Column(
+            name="event_time",
+            type="TIMESTAMP",
+            nullable=True,
+            category=Category.TEMPORAL,
+        ),
+    ]
+    proposed = [
+        {
+            "source": "s",
+            "object": "t",
+            "metric": "freshness",
+            "column": "modified_at",
+            "freshness_source": "column",
+            "expect": {"max_lag": "24h"},
+        }
+    ]
+    offers = {
+        o["column"]: o["checks"] for o in offered_column_checks(columns, proposed)
+    }
+    assert "freshness" not in offers["modified_at"]
+    assert "null_rate" in offers["modified_at"]  # not proposed, stays offered
+    assert offers["event_time"] == ["freshness", "null_rate"]
+
+
+def test_offered_column_checks_excludes_duplicate_count_already_proposed_via_key():
+    # duplicate_count's identity lives in `key`, not `column` -- a
+    # single-column key that's also numeric or string gets a proposed
+    # duplicate_count, which the same exclusion must catch too.
+    columns = [
+        Column(name="id", type="INTEGER", nullable=False, category=Category.NUMERIC)
+    ]
+    proposed = [
+        {
+            "source": "s",
+            "object": "t",
+            "metric": "duplicate_count",
+            "key": "id",
+            "expect": {"max": 0},
+        }
+    ]
+    offers = offered_column_checks(columns, proposed)
+    assert "duplicate_count" not in offers[0]["checks"]
+    assert "sum" in offers[0]["checks"]
+
+
+def test_offered_column_checks_without_proposed_excludes_nothing():
+    columns = [
+        Column(
+            name="modified_at",
+            type="TIMESTAMP",
+            nullable=True,
+            category=Category.TEMPORAL,
+        )
+    ]
+    assert offered_column_checks(columns) == offered_column_checks(columns, None)
+
+
 def test_build_offered_check_null_rate_uses_given_max():
     block = build_offered_check(
         "s", "t", "email", "null_rate", False, max_null_rate=0.1

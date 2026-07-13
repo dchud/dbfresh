@@ -65,6 +65,14 @@ wizard itself calls, so it can never drift from the actual offers: see the
 omitted for a `NOT NULL` column -- the engine already enforces that, so
 offering the check would be redundant.
 
+The offered list also excludes any metric already auto-proposed for that
+same column (for example, `freshness` on the auto-detected timestamp
+column, or `duplicate_count` on a single-column key) -- offering it a
+second time would collide on check identity and be silently dropped when
+written. To change an auto-proposed check's threshold, edit the value
+directly in the written config rather than looking for it among the
+offered checks.
+
 ## Safety and degradation
 
 - **A new source runs a mandatory connection test** (`probe_connection()`)

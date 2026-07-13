@@ -481,7 +481,7 @@ def _add_command(args: argparse.Namespace) -> int:
                     if _confirm(f"  include {block['metric']}?", default=True):
                         proposed.append(block)
 
-            for offer in offered_column_checks(info.columns):
+            for offer in offered_column_checks(info.columns, bundle):
                 if not offer["checks"]:
                     continue
                 print(

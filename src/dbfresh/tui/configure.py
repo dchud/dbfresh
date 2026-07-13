@@ -18,6 +18,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Static
 
 from dbfresh.adapters.base import Column
+from dbfresh.checks import parse_duration
 from dbfresh.config import Config
 from dbfresh.configurator import (
     append_checks,
@@ -31,6 +32,11 @@ from dbfresh.configurator import (
 )
 
 _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+# Threshold-bearing offered metrics get a value Input beside their checkbox,
+# pre-filled with the CLI wizard's own prompt default for that metric --
+# every other offered metric (sum, row_count, ...) takes no threshold.
+_OFFERED_VALUE_DEFAULTS: dict[str, str] = {"null_rate": "0.05", "freshness": "24h"}
 
 
 def _id_part(value: str) -> str:
@@ -63,6 +69,8 @@ class ConfigureScreen(Screen[bool]):
         self._proposed_checkboxes: list[Checkbox] = []
         self._offered_blocks: list[dict] = []
         self._offered_checkboxes: list[Checkbox] = []
+        self._offered_value_inputs: list[Input | None] = []
+        self._has_calendar = False
         self._target_file: Path | None = None
 
     def compose(self) -> ComposeResult:
@@ -101,6 +109,7 @@ class ConfigureScreen(Screen[bool]):
         self._proposed_checkboxes = []
         self._offered_blocks = []
         self._offered_checkboxes = []
+        self._offered_value_inputs = []
         self._target_file = None
         self.query_one("#proposed-checks", Vertical).remove_children()
         self.query_one("#offered-checks", Vertical).remove_children()
@@ -125,13 +134,22 @@ class ConfigureScreen(Screen[bool]):
         object_name: str,
         columns: list[Column],
         has_calendar: bool,
+        proposed: list[dict],
     ) -> None:
         """Per-column offered checks (:func:`offered_column_checks`), one
         unchecked checkbox per metric -- checking one adds it to what Accept
         writes. Mirrors the CLI wizard's "Offered for <column>: ..." prompt,
-        which defaults to nothing added unless the user opts in."""
+        which defaults to nothing added unless the user opts in. ``null_rate``
+        and ``freshness`` also get a threshold Input beside the checkbox,
+        pre-filled with the CLI wizard's own prompt default for that metric
+        (see :data:`_OFFERED_VALUE_DEFAULTS`) -- Accept rebuilds the check
+        from whatever value sits in that Input at that point, see
+        :meth:`_rebuild_offered_check`. ``proposed`` is the bundle this
+        object's Propose click already built, passed through so
+        :func:`offered_column_checks` excludes any ``(metric, column)`` pair
+        already covered there instead of offering it a second time."""
         container = self.query_one("#offered-checks", Vertical)
-        for offer in offered_column_checks(columns):
+        for offer in offered_column_checks(columns, proposed):
             if not offer["checks"]:
                 continue
             container.mount(
@@ -148,7 +166,21 @@ class ConfigureScreen(Screen[bool]):
                 )
                 self._offered_blocks.append(block)
                 self._offered_checkboxes.append(checkbox)
-                container.mount(checkbox)
+
+                default = _OFFERED_VALUE_DEFAULTS.get(metric)
+                if default is None:
+                    self._offered_value_inputs.append(None)
+                    container.mount(checkbox)
+                else:
+                    value_input = Input(
+                        value=default,
+                        id=(
+                            f"offered-value-{_id_part(offer['column'])}"
+                            f"-{_id_part(metric)}"
+                        ),
+                    )
+                    self._offered_value_inputs.append(value_input)
+                    container.mount(Horizontal(checkbox, value_input))
 
     def _propose(self) -> None:
         from dbfresh.adapters.factory import create_adapter
@@ -196,6 +228,7 @@ class ConfigureScreen(Screen[bool]):
                     )
 
             has_calendar = self._config.calendar is not None
+            self._has_calendar = has_calendar
             self._proposed = propose_checks(
                 source_name,
                 object_name,
@@ -208,7 +241,11 @@ class ConfigureScreen(Screen[bool]):
             key_note = key_introspection_note(adapter.dialect, existence.info)
             self._mount_proposed_checkboxes()
             self._mount_offered_checkboxes(
-                source_name, object_name, existence.info.columns, has_calendar
+                source_name,
+                object_name,
+                existence.info.columns,
+                has_calendar,
+                self._proposed,
             )
         finally:
             adapter.close()
@@ -232,10 +269,57 @@ class ConfigureScreen(Screen[bool]):
         proposal_widget.update("\n".join(notes))
         self.query_one("#accept-btn", Button).disabled = not self._proposed
 
-    def _selected_checks(self) -> list[dict]:
+    def _rebuild_offered_check(
+        self, block: dict, raw_value: str
+    ) -> tuple[dict | None, str | None]:
+        """Re-run :func:`build_offered_check` with the threshold Input's
+        current text in place of the default baked into ``block`` when it
+        was mounted. Returns ``(rebuilt, None)`` on success, or
+        ``(None, error)`` when ``raw_value`` doesn't parse for the metric --
+        the same value formats the CLI wizard's prompt accepts."""
+        metric = block["metric"]
+        column = block["column"]
+        value = raw_value.strip()
+        if metric == "null_rate":
+            try:
+                max_null_rate = float(value)
+            except ValueError:
+                return None, f"{column}: not a number for max null rate: {value!r}"
+            return (
+                build_offered_check(
+                    block["source"],
+                    block["object"],
+                    column,
+                    metric,
+                    self._has_calendar,
+                    max_null_rate=max_null_rate,
+                ),
+                None,
+            )
+        assert metric == "freshness"
+        try:
+            parse_duration(value)
+        except ValueError as exc:
+            return None, f"{column}: invalid max lag: {exc}"
+        return (
+            build_offered_check(
+                block["source"],
+                block["object"],
+                column,
+                metric,
+                self._has_calendar,
+                max_lag=value,
+            ),
+            None,
+        )
+
+    def _selected_checks(self) -> tuple[list[dict], list[str]]:
         """Proposed checks still checked, plus offered checks checked in --
         the trim and offered-selection interactions collapsed into one
-        list, in the order Accept writes them."""
+        list, in the order Accept writes them. An offered ``null_rate`` or
+        ``freshness`` check is rebuilt from its threshold Input rather than
+        the default block mounted at Propose time; a value that fails to
+        parse is reported back as an error instead of being written."""
         selected = [
             block
             for block, checkbox in zip(
@@ -243,17 +327,31 @@ class ConfigureScreen(Screen[bool]):
             )
             if checkbox.value
         ]
-        selected += [
-            block
-            for block, checkbox in zip(
-                self._offered_blocks, self._offered_checkboxes, strict=True
-            )
-            if checkbox.value
-        ]
-        return selected
+        errors: list[str] = []
+        for block, checkbox, value_input in zip(
+            self._offered_blocks,
+            self._offered_checkboxes,
+            self._offered_value_inputs,
+            strict=True,
+        ):
+            if not checkbox.value:
+                continue
+            if value_input is None:
+                selected.append(block)
+                continue
+            rebuilt, error = self._rebuild_offered_check(block, value_input.value)
+            if error is not None:
+                errors.append(error)
+                continue
+            assert rebuilt is not None
+            selected.append(rebuilt)
+        return selected, errors
 
     def _accept(self) -> None:
-        selected = self._selected_checks()
+        selected, errors = self._selected_checks()
+        if errors:
+            self.query_one("#proposal-text", Static).update("\n".join(errors))
+            return
         if not selected:
             return
         target = self._target_file
