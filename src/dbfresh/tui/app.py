@@ -105,9 +105,19 @@ class DbfreshApp(App):
         )
 
     def _on_configure_dismissed(self, wrote: bool | None) -> None:
-        if wrote:
+        if not wrote:
+            return
+        try:
             self._reload_config()
-            self.refresh_dashboard()
+        except Exception as exc:
+            self.notify(
+                f"config reload failed after write: {exc}",
+                title="Reload failed",
+                severity="error",
+                timeout=10,
+            )
+            return
+        self.refresh_dashboard()
 
     def action_report(self) -> None:
         from dbfresh.report import display_timezone

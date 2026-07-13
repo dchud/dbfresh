@@ -6,6 +6,7 @@ from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
+from dbfresh.tui import app as app_module
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
 
@@ -235,6 +236,51 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
             assert "could not connect" in proposal_text
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
+
+    asyncio.run(scenario())
+
+
+def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monkeypatch):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+
+        real_load_config = app_module.load_config
+        calls = {"n": 0}
+
+        def flaky_load_config(path):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise ValueError("bad config after write")
+            return real_load_config(path)
+
+        monkeypatch.setattr(app_module, "load_config", flaky_load_config)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            previous_config = app.config
+
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            # Back on Home; the reload failed but the app did not crash,
+            # and the stale config from before the write is kept rather
+            # than being clobbered by a half-completed reload.
+            assert not isinstance(app.screen, ConfigureScreen)
+            assert app.config is previous_config
+
+            messages = [n.message for n in app._notifications]
+            assert any("bad config after write" in m for m in messages)
 
     asyncio.run(scenario())
 
