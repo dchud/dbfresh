@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dbfresh.adapters.databricks import validate_freshness_source
 from dbfresh.calendar import BusinessCalendar, weekday_key
@@ -141,11 +142,12 @@ def _evaluate_check(
 ) -> Result:
     now = now or datetime.now(UTC)
     if _should_skip(check, calendar, now):
-        label = f"assert {check.assert_}" if check.assert_ is not None else None
-        return _result(check, Status.SKIPPED, label=label)
+        return _result(check, Status.SKIPPED, label=_assertion_label(check))
     expect = _effective_expectation(check, calendar, now)
     if check.assert_ is not None:
         return _evaluate_assertion(check, adapter)
+    if check.assert_sql is not None:
+        return _evaluate_assert_sql(check, adapter)
     if check.metric == "freshness":
         return _evaluate_freshness(check, adapter, now, expect, calendar)
     if check.metric == "schema":
@@ -177,10 +179,19 @@ def _empty_result(check: Check, expected: str | None) -> Result:
     return _result(check, _verdict(check, check.allow_empty), expected=expected)
 
 
+def _assertion_label(check: Check) -> str | None:
+    """The digest label for an ``assert:``/``assert_sql:`` check, else ``None``."""
+    if check.assert_ is not None:
+        return f"assert {check.assert_}"
+    if check.assert_sql is not None:
+        return f"assert_sql {check.assert_sql}"
+    return None
+
+
 def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     """Run an assert predicate; any row for which it is false is a violation."""
     violation = f"FROM {check.object} WHERE NOT ({check.assert_})"
-    label = f"assert {check.assert_}"
+    label = _assertion_label(check)
     try:
         count = adapter.scalar(f"SELECT COUNT(*) {violation}")
     except Exception as exc:  # unreachable source / query error -> ERROR
@@ -191,6 +202,29 @@ def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     status = _verdict(check, False)
     return _result(
         check, status, metric=None, value=count, label=label, samples=samples
+    )
+
+
+def _evaluate_assert_sql(check: Check, adapter: Any) -> Result:
+    """Run a raw, author-supplied violation-selecting query directly.
+
+    Unlike ``assert:`` (a predicate compiled into a ``COUNT(*)`` query plus
+    a separately capped evidence query), ``assert_sql:`` is arbitrary SQL
+    the author wrote themselves, selecting the violating rows; it is run
+    once, capped via the dialect's row-limiting form, and the row
+    count from that single capped fetch is the persisted violation count.
+    """
+    label = _assertion_label(check)
+    try:
+        rows = adapter.rows(adapter.dialect.limit(check.assert_sql, 20))
+    except Exception as exc:  # unreachable source / query error -> ERROR
+        return _error_result(check, exc, metric=None, label=label)
+    count = len(rows)
+    if count == 0:
+        return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
+    status = _verdict(check, False)
+    return _result(
+        check, status, metric=None, value=count, label=label, samples=rows[:10]
     )
 
 
@@ -236,7 +270,7 @@ def _evaluate_freshness(
         return _error_result(check, exc, expected=expected)
     if raw is None:
         return _empty_result(check, expected)
-    t0 = _to_aware_utc(raw)
+    t0 = _to_aware_utc(raw, check.source_timezone)
     if check.calendar == "business" and calendar is not None:
         lag_seconds = calendar.business_time_between(t0, now).total_seconds()
     else:
@@ -380,12 +414,17 @@ def _vs_previous_passed(value: float, baseline: float, spec: dict) -> bool:
     return passed
 
 
-def _to_aware_utc(value: Any) -> datetime:
-    """Coerce a DB timestamp to a tz-aware UTC datetime; naive is assumed UTC."""
+def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
+    """Coerce a DB timestamp to a tz-aware UTC datetime.
+
+    A naive value is interpreted in ``source_timezone`` (the check's
+    source's declared ``timezone:``, default UTC) before being
+    converted; an already-aware value is unaffected.
+    """
     if isinstance(value, str):
         value = datetime.fromisoformat(value)
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
+        value = value.replace(tzinfo=ZoneInfo(source_timezone))
     return value.astimezone(UTC)
 
 
@@ -422,8 +461,7 @@ def _connect_error_result(check: Check, exc: BaseException) -> Result:
     Used for a source listed in ``failed_sources`` -- never indexes
     ``adapters`` for it, since no adapter exists.
     """
-    label = f"assert {check.assert_}" if check.assert_ is not None else None
-    result = _error_result(check, exc, label=label)
+    result = _error_result(check, exc, label=_assertion_label(check))
     result.check_id = check_id(check)
     return result
 

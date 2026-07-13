@@ -247,10 +247,9 @@ def test_run_vs_previous_no_store_always_on_missing_pass(tmp_path):
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
 
 
-def test_run_unsupported_metric_exits_error_other_checks_still_run(tmp_path, capsys):
-    # metric: not validated at config-load time, only when compiled to SQL
-    # at run time -- this must land as an ERROR result, not a crash, and
-    # must not stop the healthy check on the same source from evaluating.
+def test_run_unsupported_metric_is_a_clean_config_error(tmp_path, capsys):
+    # An unknown metric is validated at config-load time -- a clean
+    # config error naming it, not a mid-run crash on one check's result.
     db = tmp_path / "data.db"
     _seed_db(db)
     cfg = tmp_path / "config.yaml"
@@ -264,13 +263,12 @@ def test_run_unsupported_metric_exits_error_other_checks_still_run(tmp_path, cap
         "  - source: s\n"
         "    object: t\n"
         "    metric: not_a_real_metric\n"
+        "    expect: { max: 5 }\n"
     )
 
     code = main(["run", "-c", str(cfg), "--json"])
 
+    captured = capsys.readouterr()
     assert code == 3
-    data = json.loads(capsys.readouterr().out)
-    assert data["status"] == "ERROR"
-    by_metric = {r["metric"]: r["status"] for r in data["results"]}
-    assert by_metric["row_count"] == "OK"
-    assert by_metric["not_a_real_metric"] == "ERROR"
+    assert "unknown metric: 'not_a_real_metric'" in captured.err
+    assert captured.out == ""

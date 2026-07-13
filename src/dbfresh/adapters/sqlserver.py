@@ -66,7 +66,7 @@ class SqlServerAdapter(SqlAlchemyAdapter):
     authentication only, credentials inline, no Kerberos/ODBC setup needed.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, timeout: int | None = None) -> None:
         params = parse_sqlserver_url(url)
         engine_url = URL.create(
             "mssql+pymssql",
@@ -76,7 +76,10 @@ class SqlServerAdapter(SqlAlchemyAdapter):
             port=params.port,
             database=params.database,
         )
-        engine = create_engine(engine_url)
+        # pymssql's connection-attempt timeout is `login_timeout` (its
+        # `timeout` kwarg instead caps query execution).
+        connect_args = {"login_timeout": timeout} if timeout is not None else {}
+        engine = create_engine(engine_url, connect_args=connect_args)
         super().__init__(engine, TSqlDialect())
 
     def describe(self, obj: str) -> ObjectInfo:

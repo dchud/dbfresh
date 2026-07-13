@@ -235,7 +235,7 @@ def test_run_and_persist_closes_every_adapter_even_if_one_close_raises(
             if self.name == "bad":
                 raise RuntimeError("boom on close")
 
-    def fake_create_adapter(type_, params):
+    def fake_create_adapter(type_, params, timeout=None):
         return _FakeAdapter(type_)
 
     monkeypatch.setattr("dbfresh.adapters.factory.create_adapter", fake_create_adapter)

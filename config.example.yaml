@@ -1,0 +1,76 @@
+# Copyable root config. Copy to config.yaml, adjust the
+# sources and checks for your environment, and supply the ${VAR} secrets
+# below via the environment or a gitignored per-user .env.
+
+version: 1
+
+store: # optional; observation history. A bare string is shorthand for { path }.
+  path: ./dbfresh.db
+  retain_days: 400
+
+calendar: # optional; enables weekend/holiday-aware expectations
+  timezone: America/New_York
+  workdays: [mon, tue, wed, thu, fri]
+  holidays: { country: US, subdivision: null, extra: [], remove: [] }
+
+sources:
+  warehouse:
+    type: sqlserver
+    url: ${MSSQL_URL} # sqlserver://reader:pw@host:1433/WarehouseDB
+    timeout: 30
+    timezone: America/New_York # interpret naive timestamps as this tz (default UTC)
+  lakehouse:
+    type: databricks
+    host: ${DATABRICKS_HOST}
+    http_path: ${DATABRICKS_HTTP_PATH}
+    token: ${DATABRICKS_TOKEN}
+
+defaults: # merged into every check when absent; supports
+  severity: error #   severity, calendar, where, allow_empty, skip_off_schedule
+
+checks:
+  - source: warehouse
+    object: dbo.fct_sales
+    id: sales_amount_nonneg # optional stable id
+    assert: "amount >= 0"
+
+  - source: warehouse
+    object: dbo.fct_sales
+    metric: schema # table-level shape check
+    expect: { unchanged: true } # fail if columns/types drift from last run
+
+  - source: warehouse
+    object: dbo.fct_sales
+    metric: row_count
+    expect: { between: [10000, 500000] }
+    by_weekday:
+      mon: { between: [0, 500000] }
+      sat: { max: 100 }
+      sun: { max: 100 }
+    on_holiday: { max: 100 }
+
+  - source: warehouse
+    object: dbo.fct_sales
+    metric: freshness
+    column: modified_at
+    freshness_source: column # or describe_history / describe_detail (Databricks tables)
+    expect: { max_lag: 26h }
+    calendar: business
+
+  - source: lakehouse
+    object: main.gold.customer_360
+    metric: null_rate
+    column: email
+    expect: { max: 0.01 }
+
+  - source: lakehouse
+    object: main.gold.customer_360
+    metric: row_count
+    expect:
+      vs_previous:
+        {
+          baseline: last_same_weekday,
+          min_ratio: 0.5,
+          max_ratio: 2.0,
+          on_missing: pass,
+        }

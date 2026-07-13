@@ -34,6 +34,39 @@ def test_constructing_adapter_needs_pymssql_only_at_connect_time():
         SqlServerAdapter("sqlserver://user:pass@localhost/mydb")
 
 
+class _FakeEngine:
+    def connect(self):
+        return object()
+
+
+def test_timeout_is_passed_as_login_timeout_connect_arg(monkeypatch):
+    captured: dict = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured.update(kwargs)
+        return _FakeEngine()
+
+    monkeypatch.setattr("dbfresh.adapters.sqlserver.create_engine", fake_create_engine)
+
+    SqlServerAdapter("sqlserver://user:pass@host/mydb", timeout=30)
+
+    assert captured["connect_args"] == {"login_timeout": 30}
+
+
+def test_no_timeout_passes_empty_connect_args(monkeypatch):
+    captured: dict = {}
+
+    def fake_create_engine(url, **kwargs):
+        captured.update(kwargs)
+        return _FakeEngine()
+
+    monkeypatch.setattr("dbfresh.adapters.sqlserver.create_engine", fake_create_engine)
+
+    SqlServerAdapter("sqlserver://user:pass@host/mydb")
+
+    assert captured["connect_args"] == {}
+
+
 def test_dialect_uses_top_n():
     sql = TSqlDialect().limit("SELECT * FROM t WHERE x >= 0", 20)
     assert sql == "SELECT TOP 20 * FROM t WHERE x >= 0"

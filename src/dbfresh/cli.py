@@ -285,7 +285,8 @@ def _select_source(
         src = sources[source_name]
         probe = probe_connection(src.type, src.params)
         if probe.ok:
-            return source_name, create_adapter(src.type, src.params), False, None
+            adapter = create_adapter(src.type, src.params, timeout=src.timeout)
+            return source_name, adapter, False, None
         print(f"warning: could not reach {source_name!r}: {probe.error}")
         print("degrading to manual entry; existence will be unverified")
         return source_name, None, False, None

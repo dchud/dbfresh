@@ -1,6 +1,10 @@
+from datetime import UTC, datetime
+
 import pytest
 
+from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.config import load_config
+from dbfresh.engine import Status, evaluate_check
 
 
 def _write(tmp_path, text):
@@ -196,6 +200,94 @@ checks:
     )
     cfg = load_config(path, env={})
     assert cfg.checks[0].skip_off_schedule is False
+
+
+def test_skip_on_holiday_is_an_alias_for_skip_off_schedule(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+    skip_on_holiday: true
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is True
+
+
+def test_defaults_skip_on_holiday_alias_applies_to_every_check(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+defaults:
+  skip_on_holiday: true
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is True
+
+
+def test_per_check_skip_on_holiday_false_overrides_default_true(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+defaults:
+  skip_on_holiday: true
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+    skip_on_holiday: false
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is False
+
+
+def test_skip_on_holiday_actually_skips_evaluation_on_a_holiday(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+calendar:
+  timezone: UTC
+  holidays: { extra: ["2026-07-06"] }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { min: 1 }
+    skip_on_holiday: true
+""",
+    )
+    cfg = load_config(path, env={})
+    adapter = SqliteAdapter()
+    adapter.rows("CREATE TABLE t (id INTEGER)")  # 0 rows -- would FAIL if evaluated
+    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday, the configured holiday
+
+    result = evaluate_check(cfg.checks[0], adapter, now=now, calendar=cfg.calendar)
+
+    assert result.status == Status.SKIPPED
+    adapter.close()
 
 
 def test_skip_off_schedule_without_calendar_block_is_a_validation_error(tmp_path):

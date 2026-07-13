@@ -82,6 +82,18 @@ def test_check_id_assertion_differs_from_metric_check_with_same_object():
     assert check_id(metric_check) != check_id(assertion)
 
 
+def test_check_id_assert_sql_uses_normalized_text():
+    a = Check(source="s", object="t", assert_sql="SELECT * FROM t WHERE x < 0")
+    b = Check(source="s", object="t", assert_sql="  SELECT * FROM t   WHERE x < 0  ")
+    assert check_id(a) == check_id(b)
+
+
+def test_check_id_assert_sql_differs_from_assert_with_same_text():
+    predicate = Check(source="s", object="t", assert_="x < 0")
+    raw_sql = Check(source="s", object="t", assert_sql="x < 0")
+    assert check_id(predicate) != check_id(raw_sql)
+
+
 def test_check_id_ignores_freshness_source():
     # freshness_source is not part of the identity tuple: switching a
     # freshness check's origin preserves its observation history.
