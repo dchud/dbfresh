@@ -1,4 +1,4 @@
-"""Business calendar: weekend and holiday awareness (spec section 7)."""
+"""Business calendar: weekend and holiday awareness."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ def weekday_key(day: dt.date) -> str:
 
 
 class BusinessCalendar:
-    """A weekday + holiday aware calendar (spec section 7.1)."""
+    """A weekday + holiday aware calendar."""
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class BusinessCalendar:
 
     def business_time_between(self, t0: dt.datetime, t1: dt.datetime) -> dt.timedelta:
         """Wall-clock elapsed minus 24h per non-business date strictly between
-        ``t0`` and ``t1``'s calendar dates (spec section 7.3).
+        ``t0`` and ``t1``'s calendar dates.
 
         Both timestamps are converted to the calendar timezone before their
         dates are compared; ``t0`` must be at or before ``t1``.
