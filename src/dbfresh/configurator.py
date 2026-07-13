@@ -10,6 +10,7 @@ emits YAML for the version-controlled config.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -332,20 +333,127 @@ def target_files(config_path: str | Path) -> list[Path]:
     return sorted(matched, key=lambda p: p.as_posix())
 
 
+def _find_top_level_key(lines: list[str], key: str) -> int | None:
+    """The line index of a column-0 ``key:`` line, or ``None`` if absent."""
+    pattern = re.compile(rf"^{re.escape(key)}:(.*)$")
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            return i
+    return None
+
+
+def _block_end(lines: list[str], start: int) -> int:
+    """Index just past the last line of the block ``lines[start]`` opens.
+
+    A block continues through blank lines, comment-only lines, and any
+    line indented past column 0; it ends at the next column-0, non-blank,
+    non-comment line (the next top-level key), or at EOF.
+    """
+    j = start + 1
+    while j < len(lines):
+        line = lines[j]
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#") or line[:1] in (" ", "\t"):
+            j += 1
+            continue
+        break
+    return j
+
+
+def _block_indent(lines: list[str], start: int, end: int, default: int) -> int:
+    """The indent already used by the first real item in a block, if any."""
+    for line in lines[start + 1 : end]:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return len(line) - len(line.lstrip(" "))
+    return default
+
+
+def _reindent(rendered: str, indent: int) -> str:
+    """Prefix every non-blank line of ``rendered`` (0-indented) by ``indent``."""
+    pad = " " * indent
+    lines = rendered.splitlines(keepends=True)
+    return "".join(pad + line if line.strip() else line for line in lines)
+
+
+def _append_into_block(
+    text: str, key: str, rendered_items: str, *, default_indent: int = 0
+) -> str | None:
+    """Splice ``rendered_items`` onto the tail of a top-level ``key:`` block.
+
+    Preserves every other line of ``text`` verbatim -- comments included --
+    by editing around the existing block rather than reparsing and
+    re-dumping the whole document. ``rendered_items`` is 0-indented YAML
+    (as :func:`yaml.safe_dump` renders it) and gets re-indented to match
+    whatever indent the block's existing items already use, or
+    ``default_indent`` when the block is empty or ``key:`` is missing
+    entirely (then it's added at EOF). ``default_indent`` is ``0`` for a
+    sequence value (``yaml.safe_dump``'s own indentless convention) but
+    must be positive for a mapping value, whose nested keys can never
+    share the parent key's column.
+
+    Returns ``None`` for a shape this doesn't handle (e.g. a single-line
+    flow value with existing items, such as ``key: [a, b]``) so the
+    caller can fall back to a full round trip instead of writing
+    something broken.
+    """
+    lines = text.splitlines(keepends=True)
+    idx = _find_top_level_key(lines, key)
+
+    if idx is None:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"{key}:\n")
+        lines.append(_reindent(rendered_items, default_indent))
+        return "".join(lines)
+
+    end = _block_end(lines, idx)
+    inline = lines[idx].split(":", 1)[1].strip()
+    if inline not in ("", "[]", "{}"):
+        return None  # e.g. a flow-style value with existing items
+
+    indent = _block_indent(lines, idx, end, default=default_indent)
+    if inline in ("[]", "{}"):
+        lines[idx] = f"{key}:\n"
+    insertion = _reindent(rendered_items, indent)
+    return "".join(lines[:end]) + insertion + "".join(lines[end:])
+
+
 def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> None:
     """Write a new source definition into the root config.
 
     ``sources:`` is declared only in the root config, never an included
     checks file, so this always targets ``config_path`` directly.
+    Appends the rendered block onto the existing ``sources:`` mapping
+    (see :func:`_append_into_block`) so comments and formatting elsewhere
+    in the file survive; falls back to a full round trip only for a
+    shape that can't be textually spliced.
     """
     config_path = Path(config_path)
-    raw = yaml.safe_load(config_path.read_text()) if config_path.exists() else None
-    raw = dict(raw) if raw else {}
-    sources = dict(raw.get("sources") or {})
-    sources[name] = {"type": type_, **params}
-    raw["sources"] = sources
-    raw.setdefault("checks", [])
-    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    entry = {"type": type_, **params}
+
+    if not config_path.exists() or not config_path.read_text().strip():
+        raw = {"sources": {name: entry}, "checks": []}
+        config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        return
+
+    text = config_path.read_text()
+    raw = yaml.safe_load(text) or {}
+    rendered = yaml.safe_dump({name: entry}, sort_keys=False)
+    spliced = _append_into_block(text, "sources", rendered, default_indent=2)
+    if spliced is None:
+        raw = dict(raw)
+        sources = dict(raw.get("sources") or {})
+        sources[name] = entry
+        raw["sources"] = sources
+        raw.setdefault("checks", [])
+        config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        return
+    if "checks" not in raw:
+        if not spliced.endswith("\n"):
+            spliced += "\n"
+        spliced += "checks: []\n"
+    config_path.write_text(spliced)
 
 
 def _raw_checks_in(path: Path) -> list[dict]:
@@ -427,14 +535,35 @@ def append_checks(
         to_write.append(block)
 
     if to_write:
-        raw = yaml.safe_load(target_path.read_text()) if target_path.exists() else None
-        if raw is None:
-            raw = {"checks": []}
-        if isinstance(raw, list):
-            raw = raw + to_write
-        else:
-            raw = dict(raw)
-            raw["checks"] = list(raw.get("checks") or []) + to_write
-        target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        _write_new_checks(target_path, to_write)
 
     return len(to_write), skipped
+
+
+def _write_new_checks(target_path: Path, blocks: list[dict]) -> None:
+    """Write ``blocks`` to ``target_path``, splicing onto the existing text
+    (see :func:`_append_into_block`) so comments and formatting elsewhere
+    in the file survive. Falls back to a full round trip for a missing or
+    empty file (nothing to preserve) or an unsplice-able shape.
+    """
+    if not target_path.exists() or not target_path.read_text().strip():
+        target_path.write_text(yaml.safe_dump({"checks": blocks}, sort_keys=False))
+        return
+
+    text = target_path.read_text()
+    raw = yaml.safe_load(text)
+    rendered = yaml.safe_dump(blocks, sort_keys=False)
+
+    if isinstance(raw, list):
+        if not text.endswith("\n"):
+            text += "\n"
+        target_path.write_text(text + rendered)
+        return
+
+    spliced = _append_into_block(text, "checks", rendered)
+    if spliced is None:
+        raw = dict(raw)
+        raw["checks"] = list(raw.get("checks") or []) + blocks
+        target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        return
+    target_path.write_text(spliced)
