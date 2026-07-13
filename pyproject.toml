@@ -38,6 +38,9 @@ Issues = "https://github.com/dchud/dbfresh/issues"
 postgres = [
     "psycopg>=3.3.4",
 ]
+sqlserver = [
+    "pymssql>=2.3.13",
+]
 
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
