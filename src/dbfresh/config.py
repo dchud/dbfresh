@@ -10,10 +10,13 @@ from typing import Any
 
 import yaml
 
+from dbfresh.adapters.databricks import validate_freshness_source
+from dbfresh.adapters.factory import dialect_for_type
 from dbfresh.calendar import WEEKDAY_NAMES, BusinessCalendar, build_calendar
 from dbfresh.checks import Check, check_id, parse_expectation
 
 _CHECK_CALENDAR_MODES = frozenset({"business"})
+_FRESHNESS_SOURCES = frozenset({"column", "describe_history", "describe_detail"})
 
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -99,6 +102,23 @@ def _parse_check_calendar_mode(raw: Any) -> str | None:
     return raw
 
 
+def _parse_freshness_source(raw: dict, metric: str | None) -> str:
+    """Validate and return the ``freshness_source`` field; default ``column``.
+
+    Meaningful only for ``metric: freshness``: ``column`` requires a
+    ``column:`` field, while the two DESCRIBE origins take no column.
+    Capability against the source's dialect, and object-kind (view) checks,
+    are validated elsewhere -- the former needs the source's declared type
+    (``load_config``), the latter needs a live connection (run time).
+    """
+    source = raw.get("freshness_source", "column")
+    if source not in _FRESHNESS_SOURCES:
+        raise ValueError(f"unknown freshness_source: {source!r}")
+    if metric == "freshness" and source == "column" and raw.get("column") is None:
+        raise ValueError("freshness_source 'column' requires a 'column' field")
+    return source
+
+
 def _build_check(raw: dict, defaults: dict) -> Check:
     """Build one Check, merging ``defaults:`` fields the check itself omits.
 
@@ -133,6 +153,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
         skip_off_schedule=raw.get(
             "skip_off_schedule", defaults.get("skip_off_schedule", False)
         ),
+        freshness_source=_parse_freshness_source(raw, metric),
     )
 
 
@@ -230,6 +251,11 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     for check in checks:
         if check.source not in sources:
             raise ValueError(f"check references unknown source: {check.source!r}")
+
+    for check in checks:
+        if check.metric == "freshness" and check.freshness_source != "column":
+            dialect = dialect_for_type(sources[check.source].type)
+            validate_freshness_source(check.freshness_source, dialect)
 
     seen_ids: set[str] = set()
     for check in checks:
