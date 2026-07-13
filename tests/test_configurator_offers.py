@@ -1,5 +1,4 @@
-"""Category -> offer mapping (spec section 11.2), the docs applicability
-matrix's single source of truth."""
+"""Category -> offer mapping: the docs applicability matrix's single source of truth."""
 
 import pytest
 

@@ -1,4 +1,4 @@
-"""SQLite observation store: run/observation history (spec section 8)."""
+"""SQLite observation store: run/observation history."""
 
 from __future__ import annotations
 
