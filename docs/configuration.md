@@ -101,8 +101,7 @@ a `defaults: {allow_empty: true}`).
 is passed through as that adapter's constructor parameters (`url`, `host`,
 `token`, `database`, ...), so `${VAR}` interpolation works uniformly across
 all of them. v1 targets two production source types, **SQL Server** and
-**Databricks** (Unity Catalog) -- their dialects and column-category
-mappings are implemented and tested, ahead of their live connection
+**Databricks** (Unity Catalog) -- both ship with working connection
 adapters. **sqlite** is a fully working adapter today: it's dbfresh's own
 primary test engine, and legitimate to point at a real file-based database
 too (see the [Quickstart](quickstart.md)). **PostgreSQL** ships only as a
@@ -150,11 +149,10 @@ files:
 Any string value anywhere in the config (`sources:` params, `where:`
 clauses, anything) may contain `${VAR}` tokens, resolved against the process
 environment at load time. A referenced variable that isn't set is a hard
-config-load error -- there is no silent empty-string fallback. `dbfresh run`
-loads a gitignored, per-user `.env` file (from the config's directory)
-before parsing the config, so `${VAR}` values can live outside both the
-committed config and the shell's persistent environment; other commands
-that parse a config do not load `.env` automatically (see
+config-load error -- there is no silent empty-string fallback. Every command
+that parses a config loads a gitignored, per-user `.env` file (from the
+config's directory) before parsing it, so `${VAR}` values can live outside
+both the committed config and the shell's persistent environment (see
 [Quickstart](quickstart.md)).
 
 ## `check_id` and identity

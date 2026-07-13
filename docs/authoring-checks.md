@@ -77,10 +77,12 @@ offering the check would be redundant.
   unverified rather than reporting the object as missing (it genuinely
   doesn't know). Manual entry is also the fallback whenever metadata is
   unavailable for any other reason.
-- When the config uses `include:`, the wizard asks which file
-  receives the new block (`target_files()` lists the root config plus every
-  resolved included file, in load order); without `include:`, it always
-  appends to the root config.
+- When the config uses `include:`, `target_files()` lists the root config
+  plus every resolved included file, in load order. `dbfresh add` asks
+  which one receives the new block; the TUI's Configure screen instead
+  resolves it automatically to the first included file, naming its choice
+  in the proposal rather than prompting for it. Without `include:`, both
+  surfaces always append to the root config.
 
 ## What it never does
 

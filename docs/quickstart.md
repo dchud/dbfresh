@@ -63,13 +63,10 @@ gitignored, per-user `.env` file next to the config:
 DEMO_DB_PATH=./demo.db
 ```
 
-`dbfresh run` loads `.env` (from the config file's directory) automatically,
-before parsing the config -- so a config committed to a team repo never
-carries a connection string or credential. Other commands that also parse
-the config (`history`, `prune`, `add`, `ui`) do not load `.env`
-automatically; export the same variables in your shell first (or use a tool
-like `direnv`) if you run one of those directly against a config that
-references `${VAR}`.
+Every command that reads a config (`run`, `history`, `prune`, `add`, `ui`)
+loads `.env` (from the config file's directory) automatically, before
+parsing the config -- so a config committed to a team repo never carries a
+connection string or credential.
 
 ## First run
 
