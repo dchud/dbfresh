@@ -85,8 +85,6 @@ def _resolve_read_context(config_path: Path):
 
 
 def _run_command(args: argparse.Namespace) -> int:
-    from dotenv import load_dotenv
-
     from dbfresh.config import load_config
     from dbfresh.engine import exit_code
     from dbfresh.report import display_timezone, render_digest, render_json
@@ -94,7 +92,6 @@ def _run_command(args: argparse.Namespace) -> int:
     from dbfresh.store import Store, resolve_store_path
 
     config_path = Path(args.config)
-    load_dotenv(config_path.parent / ".env")
     try:
         config = load_config(config_path)
     except ValueError as exc:
@@ -386,9 +383,27 @@ def _ui_command(args: argparse.Namespace) -> int:
     return 0
 
 
+_CONFIG_READING_COMMANDS = frozenset({"run", "history", "prune", "add", "ui"})
+
+
+def _load_dotenv_beside_config(config_path: Path) -> None:
+    """Load a ``.env`` file next to ``config_path``, if one is present.
+
+    ``${VAR}`` interpolation in config happens for every command that reads
+    it, not only ``run``, so this runs once at the CLI dispatch boundary
+    rather than being duplicated inside each command function. Real
+    environment variables already set take precedence over ``.env``.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv(config_path.parent / ".env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command in _CONFIG_READING_COMMANDS:
+        _load_dotenv_beside_config(Path(args.config))
     if args.command == "run":
         return _run_command(args)
     if args.command == "history":
