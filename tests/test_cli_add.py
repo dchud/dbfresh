@@ -7,9 +7,31 @@ prompts feed the module correctly and the result is written to disk.
 
 import yaml
 
-from dbfresh.adapters.base import SqlAlchemyAdapter
+from dbfresh.adapters import factory
+from dbfresh.adapters.base import Category, Column, ObjectInfo, SqlAlchemyAdapter
+from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.cli import main
+
+
+class _FakeViewAdapter:
+    """A minimal adapter for a Databricks-capable view with no timestamp
+    candidate -- proves ``is_view`` reaches ``propose_checks`` so no
+    invalid ``describe_history`` freshness check gets proposed for it."""
+
+    dialect = DatabricksDialect()
+
+    def scalar(self, sql):
+        return 1
+
+    def describe(self, obj):
+        column = Column(
+            name="id", type="INT", nullable=False, category=Category.NUMERIC
+        )
+        return ObjectInfo(columns=[column], is_view=True)
+
+    def close(self):
+        pass
 
 
 def _table(db):
@@ -205,6 +227,33 @@ def test_add_wizard_rejects_out_of_range_file_index(tmp_path, monkeypatch):
     assert len(data["checks"]) >= 1
     data_a = yaml.safe_load((tmp_path / "checks" / "a.yaml").read_text())
     assert data_a["checks"] == []
+
+
+def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setitem(factory._ADAPTERS, "fakeview", _FakeViewAdapter)
+    monkeypatch.setitem(factory._DIALECTS, "fakeview", DatabricksDialect)
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources:\n  s: { type: fakeview }\nchecks: []\n")
+
+    answers = iter(
+        [
+            "s",  # source name (existing)
+            "v",  # object name (a view, no timestamp candidate)
+            "y",  # accept the full proposed bundle
+            "",  # skip offered checks on id
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    code = main(["add", "-c", str(cfg)])
+    assert code == 0
+
+    data = yaml.safe_load(cfg.read_text())
+    metrics = {c["metric"] for c in data["checks"]}
+    assert "freshness" not in metrics
 
 
 def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):

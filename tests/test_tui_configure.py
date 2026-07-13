@@ -2,6 +2,9 @@ import asyncio
 
 import yaml
 
+from dbfresh.adapters import factory
+from dbfresh.adapters.base import Category, Column, ObjectInfo
+from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
@@ -13,6 +16,26 @@ def _table(db):
         "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
     )
     adapter.close()
+
+
+class _FakeViewAdapter:
+    """A Databricks-capable view with no timestamp candidate -- proves
+    ``is_view`` reaches ``propose_checks`` so no invalid ``describe_history``
+    freshness check gets proposed for it."""
+
+    dialect = DatabricksDialect()
+
+    def scalar(self, sql):
+        return 1
+
+    def describe(self, obj):
+        column = Column(
+            name="id", type="INT", nullable=False, category=Category.NUMERIC
+        )
+        return ObjectInfo(columns=[column], is_view=True)
+
+    def close(self):
+        pass
 
 
 def _config(path, db):
@@ -82,6 +105,33 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
             tree = app.query_one("#dashboard-tree")
             source_names = [str(n.label).split(" ")[0] for n in tree.root.children]
             assert "s" in source_names
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "fakeview", _FakeViewAdapter)
+        monkeypatch.setitem(factory._DIALECTS, "fakeview", DatabricksDialect)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: fakeview }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "v"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "freshness" not in proposal_text
 
     asyncio.run(scenario())
 

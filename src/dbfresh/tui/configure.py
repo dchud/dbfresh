@@ -92,6 +92,7 @@ class ConfigureScreen(Screen[bool]):
                 existence.info,
                 adapter.dialect,
                 has_calendar=has_calendar,
+                is_view=existence.info.is_view,
             )
         finally:
             adapter.close()
