@@ -111,14 +111,53 @@ uv run dbfresh run -c config.yaml --json
 ```
 
 ```json
-{"status": "OK", "results": [
-  {"check_id": "268724654079", "source": "demo", "object": "orders",
-   "metric": "row_count", "status": "OK", "value": 3,
-   "expected": "between 1 and 1000000", "error": null, "samples": null},
-  {"check_id": "8cf0327f0ccc", "source": "demo", "object": "orders",
-   "metric": "null_rate", "status": "OK", "value": 0.333333333333,
-   "expected": "max 0.5", "error": null, "samples": null}
-]}
+{
+  "status": "OK",
+  "run_id": 2,
+  "started_at": "2026-07-12T21:45:05Z",
+  "finished_at": "2026-07-12T21:45:06Z",
+  "counts": {
+    "OK": 2,
+    "WARN": 0,
+    "FAIL": 0,
+    "ERROR": 0,
+    "SKIPPED": 0
+  },
+  "results": [
+    {
+      "check_id": "268724654079",
+      "source": "demo",
+      "object": "orders",
+      "metric": "row_count",
+      "label": null,
+      "tier": "table",
+      "status": "OK",
+      "value": 3.0,
+      "value_text": null,
+      "expected": "between 1 and 1000000",
+      "observed": "3",
+      "error": null,
+      "samples": null,
+      "diff": null
+    },
+    {
+      "check_id": "8cf0327f0ccc",
+      "source": "demo",
+      "object": "orders",
+      "metric": "null_rate",
+      "label": null,
+      "tier": "column",
+      "status": "OK",
+      "value": 0.3333333333333333,
+      "value_text": null,
+      "expected": "max 0.5",
+      "observed": "0.3333333333333333",
+      "error": null,
+      "samples": null,
+      "diff": null
+    }
+  ]
+}
 ```
 
 ## Reading the digest and exit codes

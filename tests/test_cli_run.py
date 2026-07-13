@@ -1,3 +1,4 @@
+import contextlib
 import json
 import re
 
@@ -52,6 +53,124 @@ def test_run_json_output(tmp_path, capsys):
     assert data["results"][0]["metric"] == "row_count"
     assert data["results"][0]["value"] == 3
     assert data["results"][0]["check_id"]
+
+
+def test_run_json_envelope_has_run_metadata_and_counts(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    main(["run", "-c", str(cfg), "--json"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert isinstance(data["run_id"], int)
+    assert re.search(r"T\d{2}:\d{2}:\d{2}Z$", data["started_at"])
+    assert re.search(r"T\d{2}:\d{2}:\d{2}Z$", data["finished_at"])
+    assert data["counts"] == {
+        "OK": 1,
+        "WARN": 0,
+        "FAIL": 0,
+        "ERROR": 0,
+        "SKIPPED": 0,
+    }
+
+
+def test_run_json_envelope_run_id_null_under_no_store(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    main(["run", "-c", str(cfg), "--json", "--no-store"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert data["run_id"] is None
+    assert data["started_at"] is not None
+    assert data["finished_at"] is not None
+
+
+def test_run_json_envelope_metric_check_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: null_rate\n"
+        "    column: id\n"
+        "    expect: { max: 0.5 }\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["label"] is None
+    assert result["tier"] == "column"
+    assert result["value"] == 0.0
+    assert result["value_text"] is None
+    assert result["observed"] == "0.0"
+    assert result["expected"] == "max 0.5"
+    assert result["diff"] is None
+    assert result["error"] is None
+    assert result["samples"] is None
+
+
+def test_run_json_envelope_schema_check_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER, name TEXT)")
+    adapter.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])  # first run: establishes baseline
+    capsys.readouterr()  # discard the baseline run's output
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    adapter.close()
+
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["metric"] == "schema"
+    assert result["tier"] == "table"
+    assert result["status"] == "FAIL"
+    assert result["value"] is None
+    assert result["value_text"] == result["observed"]
+    assert "email:TEXT" in result["value_text"]
+    assert result["diff"] == ["+ email (TEXT)"]
+
+
+def test_run_json_envelope_assertion_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE fct (amount REAL)")
+    adapter.rows("INSERT INTO fct VALUES (10.0), (-5.0)")
+    adapter.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: fct\n"
+        "    assert: amount >= 0\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["metric"] is None
+    assert result["label"] == "assert amount >= 0"
+    assert result["tier"] == "table"
+    assert result["status"] == "FAIL"
+    assert result["value"] == 1.0
+    assert result["value_text"] is None
+    assert result["observed"] == "1"
+    assert len(result["samples"]) == 1
 
 
 def test_run_persists_observations_by_default(tmp_path):
@@ -272,3 +391,89 @@ def test_run_unsupported_metric_is_a_clean_config_error(tmp_path, capsys):
     assert code == 3
     assert "unknown metric: 'not_a_real_metric'" in captured.err
     assert captured.out == ""
+
+
+def _only_config(tmp_path, db):
+    # "down" would fail to build were it ever touched.
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
+        "  down: { type: does_not_exist }\n"
+        "checks:\n"
+        "  - source: ok\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: down\n"
+        "    object: whatever\n"
+        "    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    return cfg
+
+
+def test_run_only_flag_restricts_to_one_source(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _only_config(tmp_path, db)
+    assert main(["run", "-c", str(cfg), "--only", "ok"]) == 0
+
+
+def test_run_only_unknown_source_is_a_clean_error(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    code = main(["run", "-c", str(cfg), "--only", "nope"])
+    assert code == 3
+    assert "nope" in capsys.readouterr().err
+
+
+def test_run_no_progress_flag_is_accepted(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    code = main(["run", "-c", str(cfg), "--no-progress"])
+    assert code == 0
+    assert "1 passed" in capsys.readouterr().out
+
+
+def test_run_command_derives_show_progress_from_json_and_no_progress_flags(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seen = {}
+
+    def fake_show_progress(json_output, no_progress, stream=None):
+        seen["json_output"] = json_output
+        seen["no_progress"] = no_progress
+        return False
+
+    monkeypatch.setattr("dbfresh.report.show_progress", fake_show_progress)
+
+    main(["run", "-c", str(cfg), "--no-progress"])
+
+    assert seen == {"json_output": False, "no_progress": True}
+
+
+def test_run_command_sizes_progress_by_the_only_filtered_check_count(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _only_config(tmp_path, db)
+    captured = {}
+
+    @contextlib.contextmanager
+    def fake_progress_reporter(total, enabled, console=None):
+        captured["total"] = total
+        captured["enabled"] = enabled
+        yield lambda result: None
+
+    monkeypatch.setattr("dbfresh.report.progress_reporter", fake_progress_reporter)
+
+    code = main(["run", "-c", str(cfg), "--only", "ok"])
+
+    assert code == 0
+    assert captured["total"] == 1

@@ -11,7 +11,7 @@ from typing import Any
 
 from dbfresh.calendar import BusinessCalendar
 from dbfresh.config import StoreConfig
-from dbfresh.engine import Result, Status
+from dbfresh.engine import Result, Status, split_value
 
 _CLEAN_STATUSES = (Status.OK.value, Status.WARN.value, Status.FAIL.value)
 
@@ -110,17 +110,6 @@ def _to_utc(value: datetime | None) -> datetime:
     return value.astimezone(UTC)
 
 
-def _split_value(value: Any) -> tuple[float | None, str | None]:
-    """Numeric scalars go in ``value``; everything else in ``value_text``."""
-    if value is None:
-        return None, None
-    if isinstance(value, bool):
-        return None, str(value)
-    if isinstance(value, (int, float)):
-        return float(value), None
-    return None, str(value)
-
-
 class Store:
     """A local SQLite observation store, separate from the source adapters."""
 
@@ -186,7 +175,7 @@ class Store:
         UTC, so ``last_same_weekday_observation`` compares like for like.
         """
         observed_at = _to_utc(observed_at)
-        value, value_text = _split_value(result.value)
+        value, value_text = split_value(result.value)
         label = result.label or result.metric or "assert"
         weekday = (
             calendar.local_date(observed_at).weekday()

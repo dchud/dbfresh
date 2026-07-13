@@ -1,6 +1,13 @@
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, parse_expectation
-from dbfresh.engine import Status, _error_result, _result, _verdict, evaluate_check
+from dbfresh.engine import (
+    Status,
+    _error_result,
+    _result,
+    _verdict,
+    evaluate_check,
+    run_checks,
+)
 
 
 def _adapter_with_rows(n):
@@ -120,3 +127,45 @@ def test_error_result_carries_exception_message_and_check_defaults():
     assert result.object == "t"
     assert result.metric == "row_count"
     assert result.source == "s"
+
+
+def test_result_tier_is_table_when_no_column_or_key_named():
+    check = Check(source="s", object="t", metric="row_count")
+    result = _result(check, Status.OK, value=5)
+    assert result.tier == "table"
+
+
+def test_result_tier_is_column_when_column_named():
+    check = Check(source="s", object="t", metric="null_rate", column="email")
+    result = _result(check, Status.OK, value=0.1)
+    assert result.tier == "column"
+
+
+def test_result_tier_is_column_when_key_named():
+    check = Check(source="s", object="t", metric="duplicate_count", key="id")
+    result = _result(check, Status.OK, value=0)
+    assert result.tier == "column"
+
+
+def test_run_checks_invokes_on_result_once_per_check():
+    a = _adapter_with_rows(3)
+    checks = [
+        Check(
+            source="s",
+            object="t",
+            metric="row_count",
+            id="first",
+            expect=parse_expectation({"between": [1, 10]}),
+        ),
+        Check(
+            source="s",
+            object="t",
+            metric="row_count",
+            id="second",
+            expect=parse_expectation({"between": [1, 10]}),
+        ),
+    ]
+    seen = []
+    run_checks({"s": a}, checks, on_result=seen.append)
+    assert len(seen) == 2
+    a.close()

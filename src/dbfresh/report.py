@@ -1,12 +1,29 @@
-"""Render run results as a copy-pasteable plain-text digest."""
+"""Render run results as a copy-pasteable plain-text digest, or as JSON."""
 
 from __future__ import annotations
 
 import json
+import sys
+import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, tzinfo
+from typing import TYPE_CHECKING
+
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from dbfresh.calendar import BusinessCalendar
-from dbfresh.engine import Result, RunResult, Status
+from dbfresh.engine import Result, RunResult, Status, split_value
+
+if TYPE_CHECKING:
+    from typing import TextIO
 
 
 def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
@@ -70,12 +87,28 @@ def render_digest(
 
 
 def render_json(run: RunResult) -> str:
-    """Machine-readable output: the worst status and every result."""
+    """Machine-readable output: a stable envelope over every result.
+
+    ``{status, run_id, started_at, finished_at, counts, results}`` -- this
+    shape is a stable contract for downstream consumers, not an
+    implementation detail free to drift between releases.
+    """
+    counts = dict.fromkeys(Status, 0)
+    for result in run.results:
+        counts[result.status] += 1
     payload = {
         "status": run.status.value,
+        "run_id": run.run_id,
+        "started_at": _optional_timestamp(run.started_at),
+        "finished_at": _optional_timestamp(run.finished_at),
+        "counts": {status.value: counts[status] for status in Status},
         "results": [_result_dict(result) for result in run.results],
     }
     return json.dumps(payload, default=str)
+
+
+def _optional_timestamp(when: datetime | None) -> str | None:
+    return format_timestamp(when) if when is not None else None
 
 
 def render_candidates(object_: str, candidates: list[dict]) -> str:
@@ -117,15 +150,71 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
 
 
 def _result_dict(result: Result) -> dict:
+    value, value_text = split_value(result.value)
+    observed = None if result.value is None else str(result.value)
     return {
         "check_id": result.check_id,
         "source": result.source,
         "object": result.object,
         "metric": result.metric,
         "label": result.label,
+        "tier": result.tier,
         "status": result.status.value,
-        "value": result.value,
+        "value": value,
+        "value_text": value_text,
         "expected": result.expected,
+        "observed": observed,
         "error": result.error,
         "samples": result.samples,
+        "diff": result.diff,
     }
+
+
+def show_progress(
+    json_output: bool, no_progress: bool, stream: TextIO | None = None
+) -> bool:
+    """Whether a live progress bar should render for this run.
+
+    Suppressed by ``--json`` (a machine consumer has no use for it and it
+    would corrupt the output stream), by ``--no-progress``, and whenever
+    ``stream`` (stdout by default) is not a terminal -- piped or redirected
+    output, or output captured by a test.
+    """
+    if json_output or no_progress:
+        return False
+    stream = stream if stream is not None else sys.stdout
+    isatty = getattr(stream, "isatty", None)
+    return bool(isatty()) if isatty is not None else False
+
+
+@contextmanager
+def progress_reporter(
+    total: int, enabled: bool, console: Console | None = None
+) -> Iterator[Callable[[Result], None]]:
+    """A context manager yielding an ``on_result`` callback for a run.
+
+    When ``enabled``, renders a live M-of-N bar (via rich) that advances
+    once per completed check; yields a no-op callback otherwise, so the
+    caller never has to branch on whether progress is shown. Checks across
+    sources complete concurrently on separate threads, so the advance is
+    guarded by a lock.
+    """
+    if not enabled:
+        yield lambda _result: None
+        return
+
+    lock = threading.Lock()
+    columns = (
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+    )
+    with Progress(*columns, console=console) as progress:
+        task = progress.add_task("running checks", total=total)
+
+        def _advance(_result: Result) -> None:
+            with lock:
+                progress.advance(task)
+
+        yield _advance

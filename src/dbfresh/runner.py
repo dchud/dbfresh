@@ -8,46 +8,69 @@ once so `dbfresh run` and `dbfresh ui` never duplicate it.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from dbfresh.checks import Check
 from dbfresh.config import Config
-from dbfresh.engine import RunResult, run_checks
+from dbfresh.engine import Result, RunResult, run_checks
 from dbfresh.store import Store, capture_git_sha
+
+
+def filter_checks(checks: list[Check], only: str | None) -> list[Check]:
+    """Every check, or only those on source ``only`` when given."""
+    if only is None:
+        return checks
+    return [check for check in checks if check.source == only]
 
 
 def run_and_persist(
     config: Config,
     store: Store | None,
     now: datetime | None = None,
+    only: str | None = None,
+    on_result: Callable[[Result], None] | None = None,
 ) -> RunResult:
     """Run every check in ``config`` and persist its results to ``store``.
 
     ``now`` is resolved once, up front, and reused throughout: it is the
     run's ``started_at`` (the run row opens before any check executes) and
     every observation's ``observed_at``, rather than the wall-clock time at
-    which each is written after evaluation finishes.
+    which each is written after evaluation finishes. The returned
+    ``RunResult`` carries that same ``started_at``, the actual completion
+    time as ``finished_at``, and ``run_id`` (``None`` when ``store`` is
+    ``None``) for the JSON report's envelope.
 
-    Builds one adapter per source actually referenced by ``config.checks``
-    (never every configured source -- an unrelated, unreachable source must
-    not affect a run that never touches it), evaluates every check via
-    :func:`~dbfresh.engine.run_checks`, and always closes the adapters
-    afterward. When ``store`` is given, records one observation per result
-    inside the run opened up front; ``store`` itself is left open -- the
-    caller (CLI or TUI) owns its lifecycle, so it can be reused across
-    repeated calls (e.g. the TUI's Run action).
+    ``only``, when given, restricts the run to a single source's checks --
+    every other source is filtered out before adapters are built, so an
+    unrelated source is never even connected to, not merely excluded from
+    the results.
+
+    Builds one adapter per source actually referenced by the (possibly
+    ``only``-filtered) checks (never every configured source -- an
+    unrelated, unreachable source must not affect a run that never touches
+    it), evaluates every check via :func:`~dbfresh.engine.run_checks`, and
+    always closes the adapters afterward. When ``store`` is given, records
+    one observation per result inside the run opened up front; ``store``
+    itself is left open -- the caller (CLI or TUI) owns its lifecycle, so it
+    can be reused across repeated calls (e.g. the TUI's Run action).
 
     A source whose adapter fails to build (unreachable host, bad
     credentials, unknown type, ...) does not abort the run: its exception is
     recorded in ``failed_sources`` and passed to ``run_checks``, which turns
     every check on that source into an ``ERROR`` result while every other
     source evaluates normally.
+
+    ``on_result``, when given, is forwarded to :func:`~dbfresh.engine.run_checks`
+    and called once per check as it completes -- e.g. to advance a progress bar.
     """
     from dbfresh.adapters.factory import create_adapter
 
     now = now or datetime.now(UTC)
+    checks = filter_checks(config.checks, only)
 
-    referenced = {check.source for check in config.checks}
+    referenced = {check.source for check in checks}
     adapters: dict[str, Any] = {}
     failed_sources: dict[str, BaseException] = {}
     for name in referenced:
@@ -71,11 +94,12 @@ def run_and_persist(
     try:
         run = run_checks(
             adapters,
-            config.checks,
+            checks,
             calendar=config.calendar,
             store=store,
             now=now,
             failed_sources=failed_sources,
+            on_result=on_result,
         )
     finally:
         for adapter in adapters.values():
@@ -83,10 +107,14 @@ def run_and_persist(
             with contextlib.suppress(Exception):
                 adapter.close()
 
+    finished_at = datetime.now(UTC)
     if store is not None:
         store.record_observations(
             run_id, run.results, observed_at=now, calendar=config.calendar
         )
-        store.finish_run(run_id, run.status)
+        store.finish_run(run_id, run.status, finished_at=finished_at)
 
+    run.run_id = run_id
+    run.started_at = now
+    run.finished_at = finished_at
     return run
