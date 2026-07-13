@@ -80,3 +80,23 @@ def test_check_id_assertion_differs_from_metric_check_with_same_object():
     metric_check = Check(source="s", object="t", metric="row_count")
     assertion = Check(source="s", object="t", assert_="1 = 1")
     assert check_id(metric_check) != check_id(assertion)
+
+
+def test_check_id_ignores_freshness_source():
+    # freshness_source is not part of the identity tuple: switching a
+    # freshness check's origin preserves its observation history.
+    column = Check(
+        source="s",
+        object="t",
+        metric="freshness",
+        column="c",
+        freshness_source="column",
+    )
+    describe_detail = Check(
+        source="s",
+        object="t",
+        metric="freshness",
+        column="c",
+        freshness_source="describe_detail",
+    )
+    assert check_id(column) == check_id(describe_detail)

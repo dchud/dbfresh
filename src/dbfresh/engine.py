@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from dbfresh.adapters.databricks import validate_freshness_source
 from dbfresh.calendar import BusinessCalendar, weekday_key
 from dbfresh.checks import (
     Check,
@@ -210,6 +211,28 @@ def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     )
 
 
+def _freshness_raw(check: Check, adapter: Any) -> Any:
+    """The observed freshness timestamp, dispatched on ``check.freshness_source``.
+
+    ``column`` runs the usual ``MAX(column)`` query. The two DESCRIBE origins
+    are metadata-only (no column) and table-only: ``describe()`` supplies the
+    object's ``is_view`` flag, validated here against the origin and the
+    dialect's declared capability (a view must use ``column`` instead) --
+    static capability is already enforced at config-validation time, but
+    ``is_view`` is only knowable from a live ``describe()``, so it is
+    (re-)checked here. ``describe_detail`` reuses that same ``describe()``
+    call for its timestamp; ``describe_history`` reads it separately.
+    """
+    if check.freshness_source == "column":
+        sql = compile_metric_sql(check, adapter.dialect)
+        return adapter.scalar(sql)
+    info = adapter.describe(check.object)
+    validate_freshness_source(check.freshness_source, adapter.dialect, info.is_view)
+    if check.freshness_source == "describe_detail":
+        return info.last_modified
+    return adapter.describe_history_last_modified(check.object)
+
+
 def _evaluate_freshness(
     check: Check,
     adapter: Any,
@@ -217,11 +240,15 @@ def _evaluate_freshness(
     expect: Expectation | None,
     calendar: BusinessCalendar | None,
 ) -> Result:
-    """Compute freshness lag (now - MAX(column)) and evaluate it against max_lag."""
-    sql = compile_metric_sql(check, adapter.dialect)
+    """Compute freshness lag (now - observed timestamp) and evaluate max_lag.
+
+    The observed timestamp's origin is ``check.freshness_source``; everything
+    from there on (business-calendar lag, expectation) is the same regardless
+    of where the timestamp came from.
+    """
     expected = expect.describe() if expect else None
     try:
-        raw = adapter.scalar(sql)
+        raw = _freshness_raw(check, adapter)
     except Exception as exc:  # unreachable source / query error -> ERROR
         return Result(
             object=check.object,

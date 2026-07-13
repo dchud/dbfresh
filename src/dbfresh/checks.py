@@ -201,6 +201,7 @@ class Check:
     on_holiday: Expectation | None = None
     calendar: str | None = None
     skip_off_schedule: bool = False
+    freshness_source: str = "column"
 
 
 _TABLE_LEVEL_METRICS = frozenset({"row_count", "schema"})
