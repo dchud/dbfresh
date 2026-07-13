@@ -29,5 +29,5 @@ jobs:
       - name: Sync dependencies
         run: uv sync
 
-      - name: Lint, format check, and tests
+      - name: Lint, format check, type check, and tests
         run: just check

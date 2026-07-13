@@ -17,8 +17,12 @@ fmt:
     uv run ruff check --fix .
     uv run ruff format .
 
-# Local equivalent of CI: lint, format check, and tests. Run before pushing.
-check: lint test
+# Type-check src/dbfresh with mypy.
+typecheck:
+    uv run mypy
+
+# Local equivalent of CI: lint, format check, type check, and tests. Run before pushing.
+check: lint typecheck test
 
 # Run the CLI (pass args after `--`, e.g. `just run -- --version`).
 run *args:
