@@ -431,7 +431,7 @@ def _add_command(args: argparse.Namespace) -> int:
     else:
         target = files[0] if files else config_path
 
-    written, skipped = append_checks(target, proposed)
+    written, skipped = append_checks(target, proposed, config_path=config_path)
     print(f"wrote {written} check(s) to {target}")
     for block in skipped:
         print(f"  skipped duplicate check: {block}")

@@ -68,6 +68,67 @@ def test_add_wizard_appends_proposed_bundle_for_existing_source(tmp_path, monkey
     assert {"schema", "row_count", "freshness", "duplicate_count"} <= metrics
 
 
+def test_add_wizard_run_twice_for_same_object_does_not_duplicate_checks(
+    tmp_path, monkeypatch
+):
+    from dbfresh.config import load_config
+
+    db = tmp_path / "data.db"
+    _table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+
+    def _run():
+        answers = iter(["s", "fct", "y", "", "", ""])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+        return main(["add", "-c", str(cfg)])
+
+    assert _run() == 0
+    first = yaml.safe_load(cfg.read_text())
+    assert _run() == 0
+    second = yaml.safe_load(cfg.read_text())
+
+    assert second["checks"] == first["checks"]  # no duplicates appended
+    config = load_config(cfg)  # must not raise a duplicate check_id error
+    assert len(config.checks) == len(first["checks"])
+
+
+def test_add_wizard_dedupes_across_included_files_not_just_the_target(
+    tmp_path, monkeypatch
+):
+    # The same object, added twice but to two DIFFERENT included files --
+    # dedup must see the whole composed config, not just whichever file is
+    # the write target this run, or the second run duplicates check_ids
+    # and the next load_config rejects the file.
+    from dbfresh.config import load_config
+
+    db = tmp_path / "data.db"
+    _table(db)
+    (tmp_path / "checks").mkdir()
+    (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
+    (tmp_path / "checks" / "b.yaml").write_text("checks: []\n")
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "include: [checks/*.yaml]\nchecks: []\n"
+    )
+
+    def _run(file_index):
+        answers = iter(["s", "fct", "y", "", "", "", str(file_index)])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+        return main(["add", "-c", str(cfg)])
+
+    assert _run(1) == 0  # writes to a.yaml
+    assert _run(2) == 0  # would write to b.yaml, but it's all duplicates
+
+    b_data = yaml.safe_load((tmp_path / "checks" / "b.yaml").read_text())
+    assert b_data["checks"] == []
+
+    config = load_config(cfg)  # must not raise a duplicate check_id error
+    a_data = yaml.safe_load((tmp_path / "checks" / "a.yaml").read_text())
+    assert len(config.checks) == len(a_data["checks"])
+
+
 def test_add_wizard_missing_object_requires_confirmation_to_proceed(
     tmp_path, monkeypatch
 ):
