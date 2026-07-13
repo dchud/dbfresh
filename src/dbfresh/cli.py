@@ -52,7 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = subcommands.add_parser("run", help="run checks and report")
     run.add_argument("-c", "--config", default="config.yaml")
+    run.add_argument("--only", default=None, help="restrict the run to one source")
     run.add_argument("--json", action="store_true", help="machine-readable output")
+    run.add_argument(
+        "--no-progress", action="store_true", help="suppress the progress bar"
+    )
     run.add_argument("--store", default=None, help="observation store path")
     run.add_argument(
         "--no-store", action="store_true", help="do not persist observations"
@@ -97,8 +101,14 @@ def _resolve_read_context(config_path: Path):
 def _run_command(args: argparse.Namespace) -> int:
     from dbfresh.config import ConfigError, load_config
     from dbfresh.engine import exit_code
-    from dbfresh.report import display_timezone, render_digest, render_json
-    from dbfresh.runner import run_and_persist
+    from dbfresh.report import (
+        display_timezone,
+        progress_reporter,
+        render_digest,
+        render_json,
+        show_progress,
+    )
+    from dbfresh.runner import filter_checks, run_and_persist
     from dbfresh.store import Store, resolve_store_path
 
     config_path = Path(args.config)
@@ -106,6 +116,10 @@ def _run_command(args: argparse.Namespace) -> int:
         config = load_config(config_path)
     except (ConfigError, OSError, yaml.YAMLError) as exc:
         return _report_config_error(exc)
+
+    if args.only is not None and args.only not in config.sources:
+        print(f"error: unknown source for --only: {args.only!r}", file=sys.stderr)
+        return _CONFIG_ERROR_EXIT
 
     # Opened before run_and_persist (not just after) so history-based
     # expectations (schema unchanged; vs_previous) can read prior
@@ -122,8 +136,11 @@ def _run_command(args: argparse.Namespace) -> int:
         )
         store = Store(store_path)
 
+    checks = filter_checks(config.checks, args.only)
+    enabled = show_progress(args.json, args.no_progress)
     try:
-        run = run_and_persist(config, store)
+        with progress_reporter(len(checks), enabled) as on_result:
+            run = run_and_persist(config, store, only=args.only, on_result=on_result)
     finally:
         if store is not None:
             store.close()
