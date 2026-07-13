@@ -62,7 +62,7 @@ class DatabricksDialect(Dialect):
     # Delta tables expose freshness via DESCRIBE metadata as well as a column.
     freshness_sources = frozenset({"column", "describe_history", "describe_detail"})
     # describe() populates only last_modified (a "stats" field): keys are
-    # always None and approx_row_count is never populated.
+    # always None (Unity Catalog exposes no constraint metadata here).
     introspection_capabilities = frozenset({"stats"})
 
 
@@ -128,8 +128,7 @@ class DatabricksAdapter:
         """Hand-written object metadata: Unity Catalog reflection is thin.
 
         Columns come from ``information_schema.columns``; keys are always
-        ``None`` and ``approx_row_count`` is never populated (neither is
-        exposed cheaply here); ``is_view`` comes from
+        ``None`` (not exposed cheaply here); ``is_view`` comes from
         ``information_schema.tables`` -- it is what lets the freshness
         run-time guard reject ``describe_history``/``describe_detail``
         against a view. ``is_view`` is computed before ``last_modified``:
@@ -143,7 +142,6 @@ class DatabricksAdapter:
         return ObjectInfo(
             columns=columns,
             keys=None,
-            approx_row_count=None,
             last_modified=last_modified,
             is_view=is_view,
         )

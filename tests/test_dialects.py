@@ -28,6 +28,6 @@ def test_databricks_adds_describe_freshness_capabilities():
 
 def test_sqlite_introspection_capabilities_is_keys_only():
     # SqliteAdapter.describe() reflects primary/unique keys via the base's
-    # SQLAlchemy Inspector, but never populates approx_row_count or
-    # last_modified -- only "keys" is a genuine capability.
+    # SQLAlchemy Inspector, but never populates last_modified (no "stats"
+    # field) -- only "keys" is a genuine capability.
     assert SqliteDialect().introspection_capabilities == frozenset({"keys"})

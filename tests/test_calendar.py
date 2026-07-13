@@ -71,21 +71,6 @@ def test_subdivision_narrows_country_holidays():
     assert cal.is_holiday(date(2026, 3, 31)) is True  # Cesar Chavez Day
 
 
-def test_previous_business_day_skips_weekend():
-    cal = _calendar()
-    assert cal.previous_business_day(date(2026, 7, 6)) == date(2026, 7, 3)  # Mon -> Fri
-
-
-def test_previous_business_day_is_simple_weekday_before():
-    cal = _calendar()
-    assert cal.previous_business_day(date(2026, 7, 9)) == date(2026, 7, 8)  # Thu -> Wed
-
-
-def test_previous_business_day_skips_holiday_and_weekend():
-    cal = _calendar(extra=["2026-07-03"])  # Friday made a holiday
-    assert cal.previous_business_day(date(2026, 7, 6)) == date(2026, 7, 2)  # Mon -> Thu
-
-
 def test_local_date_converts_to_calendar_timezone():
     cal = build_calendar({"timezone": "America/New_York"})
     when = datetime(2026, 7, 4, 2, 0, tzinfo=UTC)  # Fri 22:00 EDT

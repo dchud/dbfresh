@@ -20,8 +20,8 @@ methods:
 - `describe(object) -> ObjectInfo` -- normalized object metadata: `columns`
   (name, native type, nullability, canonical category -- always populated),
   `keys` (primary-key / unique constraint column lists, or `None` when the
-  engine/object doesn't expose them), `approx_row_count` and
-  `last_modified` (cheap catalog estimates, or `None`).
+  engine/object doesn't expose them), and `last_modified` (a cheap catalog
+  estimate, or `None`).
 - `close()`.
 
 **`SqlAlchemyAdapter`**, the shared base every shipped adapter subclasses,
@@ -32,9 +32,11 @@ built entirely on SQLAlchemy's reflection `Inspector`
 columns, native types, nullability, and keys come for free on any
 SQLAlchemy-supported engine -- a new adapter only needs to declare its
 `Dialect` and whatever engine-specific extras reflection can't give it: a
-catalog row-count estimate, a category-mapping refinement, or -- when an
-engine's metadata reflection is too thin to trust, as Databricks's is for
-Unity Catalog -- an overridden `describe` entirely.
+category-mapping refinement, or -- when an engine's metadata reflection is
+too thin to trust, as Databricks's is for Unity Catalog -- an overridden
+`describe` entirely. A field that reflection can't populate and no adapter
+queries for (an unused catalog estimate would be a per-run cost paid for
+nothing) stays `None`.
 
 ## The Dialect contract
 
@@ -72,20 +74,19 @@ target engine (`COUNT(*)`, `SUM(CASE WHEN ... THEN 1 ELSE 0 END)`,
 
 1. **The adapter.** `PostgresAdapter` subclasses `SqlAlchemyAdapter` with a
    `postgresql+psycopg://user:pass@host:port/db` engine URL built via
-   SQLAlchemy's `URL.create`. `scalar`, `rows`, and the columns/keys half of
-   `describe` are inherited from the base's reflection untouched.
-   `describe` is overridden only to layer on two PostgreSQL-specific
-   extras: a category-mapping refinement (`refine_category`, for native
-   type names the base's generic `isinstance` checks don't already resolve
-   -- `MONEY` is the one case in practice, since it doesn't subclass
-   SQLAlchemy's generic `Numeric`) and a `pg_class.reltuples` row-count
-   estimate (`_reltuples_estimate`), degrading to `None` for an unanalyzed
-   or nonexistent relation rather than returning a misleading number.
+   SQLAlchemy's `URL.create`. `scalar`, `rows`, and `describe` (columns,
+   keys) are inherited from the base's reflection untouched. `describe` is
+   overridden only to layer on one PostgreSQL-specific extra: a
+   category-mapping refinement (`refine_category`, for native type names
+   the base's generic `isinstance` checks don't already resolve -- `MONEY`
+   is the one case in practice, since it doesn't subclass SQLAlchemy's
+   generic `Numeric`).
 2. **The dialect.** `PostgresDialect` overrides nothing but `name` and its
    two capability sets: row limiting (`LIMIT n`) and float coercion both
    come from the `Dialect` base unchanged; `freshness_sources = {column}`
-   and `introspection_capabilities = {keys, stats}` are declared instead of
-   inherited, since PostgreSQL genuinely supports both.
+   and `introspection_capabilities = {keys}` are declared instead of
+   inherited, since PostgreSQL genuinely supports key introspection (but,
+   like the base, never populates a "stats" field).
 3. **One factory registration.** `adapters/factory.py`'s `_ADAPTERS` dict
    maps `"postgres"` to `PostgresAdapter` -- the only place a new source
    type has to be wired in for `type: postgres` in config to resolve.

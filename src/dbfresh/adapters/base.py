@@ -45,7 +45,6 @@ class ObjectInfo:
 
     columns: list[Column]
     keys: list[list[str]] | None = None
-    approx_row_count: int | None = None
     last_modified: datetime | None = None
     is_view: bool = False
 

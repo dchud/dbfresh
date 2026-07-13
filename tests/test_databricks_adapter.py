@@ -47,7 +47,7 @@ def test_dialect_freshness_capabilities():
 
 def test_dialect_introspection_capability_is_stats_only():
     # describe() never populates keys (Unity Catalog exposes no constraints
-    # here) or approx_row_count; only last_modified (a "stats" field).
+    # here); only last_modified (a "stats" field).
     assert DatabricksDialect().introspection_capabilities == frozenset({"stats"})
 
 
@@ -251,18 +251,6 @@ def test_describe_keys_is_always_none():
     )
     info = adapter.describe("main.gold.customer_360")
     assert info.keys is None
-
-
-def test_describe_approx_row_count_is_always_none():
-    adapter = _make_bare_adapter(
-        [
-            ("information_schema.columns", _COLUMNS_DESC, []),
-            _NOT_A_VIEW,
-            ("DESCRIBE DETAIL", _desc("lastModified"), []),
-        ]
-    )
-    info = adapter.describe("main.gold.customer_360")
-    assert info.approx_row_count is None
 
 
 def test_describe_last_modified_from_describe_detail():

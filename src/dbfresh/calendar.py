@@ -56,12 +56,6 @@ class BusinessCalendar:
     def is_business_day(self, day: dt.date) -> bool:
         return day.weekday() in self.workdays and not self.is_holiday(day)
 
-    def previous_business_day(self, day: dt.date) -> dt.date:
-        candidate = day - dt.timedelta(days=1)
-        while not self.is_business_day(candidate):
-            candidate -= dt.timedelta(days=1)
-        return candidate
-
     def business_time_between(self, t0: dt.datetime, t1: dt.datetime) -> dt.timedelta:
         """Wall-clock elapsed minus 24h per non-business date strictly between
         ``t0`` and ``t1``'s calendar dates (spec section 7.3).
