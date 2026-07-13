@@ -1,6 +1,7 @@
 """YAML emission: building blocks, target-file selection for
 `include:`-composed configs, appending, and the re-parse/run round trip."""
 
+import pytest
 import yaml
 
 from dbfresh.adapters.factory import create_adapter
@@ -54,6 +55,17 @@ def test_target_files_returns_included_files_when_include_present(tmp_path):
     assert [p.name for p in files] == ["a.yaml", "b.yaml"]
 
 
+def test_target_files_raises_like_load_config_on_an_unmatched_glob(tmp_path):
+    # Shares dbfresh.config's resolver: an unmatched include glob is a
+    # validation error here too, not a silently empty file list (which
+    # the Configure screen's target_files(...)[0] would turn into an
+    # IndexError).
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ninclude: [checks/nope-*.yaml]\nchecks: []\n")
+    with pytest.raises(ValueError):
+        target_files(cfg)
+
+
 def test_append_checks_to_root_config_preserves_other_keys(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
@@ -105,6 +117,90 @@ def test_append_checks_to_included_mapping_file(tmp_path):
     assert [c["object"] for c in data["checks"]] == ["existing", "new"]
 
 
+def test_append_checks_preserves_comments_in_root_config(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "# top comment\n"
+        "sources:\n"
+        "  s: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "  # existing check comment\n"
+        "  - source: s\n"
+        "    object: existing\n"
+        "    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    new_check = {
+        "source": "s",
+        "object": "new",
+        "metric": "row_count",
+        "expect": {"max": 5},
+    }
+    append_checks(cfg, [new_check])
+
+    text = cfg.read_text()
+    assert "# top comment" in text
+    assert "# existing check comment" in text
+    data = yaml.safe_load(text)
+    assert [c["object"] for c in data["checks"]] == ["existing", "new"]
+
+
+def test_append_checks_preserves_comments_in_included_bare_list_file(tmp_path):
+    included = tmp_path / "a.yaml"
+    included.write_text(
+        "# a comment about this file\n"
+        "- source: s\n"
+        "  object: existing\n"
+        "  metric: row_count\n"
+        "  expect: { max: 5 }\n"
+    )
+    new_check = {
+        "source": "s",
+        "object": "new",
+        "metric": "row_count",
+        "expect": {"max": 5},
+    }
+    append_checks(included, [new_check])
+
+    text = included.read_text()
+    assert "# a comment about this file" in text
+    data = yaml.safe_load(text)
+    assert [c["object"] for c in data] == ["existing", "new"]
+
+
+def test_append_checks_onto_empty_checks_list_preserves_comments(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\n# nothing here yet\nchecks: []\n")
+    new_check = {
+        "source": "s",
+        "object": "new",
+        "metric": "row_count",
+        "expect": {"max": 5},
+    }
+    append_checks(cfg, [new_check])
+
+    text = cfg.read_text()
+    assert "# nothing here yet" in text
+    data = yaml.safe_load(text)
+    assert [c["object"] for c in data["checks"]] == ["new"]
+
+
+def test_add_source_preserves_comments_in_root_config(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "# config comment\n"
+        "sources:\n"
+        "  existing: { type: sqlite, database: ':memory:' }\n"
+        "checks: []\n"
+    )
+    add_source(cfg, "new", "sqlite", {"database": "other.db"})
+
+    text = cfg.read_text()
+    assert "# config comment" in text
+    data = yaml.safe_load(text)
+    assert set(data["sources"]) == {"existing", "new"}
+
+
 def test_add_source_writes_a_new_source_into_the_root_config(tmp_path):
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
@@ -125,6 +221,56 @@ def test_add_source_preserves_existing_sources_and_checks(tmp_path):
     data = yaml.safe_load(cfg.read_text())
     assert set(data["sources"]) == {"existing", "new"}
     assert len(data["checks"]) == 1
+
+
+def test_append_checks_skips_duplicate_check_id_and_reports_it(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+    guards = {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2.0}
+    check = build_check("s", "t", "row_count", expect={"vs_previous": guards})
+    written, skipped = append_checks(cfg, [check], config_path=cfg)
+    assert written == 1
+    assert skipped == []
+
+    written, skipped = append_checks(cfg, [check], config_path=cfg)
+    assert written == 0
+    assert skipped == [check]
+
+    data = yaml.safe_load(cfg.read_text())
+    assert len(data["checks"]) == 1
+
+
+def test_append_checks_twice_for_same_object_keeps_config_loadable(tmp_path):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL)")
+    info = adapter.describe("fct")
+    proposals = propose_checks("s", "fct", info, adapter.dialect)
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    append_checks(cfg, proposals, config_path=cfg)
+    append_checks(cfg, proposals, config_path=cfg)  # add run twice on the same object
+
+    config = load_config(cfg)  # must not raise a duplicate check_id error
+    assert len(config.checks) == len(proposals)
+
+
+def test_append_checks_dedupes_against_other_included_files(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    (tmp_path / "checks").mkdir()
+    a = tmp_path / "checks" / "a.yaml"
+    b = tmp_path / "checks" / "b.yaml"
+    check = build_check("s", "t", "row_count", expect={"max": 5})
+    a.write_text(yaml.safe_dump({"checks": [check]}))
+    b.write_text("checks: []\n")
+    cfg.write_text("sources: {}\ninclude: [checks/*.yaml]\nchecks: []\n")
+
+    written, skipped = append_checks(b, [check], config_path=cfg)
+    assert written == 0
+    assert skipped == [check]
+    assert yaml.safe_load(b.read_text())["checks"] == []
 
 
 def test_emitted_bundle_reparses_and_runs_under_load_config(tmp_path):

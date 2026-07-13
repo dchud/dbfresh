@@ -7,10 +7,14 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from dbfresh import __version__
+
+if TYPE_CHECKING:
+    from dbfresh.config import Config
 
 # A config that never loaded is a run that could not complete -- the same
 # ERROR class as an unreachable source at run time (exit_code(Status.ERROR)),
@@ -202,37 +206,60 @@ def _confirm(msg: str, default: bool = False) -> bool:
     return answer in ("y", "yes")
 
 
-def _build_offered_check(source, obj, column, metric, has_calendar):
-    from dbfresh.configurator import build_check
+def _prompt_number(msg: str, default: str, cast: type) -> Any:
+    """Prompt for a number, re-prompting until ``cast`` accepts the input."""
+    while True:
+        raw = _prompt(msg, default)
+        try:
+            return cast(raw)
+        except ValueError:
+            print(f"    not a number: {raw!r}")
+
+
+def _prompt_index(msg: str, default: str, count: int) -> int:
+    """Prompt for a 1-based choice within ``[1, count]``; return it 0-based."""
+    while True:
+        n = _prompt_number(msg, default, int)
+        if 1 <= n <= count:
+            return n - 1
+        print(f"    enter a number from 1 to {count}")
+
+
+def _prompt_offered_check(
+    source: str, obj: str, column: str, metric: str, has_calendar: bool
+) -> dict:
+    """Collect any metric-specific value interactively, then build the block.
+
+    Prompting is a front-end concern :func:`configurator.build_offered_check`
+    never performs itself; only ``null_rate`` and ``freshness`` need extra
+    input here, everything else uses that function's defaults.
+    """
+    from dbfresh.configurator import build_offered_check
 
     if metric == "null_rate":
-        value = float(_prompt("    max null rate", "0.05"))
-        return build_check(
-            source, obj, "null_rate", column=column, expect={"max": value}
-        )
-    if metric in ("sum", "avg", "min", "max"):
-        baseline = "last_same_weekday" if has_calendar else "previous"
-        guards = {"baseline": baseline, "min_ratio": 0.5, "max_ratio": 2.0}
-        return build_check(
-            source, obj, metric, column=column, expect={"vs_previous": guards}
-        )
-    if metric == "duplicate_count":
-        return build_check(
-            source, obj, "duplicate_count", key=column, expect={"max": 0}
+        value = _prompt_number("    max null rate", "0.05", float)
+        return build_offered_check(
+            source, obj, column, metric, has_calendar, max_null_rate=value
         )
     if metric == "freshness":
-        return build_check(
-            source,
-            obj,
-            "freshness",
-            column=column,
-            freshness_source="column",
-            expect={"max_lag": "24h"},
+        max_lag = _prompt("    max lag", "24h")
+        return build_offered_check(
+            source, obj, column, metric, has_calendar, max_lag=max_lag
         )
-    raise ValueError(f"unsupported offered metric: {metric!r}")
+    return build_offered_check(source, obj, column, metric, has_calendar)
 
 
-def _select_source(config, config_path):
+_SECRET_LOOKING_KEY_HINTS = ("token", "password", "pass", "secret", "key")
+
+
+def _looks_like_secret_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(hint in lowered for hint in _SECRET_LOOKING_KEY_HINTS)
+
+
+def _select_source(
+    config: Config | None,
+) -> tuple[str, Any | None, bool, tuple[str, dict] | None]:
     """Prompt for a source name; a new source is probed before anything else.
 
     Returns ``(source_name, adapter, aborted, new_source)``. ``adapter`` is
@@ -241,10 +268,13 @@ def _select_source(config, config_path):
     is ``True`` only when the user declined to add an unreachable new
     source. ``new_source`` is ``(type_, params)`` when the user just defined
     a brand-new source -- written to the config only once the rest of the
-    wizard confirms, never before the connection test.
+    wizard confirms, never before the connection test. ``params`` may hold
+    ``${VAR}`` tokens: the connection test resolves them, but the returned
+    (and eventually written) params stay literal so no secret lands in the
+    tracked YAML.
     """
     from dbfresh.adapters.factory import create_adapter
-    from dbfresh.configurator import probe_connection
+    from dbfresh.configurator import probe_connection, probe_new_source
 
     sources = config.sources if config else {}
     if sources:
@@ -264,14 +294,19 @@ def _select_source(config, config_path):
     type_ = _prompt("Source type (e.g. sqlite)")
     params: dict = {}
     print("Enter connection params as key=value (blank line to finish):")
+    print("  tip: use key=${VAR} for secrets to keep them out of the YAML")
     while True:
         line = input("  ").strip()
         if not line:
             break
         key, _sep, value = line.partition("=")
-        params[key.strip()] = value.strip()
+        key = key.strip()
+        value = value.strip()
+        if _looks_like_secret_key(key) and "${" not in value:
+            print(f"    hint: consider {key}=${{VAR}} instead of a literal value")
+        params[key] = value
 
-    probe = probe_connection(type_, params)
+    probe, resolved_params = probe_new_source(type_, params)
     if not probe.ok:
         print(f"connection test failed: {probe.error}")
         if not _confirm("Add this source anyway (unverified)?"):
@@ -279,7 +314,8 @@ def _select_source(config, config_path):
         return source_name, None, False, (type_, params)
 
     print("connection test passed")
-    return source_name, create_adapter(type_, params), False, (type_, params)
+    adapter = create_adapter(type_, resolved_params)
+    return source_name, adapter, False, (type_, params)
 
 
 def _add_command(args: argparse.Namespace) -> int:
@@ -289,6 +325,7 @@ def _add_command(args: argparse.Namespace) -> int:
         append_checks,
         check_object_exists,
         offered_column_checks,
+        pick_timestamp_column,
         propose_checks,
         target_files,
     )
@@ -300,57 +337,81 @@ def _add_command(args: argparse.Namespace) -> int:
         return _report_config_error(exc)
     has_calendar = config.calendar is not None if config else False
 
-    source_name, adapter, aborted, new_source = _select_source(config, config_path)
+    source_name, adapter, aborted, new_source = _select_source(config)
     if aborted:
         print("aborted")
         return 1
 
-    object_name = _prompt("Object name")
-    existence = check_object_exists(adapter, object_name)
-    info = existence.info
-    if not existence.verified:
-        print("existence unverified (source unreachable)")
-        if not _confirm("Continue with manual entry?"):
-            return 1
-    elif not existence.exists:
-        print(f"warning: {object_name!r} not found: {existence.error}")
-        if not _confirm("Add checks for it anyway?"):
-            return 1
+    try:
+        object_name = _prompt("Object name")
+        existence = check_object_exists(adapter, object_name)
+        info = existence.info
+        if not existence.verified:
+            print("existence unverified (source unreachable)")
+            if not _confirm("Continue with manual entry?"):
+                return 1
+        elif not existence.exists:
+            print(f"warning: {object_name!r} not found: {existence.error}")
+            if not _confirm("Add checks for it anyway?"):
+                return 1
 
-    proposed: list[dict] = []
-    if info is not None:
-        bundle = propose_checks(
-            source_name, object_name, info, adapter.dialect, has_calendar=has_calendar
-        )
-        print(f"Proposed {len(bundle)} check(s):")
-        for block in bundle:
-            print(f"  - {block}")
-        if _confirm("Accept the full proposed bundle?", default=True):
-            proposed = list(bundle)
-        else:
-            for block in bundle:
-                if _confirm(f"  include {block['metric']}?", default=True):
-                    proposed.append(block)
-
-        for offer in offered_column_checks(info.columns):
-            if not offer["checks"]:
-                continue
-            print(
-                f"Offered for {offer['column']} ({offer['category']}): "
-                + ", ".join(offer["checks"])
-            )
-            choice = _prompt("  add which (comma-separated, blank to skip)", "")
-            for metric in (m.strip() for m in choice.split(",") if m.strip()):
-                proposed.append(
-                    _build_offered_check(
-                        source_name, object_name, offer["column"], metric, has_calendar
-                    )
+        proposed: list[dict] = []
+        if info is not None:
+            timestamp_override = None
+            timestamp = pick_timestamp_column(info.columns)
+            if timestamp.needs_choice:
+                print(
+                    "Ambiguous freshness timestamp candidates: "
+                    + ", ".join(timestamp.candidates)
                 )
-    else:
-        print("no metadata available; add checks manually by editing the YAML")
+                choice = _prompt("Pick a column for freshness (blank to skip)", "")
+                if choice in timestamp.candidates:
+                    timestamp_override = choice
+                elif choice:
+                    print(f"warning: {choice!r} is not a candidate; skipping")
 
-    if adapter is not None:
-        adapter.close()
+            bundle = propose_checks(
+                source_name,
+                object_name,
+                info,
+                adapter.dialect,
+                has_calendar=has_calendar,
+                is_view=info.is_view,
+                timestamp_override=timestamp_override,
+            )
+            print(f"Proposed {len(bundle)} check(s):")
+            for block in bundle:
+                print(f"  - {block}")
+            if _confirm("Accept the full proposed bundle?", default=True):
+                proposed = list(bundle)
+            else:
+                for block in bundle:
+                    if _confirm(f"  include {block['metric']}?", default=True):
+                        proposed.append(block)
+
+            for offer in offered_column_checks(info.columns):
+                if not offer["checks"]:
+                    continue
+                print(
+                    f"Offered for {offer['column']} ({offer['category']}): "
+                    + ", ".join(offer["checks"])
+                )
+                choice = _prompt("  add which (comma-separated, blank to skip)", "")
+                for metric in (m.strip() for m in choice.split(",") if m.strip()):
+                    proposed.append(
+                        _prompt_offered_check(
+                            source_name,
+                            object_name,
+                            offer["column"],
+                            metric,
+                            has_calendar,
+                        )
+                    )
+        else:
+            print("no metadata available; add checks manually by editing the YAML")
+    finally:
+        if adapter is not None:
+            adapter.close()
 
     if new_source is not None:
         add_source(config_path, source_name, *new_source)
@@ -365,13 +426,15 @@ def _add_command(args: argparse.Namespace) -> int:
         print("Included checks files:")
         for i, f in enumerate(files, 1):
             print(f"  {i}. {f}")
-        idx = int(_prompt("Write to which file (number)", "1")) - 1
+        idx = _prompt_index("Write to which file (number)", "1", len(files))
         target = files[idx]
     else:
         target = files[0] if files else config_path
 
-    append_checks(target, proposed)
-    print(f"wrote {len(proposed)} check(s) to {target}")
+    written, skipped = append_checks(target, proposed, config_path=config_path)
+    print(f"wrote {written} check(s) to {target}")
+    for block in skipped:
+        print(f"  skipped duplicate check: {block}")
     return 0
 
 

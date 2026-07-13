@@ -20,6 +20,7 @@ from dbfresh.config import Config
 from dbfresh.configurator import (
     append_checks,
     check_object_exists,
+    pick_timestamp_column,
     propose_checks,
     target_files,
 )
@@ -46,6 +47,8 @@ class ConfigureScreen(Screen[bool]):
         yield Input(id="source-input")
         yield Label("Object name")
         yield Input(id="object-input")
+        yield Label("Timestamp column (only if ambiguous -- see proposal)")
+        yield Input(id="timestamp-input")
         with Horizontal():
             yield Button("Propose", id="propose-btn")
             yield Button("Accept", id="accept-btn", disabled=True)
@@ -85,6 +88,21 @@ class ConfigureScreen(Screen[bool]):
                     f"object not found: {object_name!r} ({existence.error})"
                 )
                 return
+
+            ambiguity_note = None
+            timestamp_override = None
+            timestamp = pick_timestamp_column(existence.info.columns)
+            if timestamp.needs_choice:
+                entered = self.query_one("#timestamp-input", Input).value.strip()
+                if entered in timestamp.candidates:
+                    timestamp_override = entered
+                else:
+                    ambiguity_note = (
+                        "ambiguous timestamp candidates: "
+                        + ", ".join(timestamp.candidates)
+                        + " -- enter one above and Propose again"
+                    )
+
             has_calendar = self._config.calendar is not None
             self._proposed = propose_checks(
                 source_name,
@@ -92,11 +110,15 @@ class ConfigureScreen(Screen[bool]):
                 existence.info,
                 adapter.dialect,
                 has_calendar=has_calendar,
+                is_view=existence.info.is_view,
+                timestamp_override=timestamp_override,
             )
         finally:
             adapter.close()
 
         lines = [f"{c['metric']}: {c['expect']}" for c in self._proposed]
+        if ambiguity_note is not None:
+            lines.insert(0, ambiguity_note)
         proposal_widget.update("\n".join(lines) if lines else "no checks proposed")
         accept_button.disabled = not self._proposed
 
@@ -104,7 +126,7 @@ class ConfigureScreen(Screen[bool]):
         if not self._proposed:
             return
         target = target_files(self._config_path)[0]
-        append_checks(target, self._proposed)
+        append_checks(target, self._proposed, config_path=self._config_path)
         self.dismiss(True)
 
     def action_cancel(self) -> None:
