@@ -18,6 +18,15 @@ def _table(db):
     adapter.close()
 
 
+def _ambiguous_table(db):
+    adapter = SqliteAdapter(str(db))
+    adapter.rows(
+        "CREATE TABLE fct (id INTEGER PRIMARY KEY, created_at TIMESTAMP,"
+        " updated_at TIMESTAMP)"
+    )
+    adapter.close()
+
+
 class _FakeViewAdapter:
     """A Databricks-capable view with no timestamp candidate -- proves
     ``is_view`` reaches ``propose_checks`` so no invalid ``describe_history``
@@ -132,6 +141,62 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
             assert "freshness" not in proposal_text
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _ambiguous_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "created_at" in proposal_text
+            assert "updated_at" in proposal_text
+            assert "freshness" not in proposal_text
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_uses_picked_timestamp_column(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _ambiguous_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            app.screen.query_one("#timestamp-input").value = "updated_at"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "freshness" in proposal_text
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+        data = yaml.safe_load(cfg.read_text())
+        freshness = next(c for c in data["checks"] if c["metric"] == "freshness")
+        assert freshness["column"] == "updated_at"
 
     asyncio.run(scenario())
 

@@ -2,10 +2,10 @@
 
 All proposal, validation, YAML-serialization, connection-test, and
 existence-check logic lives here as plain functions and dataclasses, so both
-`dbfresh add` (a thin interactive shell) and the future TUI Configure screen
-share one tested surface. This module never writes to the observation
-store; it only reads catalog metadata via an adapter's ``describe()`` and
-emits YAML for the version-controlled config.
+`dbfresh add` (a thin interactive shell) and the TUI Configure screen share
+one tested surface. This module never writes to the observation store; it
+only reads catalog metadata via an adapter's ``describe()`` and emits YAML
+for the version-controlled config.
 """
 
 from __future__ import annotations
