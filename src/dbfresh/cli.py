@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from dbfresh import __version__
+
+_CONFIG_ERROR_EXIT = 2
+
+
+def _report_config_error(exc: ValueError) -> int:
+    """Print a config validation failure as one clean stderr line.
+
+    Used at every command boundary that calls ``load_config`` so a
+    validation problem (unknown source reference, duplicate check_id,
+    calendar features without a calendar block, operator misuse, ...) exits
+    cleanly instead of surfacing as an unhandled traceback.
+    """
+    print(f"config error: {exc}", file=sys.stderr)
+    return _CONFIG_ERROR_EXIT
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,7 +95,10 @@ def _run_command(args: argparse.Namespace) -> int:
 
     config_path = Path(args.config)
     load_dotenv(config_path.parent / ".env")
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except ValueError as exc:
+        return _report_config_error(exc)
 
     # Opened before run_and_persist (not just after) so history-based
     # expectations (schema unchanged; vs_previous) can read prior
@@ -114,7 +132,10 @@ def _history_command(args: argparse.Namespace) -> int:
     from dbfresh.report import display_timezone, render_candidates, render_history
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
+    try:
+        config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
+    except ValueError as exc:
+        return _report_config_error(exc)
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,
@@ -143,7 +164,10 @@ def _prune_command(args: argparse.Namespace) -> int:
     from dbfresh.config import StoreConfig
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
+    try:
+        config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
+    except ValueError as exc:
+        return _report_config_error(exc)
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,
@@ -266,7 +290,10 @@ def _add_command(args: argparse.Namespace) -> int:
     )
 
     config_path = Path(args.config)
-    config = load_config(config_path) if config_path.exists() else None
+    try:
+        config = load_config(config_path) if config_path.exists() else None
+    except ValueError as exc:
+        return _report_config_error(exc)
     has_calendar = config.calendar is not None if config else False
 
     source_name, adapter, aborted, new_source = _select_source(config, config_path)
@@ -345,7 +372,14 @@ def _add_command(args: argparse.Namespace) -> int:
 
 
 def _ui_command(args: argparse.Namespace) -> int:
+    from dbfresh.config import load_config
     from dbfresh.tui.app import DbfreshApp
+
+    config_path = Path(args.config)
+    try:
+        load_config(config_path)
+    except ValueError as exc:
+        return _report_config_error(exc)
 
     app = DbfreshApp(config_path=args.config, store_path=args.store)
     app.run()
