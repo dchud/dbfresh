@@ -107,6 +107,23 @@ def test_ambiguous_timestamp_yields_no_freshness_proposal():
     assert not [p for p in proposals if p["metric"] == "freshness"]
 
 
+def test_timestamp_override_forces_freshness_column_when_ambiguous():
+    # Front ends detect ambiguity via pick_timestamp_column, ask the user,
+    # then hand the choice back here rather than propose_checks guessing.
+    info = ObjectInfo(
+        columns=[
+            _col("created_at", category=Category.TEMPORAL, nullable=True),
+            _col("updated_at", category=Category.TEMPORAL, nullable=True),
+        ]
+    )
+    proposals = propose_checks(
+        "s", "t", info, Dialect(), timestamp_override="updated_at"
+    )
+    freshness = next(p for p in proposals if p["metric"] == "freshness")
+    assert freshness["column"] == "updated_at"
+    assert freshness["freshness_source"] == "column"
+
+
 def test_databricks_table_with_no_candidate_falls_back_to_describe_history():
     info = ObjectInfo(columns=[_col("id")])
     proposals = propose_checks("s", "t", info, DatabricksDialect())

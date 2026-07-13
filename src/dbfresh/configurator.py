@@ -144,6 +144,7 @@ def propose_checks(
     dialect: Dialect,
     has_calendar: bool = False,
     is_view: bool = False,
+    timestamp_override: str | None = None,
 ) -> list[dict]:
     """The metadata-driven proposal bundle for a named source + object.
 
@@ -151,8 +152,13 @@ def propose_checks(
     check. Proposes ``freshness`` on the auto-detected timestamp column
     (:func:`pick_timestamp_column`); when no column candidate exists, a
     Databricks-capable dialect on a table (not a view) falls back to
-    ``describe_history``, otherwise no freshness check is proposed. Proposes
-    one ``duplicate_count`` check per single-column key in ``info.keys``
+    ``describe_history``, otherwise no freshness check is proposed. When
+    several temporal columns are ambiguous, :func:`pick_timestamp_column`
+    returns no column and this proposes no freshness check unless the
+    caller passes ``timestamp_override`` -- the column a front end asked
+    the user to pick among ``TimestampChoice.candidates`` -- which is used
+    as-is, bypassing the auto-detect heuristic entirely. Proposes one
+    ``duplicate_count`` check per single-column key in ``info.keys``
     (composite keys are out of scope).
     """
     checks: list[dict] = [
@@ -171,32 +177,44 @@ def propose_checks(
         ),
     ]
 
-    timestamp = pick_timestamp_column(info.columns)
-    if timestamp.column is not None:
+    if timestamp_override is not None:
         checks.append(
             build_check(
                 source,
                 obj,
                 "freshness",
-                column=timestamp.column,
+                column=timestamp_override,
                 freshness_source="column",
                 expect={"max_lag": _DEFAULT_MAX_LAG},
             )
         )
-    elif (
-        not timestamp.needs_choice
-        and not is_view
-        and "describe_history" in dialect.freshness_sources
-    ):
-        checks.append(
-            build_check(
-                source,
-                obj,
-                "freshness",
-                freshness_source="describe_history",
-                expect={"max_lag": _DEFAULT_MAX_LAG},
+    else:
+        timestamp = pick_timestamp_column(info.columns)
+        if timestamp.column is not None:
+            checks.append(
+                build_check(
+                    source,
+                    obj,
+                    "freshness",
+                    column=timestamp.column,
+                    freshness_source="column",
+                    expect={"max_lag": _DEFAULT_MAX_LAG},
+                )
             )
-        )
+        elif (
+            not timestamp.needs_choice
+            and not is_view
+            and "describe_history" in dialect.freshness_sources
+        ):
+            checks.append(
+                build_check(
+                    source,
+                    obj,
+                    "freshness",
+                    freshness_source="describe_history",
+                    expect={"max_lag": _DEFAULT_MAX_LAG},
+                )
+            )
 
     for key in info.keys or []:
         if len(key) == 1:

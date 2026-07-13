@@ -333,6 +333,7 @@ def _add_command(args: argparse.Namespace) -> int:
         append_checks,
         check_object_exists,
         offered_column_checks,
+        pick_timestamp_column,
         propose_checks,
         target_files,
     )
@@ -364,6 +365,19 @@ def _add_command(args: argparse.Namespace) -> int:
 
         proposed: list[dict] = []
         if info is not None:
+            timestamp_override = None
+            timestamp = pick_timestamp_column(info.columns)
+            if timestamp.needs_choice:
+                print(
+                    "Ambiguous freshness timestamp candidates: "
+                    + ", ".join(timestamp.candidates)
+                )
+                choice = _prompt("Pick a column for freshness (blank to skip)", "")
+                if choice in timestamp.candidates:
+                    timestamp_override = choice
+                elif choice:
+                    print(f"warning: {choice!r} is not a candidate; skipping")
+
             bundle = propose_checks(
                 source_name,
                 object_name,
@@ -371,6 +385,7 @@ def _add_command(args: argparse.Namespace) -> int:
                 adapter.dialect,
                 has_calendar=has_calendar,
                 is_view=info.is_view,
+                timestamp_override=timestamp_override,
             )
             print(f"Proposed {len(bundle)} check(s):")
             for block in bundle:

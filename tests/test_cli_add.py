@@ -256,6 +256,69 @@ def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
     assert "freshness" not in metrics
 
 
+def _ambiguous_table(db):
+    adapter = SqliteAdapter(str(db))
+    adapter.rows(
+        "CREATE TABLE fct (id INTEGER PRIMARY KEY, created_at TIMESTAMP,"
+        " updated_at TIMESTAMP)"
+    )
+    adapter.close()
+
+
+def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "data.db"
+    _ambiguous_table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+
+    answers = iter(
+        [
+            "s",  # source name
+            "fct",  # object name
+            "updated_at",  # pick among the ambiguous candidates
+            "y",  # accept full bundle
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    code = main(["add", "-c", str(cfg)])
+    assert code == 0
+
+    data = yaml.safe_load(cfg.read_text())
+    freshness = next(c for c in data["checks"] if c["metric"] == "freshness")
+    assert freshness["column"] == "updated_at"
+
+
+def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "data.db"
+    _ambiguous_table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+
+    answers = iter(
+        [
+            "s",  # source name
+            "fct",  # object name
+            "",  # decline to pick -- skip freshness
+            "y",  # accept full bundle
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    code = main(["add", "-c", str(cfg)])
+    assert code == 0
+
+    data = yaml.safe_load(cfg.read_text())
+    metrics = {c["metric"] for c in data["checks"]}
+    assert "freshness" not in metrics
+
+
 def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
     _table(db)
