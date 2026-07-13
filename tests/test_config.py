@@ -278,6 +278,106 @@ checks:
     assert "id:" in message
 
 
+def test_load_config_reports_all_missing_vars_together(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s:
+    type: sqlite
+    database: "${DB_PATH}"
+  t:
+    type: sqlite
+    database: "${OTHER_PATH}"
+checks:
+  - source: s
+    object: tbl
+    metric: row_count
+    where: "region = '${REGION}'"
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    message = str(excinfo.value)
+    assert "DB_PATH" in message
+    assert "OTHER_PATH" in message
+    assert "REGION" in message
+
+
+def test_load_config_single_missing_var_message_unchanged(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: "${DB_PATH}" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert str(excinfo.value) == "undefined environment variable: DB_PATH"
+
+
+def test_load_config_missing_var_in_included_file_accumulates_with_main(tmp_path):
+    root = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: "${DB_PATH}" }
+include:
+  - checks/*.yaml
+checks:
+  - source: s
+    object: root_table
+    metric: row_count
+    where: "region = '${REGION}'"
+    expect: { max: 5 }
+""",
+    )
+    included_dir = tmp_path / "checks"
+    included_dir.mkdir()
+    (included_dir / "a.yaml").write_text(
+        """
+checks:
+  - source: s
+    object: included_table
+    metric: row_count
+    where: "region = '${INCLUDED_VAR}'"
+    expect: { max: 5 }
+"""
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(root, env={})
+    message = str(excinfo.value)
+    assert "DB_PATH" in message
+    assert "REGION" in message
+    assert "INCLUDED_VAR" in message
+
+
+def test_load_config_all_vars_provided_loads_successfully(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: "${DB_PATH}" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    where: "region = '${REGION}'"
+    expect: { max: 5 }
+""",
+    )
+    cfg = load_config(path, env={"DB_PATH": ":memory:", "REGION": "US"})
+    assert cfg.sources["s"].params["database"] == ":memory:"
+    assert cfg.checks[0].where == "region = 'US'"
+
+
 def test_duplicate_check_id_differing_only_by_where_names_metric(tmp_path):
     path = _write(
         tmp_path,
