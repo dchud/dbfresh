@@ -6,6 +6,7 @@ from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
+from dbfresh.tui import app as app_module
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
 
@@ -25,6 +26,14 @@ def _ambiguous_table(db):
         " updated_at TIMESTAMP)"
     )
     adapter.close()
+
+
+class _FakeUnreachableAdapter:
+    """A source that fails to connect at construction time, the way a
+    real network adapter would against an unreachable host."""
+
+    def __init__(self, timeout=None):
+        raise ConnectionError("could not connect")
 
 
 class _FakeViewAdapter:
@@ -197,6 +206,127 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
         data = yaml.safe_load(cfg.read_text())
         freshness = next(c for c in data["checks"] if c["metric"] == "freshness")
         assert freshness["column"] == "updated_at"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_unreachable_source_shows_error_not_crash(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: unreachable }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Did not crash: still on the Configure screen.
+            assert isinstance(app.screen, ConfigureScreen)
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "could not connect" in proposal_text
+            accept_btn = app.screen.query_one("#accept-btn")
+            assert accept_btn.disabled
+
+    asyncio.run(scenario())
+
+
+def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monkeypatch):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+
+        real_load_config = app_module.load_config
+        calls = {"n": 0}
+
+        def flaky_load_config(path):
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise ValueError("bad config after write")
+            return real_load_config(path)
+
+        monkeypatch.setattr(app_module, "load_config", flaky_load_config)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            previous_config = app.config
+
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            # Back on Home; the reload failed but the app did not crash,
+            # and the stale config from before the write is kept rather
+            # than being clobbered by a half-completed reload.
+            assert not isinstance(app.screen, ConfigureScreen)
+            assert app.config is previous_config
+
+            messages = [n.message for n in app._notifications]
+            assert any("bad config after write" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+
+        checks_dir = tmp_path / "checks"
+        checks_dir.mkdir()
+        (checks_dir / "a.yaml").write_text("checks: []\n")
+        (checks_dir / "b.yaml").write_text("checks: []\n")
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "include: [checks/*.yaml]\n"
+            "checks: []\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Several included files match: the proposal names the one
+            # that Accept will actually write to, rather than writing
+            # silently to whichever one happened to sort first.
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "a.yaml" in proposal_text
+            assert "2 included files" in proposal_text
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+        a_data = yaml.safe_load((checks_dir / "a.yaml").read_text())
+        b_data = yaml.safe_load((checks_dir / "b.yaml").read_text())
+        assert a_data["checks"]
+        assert b_data["checks"] == []
 
     asyncio.run(scenario())
 

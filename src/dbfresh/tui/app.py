@@ -11,9 +11,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Tree
+from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, load_config
 from dbfresh.engine import RunResult
@@ -21,6 +23,7 @@ from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import NodeInfo, build_dashboard
 
 _TREE_ID = "dashboard-tree"
+_RUN_WORKER_GROUP = "run-checks"
 
 
 class DbfreshApp(App):
@@ -71,11 +74,27 @@ class DbfreshApp(App):
         build_dashboard(tree, self.config, self.store)
 
     def action_run_checks(self) -> None:
-        """Run every check and refresh the dashboard from the new results."""
+        """Start a check run in a worker thread; the UI stays responsive."""
+        self._run_checks_worker()
+
+    @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP)
+    def _run_checks_worker(self) -> RunResult:
         from dbfresh.runner import run_and_persist
 
-        self.last_run = run_and_persist(self.config, self.store)
-        self.refresh_dashboard()
+        return run_and_persist(self.config, self.store)
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Pick up a finished run and refresh the dashboard from it.
+
+        A run that errors or gets cancelled (superseded by a later
+        keypress on an exclusive worker group) leaves the dashboard and
+        ``last_run`` untouched rather than raising.
+        """
+        if event.worker.group != _RUN_WORKER_GROUP:
+            return
+        if event.state == WorkerState.SUCCESS:
+            self.last_run = event.worker.result
+            self.refresh_dashboard()
 
     def action_configure(self) -> None:
         from dbfresh.tui.configure import ConfigureScreen
@@ -86,9 +105,19 @@ class DbfreshApp(App):
         )
 
     def _on_configure_dismissed(self, wrote: bool | None) -> None:
-        if wrote:
+        if not wrote:
+            return
+        try:
             self._reload_config()
-            self.refresh_dashboard()
+        except Exception as exc:
+            self.notify(
+                f"config reload failed after write: {exc}",
+                title="Reload failed",
+                severity="error",
+                timeout=10,
+            )
+            return
+        self.refresh_dashboard()
 
     def action_report(self) -> None:
         from dbfresh.report import display_timezone

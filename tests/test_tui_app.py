@@ -1,6 +1,8 @@
 import asyncio
 import re
+import threading
 
+from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id
 from dbfresh.engine import Result, Status
@@ -140,6 +142,57 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
 
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
+
+    asyncio.run(scenario())
+
+
+def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
+    tmp_path,
+    monkeypatch,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        started = threading.Event()
+        release = threading.Event()
+        real_run_and_persist = runner.run_and_persist
+
+        def blocking_run_and_persist(config, store, now=None):
+            started.set()
+            assert release.wait(timeout=2), "test never released the run"
+            return real_run_and_persist(config, store, now=now)
+
+        monkeypatch.setattr(runner, "run_and_persist", blocking_run_and_persist)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.pause()
+
+            # The worker thread is blocked inside the run, but the event
+            # loop kept servicing messages meanwhile: the run has started,
+            # the dashboard has not been refreshed yet, and the app is
+            # still responsive to further queries.
+            assert started.wait(timeout=2)
+            assert app.last_run is None
+            tree = app.query_one("#dashboard-tree")
+            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
+            assert "unknown" in str(row_count_leaf.label)
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.last_run is not None
+            assert app.last_run.status == Status.FAIL
+            tree = app.query_one("#dashboard-tree")
+            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
+            assert "OK" in str(row_count_leaf.label)
 
     asyncio.run(scenario())
 
