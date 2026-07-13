@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,6 +43,24 @@ class Result:
     samples: list | None = None
     check_id: str | None = None
     diff: list[str] | None = None
+    tier: str = "table"
+
+
+def split_value(value: Any) -> tuple[float | None, str | None]:
+    """Numeric scalars go in ``value``; everything else in ``value_text``.
+
+    Shared by the store (persisted columns) and the JSON report (the
+    ``value`` / ``value_text`` pair in the stable contract) so a schema
+    fingerprint always lands in ``value_text`` and a numeric observation
+    always lands in ``value``, in both places, the same way.
+    """
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return None, str(value)
+    if isinstance(value, (int, float)):
+        return float(value), None
+    return None, str(value)
 
 
 def _result(check: Check, status: Status, **fields: Any) -> Result:
@@ -51,12 +69,15 @@ def _result(check: Check, status: Status, **fields: Any) -> Result:
     A keyword in ``fields`` overrides the matching default -- e.g. an
     assertion check's Results always pin ``metric=None`` regardless of
     ``check.metric`` -- and any other Result field (``value``, ``expected``,
-    ``label``, ...) is passed straight through.
+    ``label``, ...) is passed straight through. ``tier`` is derived from the
+    check, not declared: table when it names no column or key, column
+    otherwise.
     """
     base: dict[str, Any] = {
         "object": check.object,
         "metric": check.metric,
         "source": check.source,
+        "tier": "column" if (check.column or check.key) else "table",
     }
     base.update(fields)
     return Result(status=status, **base)
@@ -453,6 +474,9 @@ def exit_code(status: Status) -> int:
 class RunResult:
     results: list[Result]
     status: Status
+    run_id: int | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 def _connect_error_result(check: Check, exc: BaseException) -> Result:
@@ -473,6 +497,7 @@ def run_checks(
     now: datetime | None = None,
     store: Any | None = None,
     failed_sources: dict[str, BaseException] | None = None,
+    on_result: Callable[[Result], None] | None = None,
 ) -> RunResult:
     """Evaluate checks per source and aggregate the worst status.
 
@@ -489,6 +514,11 @@ def run_checks(
     exception's text, without ever indexing ``adapters`` for it -- other
     sources evaluate normally, so one unreachable source never blocks the
     rest of the run.
+
+    ``on_result``, when given, is called once per check as its Result
+    becomes available -- e.g. to advance a progress bar -- rather than once
+    per source at the end. Sources evaluate concurrently on separate
+    threads, so a callback that touches shared state must guard it itself.
     """
     now = now or datetime.now(UTC)
     failed_sources = failed_sources or {}
@@ -498,13 +528,17 @@ def run_checks(
 
     def run_source(source_checks: list[Check]) -> list[Result]:
         source = source_checks[0].source
-        if source in failed_sources:
-            exc = failed_sources[source]
-            return [_connect_error_result(check, exc) for check in source_checks]
-        return [
-            evaluate_check(check, adapters[source], now, calendar, store)
-            for check in source_checks
-        ]
+        exc = failed_sources.get(source)
+        results = []
+        for check in source_checks:
+            if exc is not None:
+                result = _connect_error_result(check, exc)
+            else:
+                result = evaluate_check(check, adapters[source], now, calendar, store)
+            results.append(result)
+            if on_result is not None:
+                on_result(result)
+        return results
 
     results: list[Result] = []
     if by_source:

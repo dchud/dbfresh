@@ -217,6 +217,79 @@ def test_run_and_persist_unreachable_source_still_persists_healthy_results(tmp_p
     store.close()
 
 
+def test_run_and_persist_run_id_is_none_without_store(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
+
+    run = run_and_persist(config, store=None, now=frozen_now)
+
+    assert run.run_id is None
+    assert run.started_at == frozen_now
+    assert run.finished_at is not None
+
+
+def test_run_and_persist_run_id_set_when_store_given(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+
+    run = run_and_persist(config, store=store)
+
+    assert run.run_id is not None
+    row = store._conn.execute(
+        "SELECT run_id FROM run WHERE run_id = ?", (run.run_id,)
+    ).fetchone()
+    assert row is not None
+    store.close()
+
+
+def test_run_and_persist_only_restricts_to_one_source(tmp_path):
+    # "down" would fail to build were it ever touched -- --only excludes
+    # it from the run entirely, not just from the result set, so the run
+    # stays OK instead of the worst-status ERROR an untouched-but-included
+    # unreachable source would otherwise force.
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
+        "  down: { type: does_not_exist }\n"
+        "checks:\n"
+        "  - source: ok\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: down\n"
+        "    object: whatever\n"
+        "    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    config = load_config(cfg)
+
+    run = run_and_persist(config, store=None, only="ok")
+
+    assert run.status == Status.OK
+    assert len(run.results) == 1
+    assert run.results[0].source == "ok"
+
+
+def test_run_and_persist_on_result_invoked_per_check(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    seen = []
+
+    run_and_persist(config, store=None, on_result=seen.append)
+
+    assert len(seen) == 1
+
+
 def test_run_and_persist_closes_every_adapter_even_if_one_close_raises(
     tmp_path, monkeypatch
 ):
