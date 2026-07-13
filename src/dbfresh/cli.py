@@ -5,14 +5,17 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import structlog
 import yaml
 
 from dbfresh import __version__
 from dbfresh.adapters.base import Adapter
+from dbfresh.logsetup import configure_logging
 
 if TYPE_CHECKING:
     from dbfresh.config import Config
@@ -36,13 +39,44 @@ def _report_config_error(exc: Exception) -> int:
     return _CONFIG_ERROR_EXIT
 
 
+def _verbosity_parent() -> argparse.ArgumentParser:
+    """A parent parser contributing ``-v``/``--verbose`` to every (sub)parser.
+
+    Attached to both the top-level parser and each subcommand so ``-v``
+    is accepted on either side of the subcommand name (``dbfresh -v run``
+    and ``dbfresh run -v`` both work). Quiet by default; repeat for more:
+    ``-v`` is INFO, ``-vv`` is DEBUG. Logs always go to stderr, never
+    stdout, so they never interleave with the digest / ``--json`` report.
+
+    ``default=SUPPRESS``, not ``0``: argparse's subparsers action parses
+    subcommand arguments into a *separate* namespace and then copies every
+    attribute it set onto the outer one -- so a subparser's own ``-v``
+    action, if it defaulted to ``0``, would clobber a count already set by
+    the top-level parser's ``-v`` (e.g. ``dbfresh -v run`` would otherwise
+    silently reset to 0). Suppressing the default means a (sub)parser only
+    contributes ``verbose`` to the merge when its own ``-v`` was actually
+    given; ``main()`` falls back to ``0`` when neither supplies it at all.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=argparse.SUPPRESS,
+        help="increase log verbosity on stderr (-v info, -vv debug)",
+    )
+    return parent
+
+
 def build_parser() -> argparse.ArgumentParser:
+    verbosity = _verbosity_parent()
     parser = argparse.ArgumentParser(
         prog="dbfresh",
         description=(
             "External, value-level freshness and constraint checks for "
             "SQL Server and Databricks data sources."
         ),
+        parents=[verbosity],
     )
     parser.add_argument(
         "--version",
@@ -51,7 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subcommands = parser.add_subparsers(dest="command")
 
-    run = subcommands.add_parser("run", help="run checks and report")
+    run = subcommands.add_parser(
+        "run", help="run checks and report", parents=[_verbosity_parent()]
+    )
     run.add_argument("-c", "--config", default="config.yaml")
     run.add_argument("--only", default=None, help="restrict the run to one source")
     run.add_argument("--json", action="store_true", help="machine-readable output")
@@ -63,7 +99,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-store", action="store_true", help="do not persist observations"
     )
 
-    history = subcommands.add_parser("history", help="show a check's recent history")
+    history = subcommands.add_parser(
+        "history",
+        help="show a check's recent history",
+        parents=[_verbosity_parent()],
+    )
     history.add_argument("object")
     history.add_argument("--source", default=None)
     history.add_argument("--metric", default=None)
@@ -71,14 +111,22 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("-c", "--config", default="config.yaml")
     history.add_argument("--store", default=None, help="observation store path")
 
-    prune = subcommands.add_parser("prune", help="enforce observation retention")
+    prune = subcommands.add_parser(
+        "prune", help="enforce observation retention", parents=[_verbosity_parent()]
+    )
     prune.add_argument("-c", "--config", default="config.yaml")
     prune.add_argument("--store", default=None, help="observation store path")
 
-    add = subcommands.add_parser("add", help="interactive check-authoring wizard")
+    add = subcommands.add_parser(
+        "add",
+        help="interactive check-authoring wizard",
+        parents=[_verbosity_parent()],
+    )
     add.add_argument("-c", "--config", default="config.yaml")
 
-    ui = subcommands.add_parser("ui", help="interactive Textual dashboard")
+    ui = subcommands.add_parser(
+        "ui", help="interactive Textual dashboard", parents=[_verbosity_parent()]
+    )
     ui.add_argument("-c", "--config", default="config.yaml")
     ui.add_argument("--store", default=None, help="observation store path")
 
@@ -138,6 +186,13 @@ def _run_command(args: argparse.Namespace) -> int:
         store = Store(store_path)
 
     checks = filter_checks(config.checks, args.only)
+    log = structlog.get_logger(__name__)
+    log.info(
+        "run_start",
+        config=str(config_path),
+        sources=len({check.source for check in checks}),
+        checks=len(checks),
+    )
     enabled = show_progress(args.json, args.no_progress)
     try:
         with progress_reporter(len(checks), enabled) as on_result:
@@ -145,6 +200,17 @@ def _run_command(args: argparse.Namespace) -> int:
     finally:
         if store is not None:
             store.close()
+
+    elapsed = None
+    if run.started_at is not None and run.finished_at is not None:
+        elapsed = (run.finished_at - run.started_at).total_seconds()
+    counts = Counter(str(r.status) for r in run.results)
+    log.info(
+        "run_end",
+        status=str(run.status),
+        counts=dict(counts),
+        elapsed_seconds=elapsed,
+    )
 
     if args.json:
         print(render_json(run))
@@ -500,6 +566,11 @@ def _load_dotenv_beside_config(config_path: Path) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        configure_logging(getattr(args, "verbose", 0))
+    except ValueError as exc:  # bad DBFRESH_LOG_LEVEL value
+        print(f"error: {exc}", file=sys.stderr)
+        return _CONFIG_ERROR_EXIT
     if args.command in _CONFIG_READING_COMMANDS:
         _load_dotenv_beside_config(Path(args.config))
     try:

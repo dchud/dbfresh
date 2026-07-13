@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+import structlog
+
 from dbfresh.adapters.base import (
     Adapter,
     HistoryAwareAdapter,
@@ -30,6 +32,8 @@ from dbfresh.models import (
     worst_status,
 )
 from dbfresh.models import exit_code as exit_code
+
+log = structlog.get_logger(__name__)
 
 
 def _result(check: Check, status: Status, **fields: Any) -> Result:
@@ -481,6 +485,21 @@ def run_checks(
                 result = _connect_error_result(check, exc)
             else:
                 result = evaluate_check(check, adapters[source], now, calendar, store)
+            log.debug(
+                "check_result",
+                check_id=result.check_id,
+                object=result.object,
+                source=source,
+                status=str(result.status),
+            )
+            if result.status == Status.ERROR:
+                log.error(
+                    "check_error",
+                    check_id=result.check_id,
+                    object=result.object,
+                    source=source,
+                    error=result.error,
+                )
             results.append(result)
             if on_result is not None:
                 on_result(result)

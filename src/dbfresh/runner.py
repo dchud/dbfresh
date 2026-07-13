@@ -11,12 +11,16 @@ import contextlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import structlog
+
 from dbfresh.adapters.base import Adapter
 from dbfresh.checks import Check
 from dbfresh.config import Config
 from dbfresh.engine import run_checks
 from dbfresh.models import Result, RunResult
 from dbfresh.store import Store, capture_git_sha
+
+log = structlog.get_logger(__name__)
 
 
 def filter_checks(checks: list[Check], only: str | None) -> list[Check]:
@@ -82,6 +86,9 @@ def run_and_persist(
             )
         except Exception as exc:  # connect-time failure -> ERROR per source
             failed_sources[name] = exc
+            log.error("source_connect", source=name, error=str(exc))
+        else:
+            log.info("source_connect", source=name)
 
     # Open the run row before evaluation, stamped with the same `now` that
     # evaluation uses, so started_at reflects when the run began rather
