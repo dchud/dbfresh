@@ -54,6 +54,124 @@ def test_run_json_output(tmp_path, capsys):
     assert data["results"][0]["check_id"]
 
 
+def test_run_json_envelope_has_run_metadata_and_counts(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    main(["run", "-c", str(cfg), "--json"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert isinstance(data["run_id"], int)
+    assert re.search(r"T\d{2}:\d{2}:\d{2}Z$", data["started_at"])
+    assert re.search(r"T\d{2}:\d{2}:\d{2}Z$", data["finished_at"])
+    assert data["counts"] == {
+        "OK": 1,
+        "WARN": 0,
+        "FAIL": 0,
+        "ERROR": 0,
+        "SKIPPED": 0,
+    }
+
+
+def test_run_json_envelope_run_id_null_under_no_store(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    main(["run", "-c", str(cfg), "--json", "--no-store"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert data["run_id"] is None
+    assert data["started_at"] is not None
+    assert data["finished_at"] is not None
+
+
+def test_run_json_envelope_metric_check_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: null_rate\n"
+        "    column: id\n"
+        "    expect: { max: 0.5 }\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["label"] is None
+    assert result["tier"] == "column"
+    assert result["value"] == 0.0
+    assert result["value_text"] is None
+    assert result["observed"] == "0.0"
+    assert result["expected"] == "max 0.5"
+    assert result["diff"] is None
+    assert result["error"] is None
+    assert result["samples"] is None
+
+
+def test_run_json_envelope_schema_check_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE t (id INTEGER, name TEXT)")
+    adapter.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])  # first run: establishes baseline
+    capsys.readouterr()  # discard the baseline run's output
+
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    adapter.close()
+
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["metric"] == "schema"
+    assert result["tier"] == "table"
+    assert result["status"] == "FAIL"
+    assert result["value"] is None
+    assert result["value_text"] == result["observed"]
+    assert "email:TEXT" in result["value_text"]
+    assert result["diff"] == ["+ email (TEXT)"]
+
+
+def test_run_json_envelope_assertion_shape(tmp_path, capsys):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE fct (amount REAL)")
+    adapter.rows("INSERT INTO fct VALUES (10.0), (-5.0)")
+    adapter.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: fct\n"
+        "    assert: amount >= 0\n"
+    )
+    main(["run", "-c", str(cfg), "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+
+    assert result["metric"] is None
+    assert result["label"] == "assert amount >= 0"
+    assert result["tier"] == "table"
+    assert result["status"] == "FAIL"
+    assert result["value"] == 1.0
+    assert result["value_text"] is None
+    assert result["observed"] == "1"
+    assert len(result["samples"]) == 1
+
+
 def test_run_persists_observations_by_default(tmp_path):
     db = tmp_path / "data.db"
     _seed_db(db)
