@@ -70,8 +70,18 @@ def _status_label(name: str, status: Status | None) -> Text:
 
 
 def _worst_or_unknown(statuses: list[Status]) -> Status | None:
-    """The worst known status, or ``None`` when none of the children are known."""
-    return worst_status(statuses) if statuses else None
+    """The worst known status, or ``None`` when none of the children are known.
+
+    A node whose only known children are ``SKIPPED`` rolls up to ``SKIPPED``
+    rather than ``OK``, even though the two share severity rank 0 in
+    :func:`~dbfresh.engine.worst_status` (which exit-code aggregation
+    depends on). A mix of ``OK`` and ``SKIPPED`` still rolls up to ``OK``.
+    """
+    if not statuses:
+        return None
+    if all(status == Status.SKIPPED for status in statuses):
+        return Status.SKIPPED
+    return worst_status(statuses)
 
 
 def build_dashboard(tree: Tree, config: Config, store: Store) -> None:

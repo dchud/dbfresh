@@ -149,6 +149,27 @@ def test_history_uses_calendar_timezone(tmp_path, capsys):
     assert "2026-07-08T08:00:00-04:00" in out
 
 
+def test_history_reads_dotenv_beside_config_for_interpolation(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.delenv("DBFRESH_TEST_DOTENV_VAR", raising=False)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        'sources:\n  s: { type: sqlite, database: "${DBFRESH_TEST_DOTENV_VAR}" }\n'
+        "checks: []\n"
+    )
+    (tmp_path / ".env").write_text("DBFRESH_TEST_DOTENV_VAR=from-dotenv\n")
+
+    store_path = tmp_path / "obs.db"
+    _seed(store_path, [(_result(value=1), None)])
+
+    code = main(
+        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+    )
+    assert code == 0
+    assert "config error" not in capsys.readouterr().err
+
+
 def test_history_works_without_config_file(tmp_path, capsys):
     store_path = tmp_path / "obs.db"
     _seed(store_path, [(_result(value=1), None)])
