@@ -93,6 +93,10 @@ class DatabricksDialect(Dialect):
 
 
 _HISTORY_DATA_OPERATIONS = frozenset({"WRITE", "MERGE", "DELETE", "UPDATE"})
+# DESCRIBE HISTORY returns rows newest-first; recent operations are all
+# that matter for a max-timestamp scan, so the fetch is bounded rather
+# than pulling the table's full retained history.
+_HISTORY_FETCH_LIMIT = 20
 
 
 def _split_qualified_name(obj: str) -> tuple[str | None, str | None, str]:
@@ -147,18 +151,23 @@ class DatabricksAdapter:
 
         Columns come from ``information_schema.columns``; keys are always
         ``None`` and ``approx_row_count`` is never populated (neither is
-        exposed cheaply here); ``last_modified`` comes from
-        ``DESCRIBE DETAIL``; ``is_view`` comes from
+        exposed cheaply here); ``is_view`` comes from
         ``information_schema.tables`` -- it is what lets the freshness
         run-time guard reject ``describe_history``/``describe_detail``
-        against a view.
+        against a view. ``is_view`` is computed before ``last_modified``:
+        DESCRIBE DETAIL describes Delta table storage, which a view has
+        none of, so it is skipped entirely for a view rather than issued
+        and made to fail.
         """
+        columns = self._columns(obj)
+        is_view = self._is_view(obj)
+        last_modified = None if is_view else self._describe_detail_last_modified(obj)
         return ObjectInfo(
-            columns=self._columns(obj),
+            columns=columns,
             keys=None,
             approx_row_count=None,
-            last_modified=self._describe_detail_last_modified(obj),
-            is_view=self._is_view(obj),
+            last_modified=last_modified,
+            is_view=is_view,
         )
 
     def _columns(self, obj: str) -> list[Column]:
@@ -209,7 +218,16 @@ class DatabricksAdapter:
         return result[0]["table_type"] == "VIEW"
 
     def _describe_detail_last_modified(self, obj: str) -> datetime | None:
-        result = self.rows(f"DESCRIBE DETAIL {obj}")
+        """``lastModified`` from ``DESCRIBE DETAIL``, called only for a table.
+
+        DESCRIBE DETAIL applies to Delta tables; called against a table in
+        another format it can also fail. Any failure here degrades to
+        ``None`` rather than raising the whole ``describe()`` call.
+        """
+        try:
+            result = self.rows(f"DESCRIBE DETAIL {obj}")
+        except Exception:
+            return None
         if not result:
             return None
         return result[0].get("lastModified")
@@ -220,9 +238,11 @@ class DatabricksAdapter:
         Filtered to ``WRITE``/``MERGE``/``DELETE``/``UPDATE`` so
         ``OPTIMIZE``/``VACUUM`` maintenance noise never masks staleness.
         ``None`` when the table has no matching history entry (or none at
-        all -- history retention is finite).
+        all -- history retention is finite). The fetch is bounded to the
+        most recent entries -- history retention can span the table's
+        whole lifetime, and only recent operations matter for staleness.
         """
-        history = self.rows(f"DESCRIBE HISTORY {obj}")
+        history = self.rows(f"DESCRIBE HISTORY {obj} LIMIT {_HISTORY_FETCH_LIMIT}")
         timestamps = [
             row["timestamp"]
             for row in history
