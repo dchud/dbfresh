@@ -8,23 +8,42 @@ observation store.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Header, Input, Label, Static
+from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Static
 
+from dbfresh.adapters.base import Column
 from dbfresh.config import Config
 from dbfresh.configurator import (
     append_checks,
+    build_offered_check,
     check_object_exists,
     key_introspection_note,
+    offered_column_checks,
     pick_timestamp_column,
     propose_checks,
     target_files,
 )
+
+_UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _id_part(value: str) -> str:
+    """A CSS-identifier-safe fragment for a dynamic widget id."""
+    return _UNSAFE_ID_CHARS.sub("_", value)
+
+
+def _describe_proposed(block: dict) -> str:
+    """One-line label for a proposed check's trim checkbox: metric, its
+    column/key context (when it has one), and the expectation."""
+    context = block.get("column") or block.get("key")
+    header = f"{block['metric']} ({context})" if context else block["metric"]
+    return f"{header}: {block['expect']}"
 
 
 class ConfigureScreen(Screen[bool]):
@@ -41,6 +60,9 @@ class ConfigureScreen(Screen[bool]):
         self._config_path = Path(config_path)
         self._config = config
         self._proposed: list[dict] = []
+        self._proposed_checkboxes: list[Checkbox] = []
+        self._offered_blocks: list[dict] = []
+        self._offered_checkboxes: list[Checkbox] = []
         self._target_file: Path | None = None
 
     def compose(self) -> ComposeResult:
@@ -55,7 +77,14 @@ class ConfigureScreen(Screen[bool]):
             yield Button("Propose", id="propose-btn")
             yield Button("Accept", id="accept-btn", disabled=True)
             yield Button("Cancel", id="cancel-btn")
-        yield VerticalScroll(Static("", id="proposal-text", markup=False))
+        yield VerticalScroll(
+            Static("", id="proposal-text", markup=False),
+            Static("Proposed checks (uncheck any to drop them)"),
+            Vertical(id="proposed-checks"),
+            Static("Offered checks (check any to add them)"),
+            Vertical(id="offered-checks"),
+            id="proposal-scroll",
+        )
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -66,13 +95,66 @@ class ConfigureScreen(Screen[bool]):
         elif event.button.id == "cancel-btn":
             self.dismiss(False)
 
+    def _reset_proposal(self) -> None:
+        """Clear state and widgets left over from a previous Propose click."""
+        self._proposed = []
+        self._proposed_checkboxes = []
+        self._offered_blocks = []
+        self._offered_checkboxes = []
+        self._target_file = None
+        self.query_one("#proposed-checks", Vertical).remove_children()
+        self.query_one("#offered-checks", Vertical).remove_children()
+        self.query_one("#accept-btn", Button).disabled = True
+
+    def _mount_proposed_checkboxes(self) -> None:
+        """One checkbox per proposed check, checked by default -- unchecking
+        one trims it from what Accept writes."""
+        container = self.query_one("#proposed-checks", Vertical)
+        for i, block in enumerate(self._proposed):
+            checkbox = Checkbox(
+                _describe_proposed(block),
+                value=True,
+                id=f"proposed-{i}-{_id_part(block['metric'])}",
+            )
+            self._proposed_checkboxes.append(checkbox)
+            container.mount(checkbox)
+
+    def _mount_offered_checkboxes(
+        self,
+        source_name: str,
+        object_name: str,
+        columns: list[Column],
+        has_calendar: bool,
+    ) -> None:
+        """Per-column offered checks (:func:`offered_column_checks`), one
+        unchecked checkbox per metric -- checking one adds it to what Accept
+        writes. Mirrors the CLI wizard's "Offered for <column>: ..." prompt,
+        which defaults to nothing added unless the user opts in."""
+        container = self.query_one("#offered-checks", Vertical)
+        for offer in offered_column_checks(columns):
+            if not offer["checks"]:
+                continue
+            container.mount(
+                Static(f"Offered for {offer['column']} ({offer['category']}):")
+            )
+            for metric in offer["checks"]:
+                block = build_offered_check(
+                    source_name, object_name, offer["column"], metric, has_calendar
+                )
+                checkbox = Checkbox(
+                    metric,
+                    value=False,
+                    id=f"offered-{_id_part(offer['column'])}-{_id_part(metric)}",
+                )
+                self._offered_blocks.append(block)
+                self._offered_checkboxes.append(checkbox)
+                container.mount(checkbox)
+
     def _propose(self) -> None:
         from dbfresh.adapters.factory import create_adapter
 
         proposal_widget = self.query_one("#proposal-text", Static)
-        accept_button = self.query_one("#accept-btn", Button)
-        self._proposed = []
-        accept_button.disabled = True
+        self._reset_proposal()
 
         source_name = self.query_one("#source-input", Input).value.strip()
         object_name = self.query_one("#object-input", Input).value.strip()
@@ -124,33 +206,61 @@ class ConfigureScreen(Screen[bool]):
                 timestamp_override=timestamp_override,
             )
             key_note = key_introspection_note(adapter.dialect, existence.info)
+            self._mount_proposed_checkboxes()
+            self._mount_offered_checkboxes(
+                source_name, object_name, existence.info.columns, has_calendar
+            )
         finally:
             adapter.close()
 
-        lines = [f"{c['metric']}: {c['expect']}" for c in self._proposed]
+        notes: list[str] = []
         if key_note is not None:
-            lines.insert(0, key_note)
+            notes.append(key_note)
         if ambiguity_note is not None:
-            lines.insert(0, ambiguity_note)
+            notes.append(ambiguity_note)
 
         files = target_files(self._config_path)
         self._target_file = files[0] if files else self._config_path
         if len(files) > 1:
-            lines.append(
+            notes.append(
                 f"writing to {self._target_file} (of {len(files)} included files)"
             )
 
-        proposal_widget.update("\n".join(lines) if lines else "no checks proposed")
-        accept_button.disabled = not self._proposed
+        if not notes and not self._proposed and not self._offered_blocks:
+            notes.append("no checks proposed")
+
+        proposal_widget.update("\n".join(notes))
+        self.query_one("#accept-btn", Button).disabled = not self._proposed
+
+    def _selected_checks(self) -> list[dict]:
+        """Proposed checks still checked, plus offered checks checked in --
+        the trim and offered-selection interactions collapsed into one
+        list, in the order Accept writes them."""
+        selected = [
+            block
+            for block, checkbox in zip(
+                self._proposed, self._proposed_checkboxes, strict=True
+            )
+            if checkbox.value
+        ]
+        selected += [
+            block
+            for block, checkbox in zip(
+                self._offered_blocks, self._offered_checkboxes, strict=True
+            )
+            if checkbox.value
+        ]
+        return selected
 
     def _accept(self) -> None:
-        if not self._proposed:
+        selected = self._selected_checks()
+        if not selected:
             return
         target = self._target_file
         if target is None:
             files = target_files(self._config_path)
             target = files[0] if files else self._config_path
-        append_checks(target, self._proposed, config_path=self._config_path)
+        append_checks(target, selected, config_path=self._config_path)
         self.dismiss(True)
 
     def action_cancel(self) -> None:
