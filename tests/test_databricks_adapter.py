@@ -86,8 +86,9 @@ class _FakeCursor:
         self.description = None
         self._rows = []
 
-    def execute(self, sql):
+    def execute(self, sql, parameters=None):
         self._connection.queries.append(sql)
+        self._connection.parameters_by_query.append(parameters)
         self.description, self._rows = self._connection.resolve(sql)
 
     def fetchone(self):
@@ -110,7 +111,13 @@ class _FakeConnection:
     def __init__(self, responses):
         self._responses = responses
         self.queries: list[str] = []
+        self.parameters_by_query: list[dict | None] = []
         self.closed = False
+
+    def parameters_for(self, substring: str) -> dict | None:
+        """The bound parameters for the query whose text contains ``substring``."""
+        idx = next(i for i, q in enumerate(self.queries) if substring in q)
+        return self.parameters_by_query[idx]
 
     def resolve(self, sql):
         for substring, description, rows in self._responses:
@@ -237,8 +244,23 @@ def test_describe_queries_the_catalog_qualified_information_schema():
     adapter.describe("main.gold.customer_360")
     query = next(q for q in adapter._conn.queries if "information_schema.columns" in q)
     assert "main.information_schema.columns" in query
-    assert "table_schema = 'gold'" in query
-    assert "table_name = 'customer_360'" in query
+    assert "table_schema = :table_schema" in query
+    assert "table_name = :table_name" in query
+    assert adapter._conn.parameters_for("information_schema.columns") == {
+        "table_schema": "gold",
+        "table_name": "customer_360",
+    }
+
+
+def test_describe_columns_query_binds_a_name_containing_a_quote():
+    # A single quote in a user-typed object name (the wizard/TUI feed
+    # exactly this path) must never land inside the SQL text -- bound
+    # parameters, not string interpolation, keep the query well-formed.
+    adapter = _make_bare_adapter([("information_schema.columns", _COLUMNS_DESC, [])])
+    adapter._columns("o'brien")
+    query = adapter._conn.queries[-1]
+    assert "o'brien" not in query
+    assert adapter._conn.parameters_by_query[-1] == {"table_name": "o'brien"}
 
 
 def test_describe_keys_is_always_none():
@@ -325,8 +347,20 @@ def test_describe_queries_the_catalog_qualified_information_schema_tables():
     adapter.describe("main.gold.customer_360")
     query = next(q for q in adapter._conn.queries if "information_schema.tables" in q)
     assert "main.information_schema.tables" in query
-    assert "table_schema = 'gold'" in query
-    assert "table_name = 'customer_360'" in query
+    assert "table_schema = :table_schema" in query
+    assert "table_name = :table_name" in query
+    assert adapter._conn.parameters_for("information_schema.tables") == {
+        "table_schema": "gold",
+        "table_name": "customer_360",
+    }
+
+
+def test_describe_is_view_query_binds_a_name_containing_a_quote():
+    adapter = _make_bare_adapter([("information_schema.tables", _TABLES_DESC, [])])
+    adapter._is_view("o'brien")
+    query = adapter._conn.queries[-1]
+    assert "o'brien" not in query
+    assert adapter._conn.parameters_by_query[-1] == {"table_name": "o'brien"}
 
 
 def test_describe_never_issues_describe_detail_for_a_view():

@@ -124,6 +124,26 @@ class DatabricksAdapter:
         finally:
             cursor.close()
 
+    def _rows_with_params(self, sql: str, parameters: dict[str, Any]) -> list[dict]:
+        """Like :meth:`rows`, but with server-side bound parameters.
+
+        Used only by the ``describe()`` metadata queries below, which embed
+        a user-typed object name (the wizard/TUI feed exactly this path) --
+        named paramstyle (``:name`` placeholders bound via ``parameters``)
+        keeps a name containing a quote from ever landing in the SQL text,
+        rather than the ``rows(sql)`` contract's plain string, which is fine
+        for the compiler's own trusted-config SQL but not for this path.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(sql, parameters)
+            if cursor.description is None:
+                return []
+            columns = [d[0] for d in cursor.description]
+            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+
     def describe(self, obj: str) -> ObjectInfo:
         """Hand-written object metadata: Unity Catalog reflection is thin.
 
@@ -153,9 +173,11 @@ class DatabricksAdapter:
             if catalog
             else "information_schema.columns"
         )
-        where = [f"table_name = '{table}'"]
+        where = ["table_name = :table_name"]
+        params: dict[str, Any] = {"table_name": table}
         if schema:
-            where.append(f"table_schema = '{schema}'")
+            where.append("table_schema = :table_schema")
+            params["table_schema"] = schema
         sql = (
             f"SELECT column_name, data_type, is_nullable FROM {info_schema} "
             f"WHERE {' AND '.join(where)} ORDER BY ordinal_position"
@@ -167,7 +189,7 @@ class DatabricksAdapter:
                 nullable=row["is_nullable"] == "YES",
                 category=category_for_databricks(row["data_type"]),
             )
-            for row in self.rows(sql)
+            for row in self._rows_with_params(sql, params)
         ]
 
     def _is_view(self, obj: str) -> bool:
@@ -184,11 +206,13 @@ class DatabricksAdapter:
             if catalog
             else "information_schema.tables"
         )
-        where = [f"table_name = '{table}'"]
+        where = ["table_name = :table_name"]
+        params: dict[str, Any] = {"table_name": table}
         if schema:
-            where.append(f"table_schema = '{schema}'")
+            where.append("table_schema = :table_schema")
+            params["table_schema"] = schema
         sql = f"SELECT table_type FROM {info_schema} WHERE {' AND '.join(where)}"
-        result = self.rows(sql)
+        result = self._rows_with_params(sql, params)
         if not result:
             return False
         return result[0]["table_type"] == "VIEW"
