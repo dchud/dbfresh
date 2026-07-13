@@ -318,19 +318,21 @@ def target_files(config_path: str | Path) -> list[Path]:
 
     When the root config declares ``include:``, the wizard asks which
     included checks file receives the new block: this returns the resolved
-    matches (lexicographic order, matching load order). Without
-    ``include:``, the only target is the root config itself.
+    matches (lexicographic order, matching load order), via
+    :func:`dbfresh.config.resolve_includes` -- the same resolver
+    ``load_config`` uses, so an unmatched glob is a hard error here too,
+    never a silently empty list. Without ``include:``, the only target is
+    the root config itself.
     """
+    from dbfresh.config import resolve_includes
+
     config_path = Path(config_path)
     data = yaml.safe_load(config_path.read_text()) or {}
     patterns = data.get("include")
     if not patterns:
         return [config_path]
     config_dir = config_path.resolve().parent
-    matched: set[Path] = set()
-    for pattern in patterns:
-        matched.update(p for p in config_dir.glob(pattern) if p.is_file())
-    return sorted(matched, key=lambda p: p.as_posix())
+    return resolve_includes(config_dir, patterns)
 
 
 def _find_top_level_key(lines: list[str], key: str) -> int | None:

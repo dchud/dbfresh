@@ -1,6 +1,7 @@
 """YAML emission: building blocks, target-file selection for
 `include:`-composed configs, appending, and the re-parse/run round trip."""
 
+import pytest
 import yaml
 
 from dbfresh.adapters.factory import create_adapter
@@ -52,6 +53,17 @@ def test_target_files_returns_included_files_when_include_present(tmp_path):
     cfg.write_text("sources: {}\ninclude: [checks/*.yaml]\nchecks: []\n")
     files = target_files(cfg)
     assert [p.name for p in files] == ["a.yaml", "b.yaml"]
+
+
+def test_target_files_raises_like_load_config_on_an_unmatched_glob(tmp_path):
+    # Shares dbfresh.config's resolver: an unmatched include glob is a
+    # validation error here too, not a silently empty file list (which
+    # the Configure screen's target_files(...)[0] would turn into an
+    # IndexError).
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ninclude: [checks/nope-*.yaml]\nchecks: []\n")
+    with pytest.raises(ValueError):
+        target_files(cfg)
 
 
 def test_append_checks_to_root_config_preserves_other_keys(tmp_path):

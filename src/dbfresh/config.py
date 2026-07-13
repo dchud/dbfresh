@@ -170,7 +170,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
     )
 
 
-def _resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
+def resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
     """Resolve root-only ``include:`` globs to matched files.
 
     Each glob is relative to ``config_dir`` — the root config's directory,
@@ -178,6 +178,10 @@ def _resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
     error (a mistyped include must not silently drop checks). Matched files
     across all globs are deduplicated and returned in lexicographic path
     order; the load order itself carries no semantics.
+
+    Shared with :func:`dbfresh.configurator.target_files` so both the
+    loader and the wizard/TUI resolve ``include:`` identically -- an
+    unmatched glob is a hard error in both, never a silently empty list.
     """
     if not isinstance(patterns, list):
         raise ValueError("'include' must be a list of path globs")
@@ -280,7 +284,7 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     raw_checks = list(data.get("checks") or [])
     include_patterns = data.get("include")
     if include_patterns:
-        for include_path in _resolve_includes(config_dir, include_patterns):
+        for include_path in resolve_includes(config_dir, include_patterns):
             raw_checks.extend(_read_included_file(include_path, env))
 
     checks = [_build_check(raw, defaults) for raw in raw_checks]
