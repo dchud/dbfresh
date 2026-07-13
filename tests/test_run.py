@@ -53,6 +53,26 @@ def test_run_checks_across_multiple_sources():
     b.close()
 
 
+def test_run_checks_bad_metric_does_not_abort_other_checks_same_source():
+    a = SqliteAdapter()
+    a.rows("CREATE TABLE t (id INTEGER)")
+    a.rows("INSERT INTO t (id) VALUES (1), (2)")
+    good = Check(
+        source="s",
+        object="t",
+        metric="row_count",
+        expect=parse_expectation({"between": [1, 10]}),
+    )
+    bad = Check(source="s", object="t", metric="not_a_real_metric")
+    run = run_checks({"s": a}, [good, bad])
+    assert len(run.results) == 2
+    by_metric = {r.metric: r.status for r in run.results}
+    assert by_metric["row_count"] == Status.OK
+    assert by_metric["not_a_real_metric"] == Status.ERROR
+    assert run.status == Status.ERROR  # ERROR outranks OK
+    a.close()
+
+
 def test_run_checks_aggregates_worst_status():
     a = SqliteAdapter()
     a.rows("CREATE TABLE t (id INTEGER)")
@@ -73,3 +93,36 @@ def test_run_checks_aggregates_worst_status():
     assert len(run.results) == 2
     assert run.status == Status.FAIL
     a.close()
+
+
+def test_run_checks_failed_source_is_error_healthy_source_still_evaluates():
+    ok_adapter = SqliteAdapter()
+    ok_adapter.rows("CREATE TABLE t (id INTEGER)")
+    ok_adapter.rows("INSERT INTO t (id) VALUES (1), (2)")
+    checks = [
+        Check(
+            source="ok",
+            object="t",
+            metric="row_count",
+            expect=parse_expectation({"between": [1, 5]}),
+        ),
+        Check(
+            source="down",
+            object="t",
+            metric="row_count",
+            expect=parse_expectation({"max": 5}),
+        ),
+    ]
+    failed = {"down": ConnectionError("could not connect")}
+
+    # "down" has no entry in adapters -- run_checks must never index it.
+    run = run_checks({"ok": ok_adapter}, checks, failed_sources=failed)
+
+    assert len(run.results) == 2
+    by_source = {r.source: r for r in run.results}
+    assert by_source["ok"].status == Status.OK
+    assert by_source["down"].status == Status.ERROR
+    assert "could not connect" in by_source["down"].error
+    assert by_source["down"].check_id is not None
+    assert run.status == Status.ERROR
+    ok_adapter.close()

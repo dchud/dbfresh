@@ -64,3 +64,18 @@ def test_query_error_is_error_status():
     assert result.status == Status.ERROR
     assert result.error is not None
     a.close()
+
+
+def test_unsupported_metric_is_error_status_not_a_crash():
+    # compile_metric_sql runs outside the per-metric try/except blocks, so
+    # an unvalidated metric name must be caught by evaluate_check's own
+    # outer safety net instead of propagating out of a worker thread.
+    a = _adapter_with_rows(3)
+    check = Check(source="s", object="t", metric="not_a_real_metric")
+    result = evaluate_check(check, a)
+    assert result.status == Status.ERROR
+    assert result.error is not None
+    assert result.check_id is not None
+    assert result.object == "t"
+    assert result.metric == "not_a_real_metric"
+    a.close()
