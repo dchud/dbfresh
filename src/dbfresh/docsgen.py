@@ -97,6 +97,14 @@ def render_matrix() -> str:
     return "\n".join(lines)
 
 
+# The functions below walk argparse's private API (`_actions`,
+# `_SubParsersAction`, `_choices_actions`, `_HelpAction`) -- there is no
+# public introspection surface for "every subcommand and its flags" as of
+# the stdlib version this targets. Brittle by nature: an argparse internals
+# change could break this docs generator; it can't break `dbfresh` itself,
+# since nothing outside this module imports these private names.
+
+
 def _subparsers_action(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):

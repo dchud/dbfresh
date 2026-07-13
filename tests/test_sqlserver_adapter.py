@@ -136,8 +136,10 @@ class _FakeInspector:
         self._columns = columns
         self._pk_columns = pk_columns
         self._uniques = uniques
+        self.get_columns_calls: list[tuple[str, str | None]] = []
 
     def get_columns(self, table, schema=None):
+        self.get_columns_calls.append((table, schema))
         return self._columns
 
     def get_pk_constraint(self, table, schema=None):
@@ -184,6 +186,23 @@ def test_describe_normalizes_mocked_reflection(monkeypatch):
     assert by_name["row_id"].category == Category.OTHER
 
     assert info.keys == [["id"], ["row_id"]]
+
+
+def test_describe_three_part_name_passes_compound_schema_to_reflection(monkeypatch):
+    # "db.schema.table" splits (at the last dot) into schema="db.schema",
+    # table="table" -- SQLAlchemy's MSSQL dialect re-splits a dotted schema
+    # string itself as database.owner, so passing the compound string
+    # through unchanged is what makes three-part cross-database names
+    # reflect correctly (see adapters/base.py's _split_object docstring).
+    fake_inspector = _FakeInspector([], pk_columns=[], uniques=[])
+    monkeypatch.setattr(
+        "dbfresh.adapters.base.sqla_inspect", lambda conn: fake_inspector
+    )
+    adapter = _make_bare_adapter()
+
+    adapter.describe("otherdb.dbo.fct_sales")
+
+    assert fake_inspector.get_columns_calls == [("fct_sales", "otherdb.dbo")]
 
 
 def test_describe_does_not_issue_a_partition_stats_query(monkeypatch):

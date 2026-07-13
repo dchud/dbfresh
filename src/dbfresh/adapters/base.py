@@ -63,6 +63,20 @@ def category_for(sqla_type: Any) -> Category:
 
 
 def _split_object(obj: str) -> tuple[str | None, str]:
+    """Split ``obj`` into ``(schema, table)`` for ``Inspector`` reflection.
+
+    Splits at the *last* dot, so a three-part name (``db.schema.table``,
+    SQL Server's cross-database form) yields ``schema="db.schema"``, not
+    ``("db", "schema", "table")``. That is not a bug for SQL Server: its
+    SQLAlchemy dialect re-splits a dotted ``schema`` string itself (see
+    ``sqlalchemy.dialects.mssql.base._schema_elements``), interpreting
+    ``"db.schema"`` as database ``db`` / owner ``schema`` -- so the
+    compound schema this returns reflects correctly end-to-end for T-SQL.
+    Other SQLAlchemy-backed engines here (PostgreSQL, sqlite) have no such
+    convention and only ever see two-part ``schema.table`` names in
+    practice; passing a three-part name to one of them fails reflection
+    outright rather than silently mapping to the wrong object.
+    """
     if "." in obj:
         schema, _, table = obj.rpartition(".")
         return schema, table

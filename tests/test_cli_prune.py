@@ -23,20 +23,13 @@ def _result(**overrides) -> Result:
     return Result(**fields)
 
 
-def _seed(store_path, entries):
-    store = Store(store_path)
-    run_id = store.start_run()
-    for result, observed_at in entries:
-        store.record_observation(run_id, result, observed_at=observed_at)
-    store.finish_run(run_id, Status.OK)
-    store.close()
-
-
-def test_prune_removes_observations_older_than_configured_retain_days(tmp_path, capsys):
+def test_prune_removes_observations_older_than_configured_retain_days(
+    tmp_path, capsys, seed_observations
+):
     cfg = _config(tmp_path / "config.yaml", "store: { retain_days: 30 }\n")
     store_path = tmp_path / "obs.db"
     now = datetime.now(UTC)
-    _seed(
+    seed_observations(
         store_path,
         [
             (_result(check_id="old"), now - timedelta(days=60)),
@@ -56,11 +49,11 @@ def test_prune_removes_observations_older_than_configured_retain_days(tmp_path, 
     store.close()
 
 
-def test_prune_defaults_to_400_days_retention(tmp_path):
+def test_prune_defaults_to_400_days_retention(tmp_path, seed_observations):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"
     now = datetime.now(UTC)
-    _seed(
+    seed_observations(
         store_path,
         [
             (_result(check_id="ancient"), now - timedelta(days=500)),
@@ -78,10 +71,12 @@ def test_prune_defaults_to_400_days_retention(tmp_path):
     store.close()
 
 
-def test_prune_works_without_config_file(tmp_path):
+def test_prune_works_without_config_file(tmp_path, seed_observations):
     store_path = tmp_path / "obs.db"
     now = datetime.now(UTC)
-    _seed(store_path, [(_result(check_id="ancient"), now - timedelta(days=500))])
+    seed_observations(
+        store_path, [(_result(check_id="ancient"), now - timedelta(days=500))]
+    )
     code = main(
         [
             "prune",

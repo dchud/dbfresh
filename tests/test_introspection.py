@@ -1,4 +1,4 @@
-from dbfresh.adapters.base import Category
+from dbfresh.adapters.base import Category, _split_object
 from dbfresh.adapters.sqlite import SqliteAdapter
 
 
@@ -38,3 +38,19 @@ def test_describe_no_keys_is_none():
     info = a.describe("t")
     assert info.keys is None
     a.close()
+
+
+def test_split_object_two_part_name():
+    assert _split_object("dbo.fct_sales") == ("dbo", "fct_sales")
+
+
+def test_split_object_no_schema():
+    assert _split_object("fct_sales") == (None, "fct_sales")
+
+
+def test_split_object_three_part_name_keeps_db_and_schema_together():
+    # Splits at the *last* dot -- not a bug for SQL Server: its SQLAlchemy
+    # dialect re-splits a dotted schema string itself as database.owner,
+    # so "db.schema" reflects correctly as a compound schema (see
+    # test_sqlserver_adapter.py's mocked-reflection wiring test).
+    assert _split_object("db.schema.fct_sales") == ("db.schema", "fct_sales")

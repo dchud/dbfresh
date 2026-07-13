@@ -22,6 +22,13 @@ _DEFAULT_STORE_FILENAME = "dbfresh.db"
 # processes (e.g. a cron overlap) serialize instead of failing outright.
 _BUSY_TIMEOUT_MS = 5000
 
+# A named tuple rather than an inline `except (A, B):` -- `except A, B:`
+# (no parens) is also valid Python, parsed identically, so an inline tuple
+# reads ambiguously at a glance; ruff's formatter also normalizes an inline
+# except-clause tuple to the unparenthesized spelling, so parenthesizing it
+# in place isn't an option that survives `ruff format`.
+_GIT_LOOKUP_ERRORS = (OSError, subprocess.SubprocessError)
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS run (
   run_id     INTEGER PRIMARY KEY,
@@ -69,7 +76,7 @@ def capture_git_sha(path: str | Path) -> str | None:
             text=True,
             timeout=5,
         )
-    except OSError, subprocess.SubprocessError:
+    except _GIT_LOOKUP_ERRORS:
         return None
     if proc.returncode != 0:
         return None

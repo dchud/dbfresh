@@ -114,6 +114,32 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
     asyncio.run(scenario())
 
 
+def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypatch):
+    async def scenario():
+        from dbfresh.config import load_config as real_load_config
+
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        preloaded = real_load_config(cfg)
+
+        def fail_if_called(path):
+            raise AssertionError("load_config must not run again at mount time")
+
+        monkeypatch.setattr("dbfresh.tui.app.load_config", fail_if_called)
+
+        app = DbfreshApp(
+            config_path=cfg, store_path=str(store_path), initial_config=preloaded
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.config is preloaded
+
+    asyncio.run(scenario())
+
+
 def test_run_action_updates_dashboard_from_new_observations(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"

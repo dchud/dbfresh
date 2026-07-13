@@ -7,14 +7,14 @@ from dbfresh.cli import main
 from dbfresh.store import Store
 
 
-def _seed_db(path):
+def seed_row_count_db(path):
     adapter = SqliteAdapter(str(path))
     adapter.rows("CREATE TABLE t (id INTEGER)")
     adapter.rows("INSERT INTO t (id) VALUES (1), (2), (3)")
     adapter.close()
 
 
-def _config(path, db, expect):
+def row_count_config(path, db, expect):
     path.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
         "checks:\n"
@@ -26,26 +26,26 @@ def _config(path, db, expect):
     return path
 
 
-def test_run_all_ok_exits_zero(tmp_path, capsys):
+def test_run_all_ok_exits_zero(tmp_path, capsys, seed_row_count_db, row_count_config):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     code = main(["run", "-c", str(cfg)])
     assert code == 0
     assert "1 passed" in capsys.readouterr().out
 
 
-def test_run_failure_exits_two(tmp_path):
+def test_run_failure_exits_two(tmp_path, seed_row_count_db, row_count_config):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ max: 1 }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ max: 1 }")
     assert main(["run", "-c", str(cfg)]) == 2
 
 
-def test_run_json_output(tmp_path, capsys):
+def test_run_json_output(tmp_path, capsys, seed_row_count_db, row_count_config):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     code = main(["run", "-c", str(cfg), "--json"])
     assert code == 0
     data = json.loads(capsys.readouterr().out)
@@ -55,10 +55,12 @@ def test_run_json_output(tmp_path, capsys):
     assert data["results"][0]["check_id"]
 
 
-def test_run_json_envelope_has_run_metadata_and_counts(tmp_path, capsys):
+def test_run_json_envelope_has_run_metadata_and_counts(
+    tmp_path, capsys, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     main(["run", "-c", str(cfg), "--json"])
     data = json.loads(capsys.readouterr().out)
 
@@ -74,10 +76,12 @@ def test_run_json_envelope_has_run_metadata_and_counts(tmp_path, capsys):
     }
 
 
-def test_run_json_envelope_run_id_null_under_no_store(tmp_path, capsys):
+def test_run_json_envelope_run_id_null_under_no_store(
+    tmp_path, capsys, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     main(["run", "-c", str(cfg), "--json", "--no-store"])
     data = json.loads(capsys.readouterr().out)
 
@@ -86,9 +90,9 @@ def test_run_json_envelope_run_id_null_under_no_store(tmp_path, capsys):
     assert data["finished_at"] is not None
 
 
-def test_run_json_envelope_metric_check_shape(tmp_path, capsys):
+def test_run_json_envelope_metric_check_shape(tmp_path, capsys, seed_row_count_db):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -173,10 +177,12 @@ def test_run_json_envelope_assertion_shape(tmp_path, capsys):
     assert len(result["samples"]) == 1
 
 
-def test_run_persists_observations_by_default(tmp_path):
+def test_run_persists_observations_by_default(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     main(["run", "-c", str(cfg)])
 
     store_path = tmp_path / "dbfresh.db"
@@ -198,28 +204,34 @@ def test_run_persists_observations_by_default(tmp_path):
     store.close()
 
 
-def test_run_no_store_flag_skips_persistence(tmp_path):
+def test_run_no_store_flag_skips_persistence(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     main(["run", "-c", str(cfg), "--no-store"])
     assert not (tmp_path / "dbfresh.db").exists()
 
 
-def test_run_store_flag_overrides_default_path(tmp_path):
+def test_run_store_flag_overrides_default_path(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     custom = tmp_path / "custom.db"
     main(["run", "-c", str(cfg), "--store", str(custom)])
     assert custom.exists()
     assert not (tmp_path / "dbfresh.db").exists()
 
 
-def test_run_dbfresh_store_env_var_overrides_default(tmp_path, monkeypatch):
+def test_run_dbfresh_store_env_var_overrides_default(
+    tmp_path, monkeypatch, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     env_path = tmp_path / "env.db"
     monkeypatch.setenv("DBFRESH_STORE", str(env_path))
     main(["run", "-c", str(cfg)])
@@ -227,9 +239,9 @@ def test_run_dbfresh_store_env_var_overrides_default(tmp_path, monkeypatch):
     assert not (tmp_path / "dbfresh.db").exists()
 
 
-def test_run_skips_check_off_schedule(tmp_path, capsys):
+def test_run_skips_check_off_schedule(tmp_path, capsys, seed_row_count_db):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -248,9 +260,9 @@ def test_run_skips_check_off_schedule(tmp_path, capsys):
     assert "1 skipped" in capsys.readouterr().out
 
 
-def test_run_digest_header_uses_calendar_timezone(tmp_path, capsys):
+def test_run_digest_header_uses_calendar_timezone(tmp_path, capsys, seed_row_count_db):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -319,10 +331,12 @@ def test_run_schema_check_no_store_always_passes(tmp_path):
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
 
 
-def test_run_store_flag_wins_over_env_var(tmp_path, monkeypatch):
+def test_run_store_flag_wins_over_env_var(
+    tmp_path, monkeypatch, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     env_path = tmp_path / "env.db"
     flag_path = tmp_path / "flag.db"
     monkeypatch.setenv("DBFRESH_STORE", str(env_path))
@@ -343,14 +357,16 @@ def _insert_n_rows(db, n, start=0):
     adapter.close()
 
 
-def test_run_vs_previous_establishes_baseline_then_detects_3x_swing(tmp_path):
+def test_run_vs_previous_establishes_baseline_then_detects_3x_swing(
+    tmp_path, row_count_config
+):
     db = tmp_path / "data.db"
     adapter = SqliteAdapter(str(db))
     adapter.rows("CREATE TABLE t (id INTEGER)")
     adapter.close()
     _insert_n_rows(db, 100)
 
-    cfg = _config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
+    cfg = row_count_config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
     assert main(["run", "-c", str(cfg)]) == 0  # first run: no baseline, on_missing pass
 
     _insert_n_rows(db, 250, start=100)  # table now has 350 rows
@@ -358,19 +374,23 @@ def test_run_vs_previous_establishes_baseline_then_detects_3x_swing(tmp_path):
     assert main(["run", "-c", str(cfg)]) == 2  # 350 vs baseline 100 -> 3.5x swing
 
 
-def test_run_vs_previous_no_store_always_on_missing_pass(tmp_path):
+def test_run_vs_previous_no_store_always_on_missing_pass(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
 
 
-def test_run_unsupported_metric_is_a_clean_config_error(tmp_path, capsys):
+def test_run_unsupported_metric_is_a_clean_config_error(
+    tmp_path, capsys, seed_row_count_db
+):
     # An unknown metric is validated at config-load time -- a clean
     # config error naming it, not a mid-run crash on one check's result.
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -412,37 +432,41 @@ def _only_config(tmp_path, db):
     return cfg
 
 
-def test_run_only_flag_restricts_to_one_source(tmp_path):
+def test_run_only_flag_restricts_to_one_source(tmp_path, seed_row_count_db):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = _only_config(tmp_path, db)
     assert main(["run", "-c", str(cfg), "--only", "ok"]) == 0
 
 
-def test_run_only_unknown_source_is_a_clean_error(tmp_path, capsys):
+def test_run_only_unknown_source_is_a_clean_error(
+    tmp_path, capsys, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     code = main(["run", "-c", str(cfg), "--only", "nope"])
     assert code == 3
     assert "nope" in capsys.readouterr().err
 
 
-def test_run_no_progress_flag_is_accepted(tmp_path, capsys):
+def test_run_no_progress_flag_is_accepted(
+    tmp_path, capsys, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     code = main(["run", "-c", str(cfg), "--no-progress"])
     assert code == 0
     assert "1 passed" in capsys.readouterr().out
 
 
 def test_run_command_derives_show_progress_from_json_and_no_progress_flags(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, seed_row_count_db, row_count_config
 ):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     seen = {}
 
     def fake_show_progress(json_output, no_progress, stream=None):
@@ -458,10 +482,10 @@ def test_run_command_derives_show_progress_from_json_and_no_progress_flags(
 
 
 def test_run_command_sizes_progress_by_the_only_filtered_check_count(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, seed_row_count_db
 ):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = _only_config(tmp_path, db)
     captured = {}
 

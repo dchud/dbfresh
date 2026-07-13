@@ -470,11 +470,13 @@ def _ui_command(args: argparse.Namespace) -> int:
 
     config_path = Path(args.config)
     try:
-        load_config(config_path)
+        config = load_config(config_path)
     except (ConfigError, OSError, yaml.YAMLError) as exc:
         return _report_config_error(exc)
 
-    app = DbfreshApp(config_path=args.config, store_path=args.store)
+    app = DbfreshApp(
+        config_path=args.config, store_path=args.store, initial_config=config
+    )
     app.run()
     return 0
 

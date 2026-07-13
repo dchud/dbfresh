@@ -8,14 +8,14 @@ from dbfresh.runner import run_and_persist
 from dbfresh.store import Store
 
 
-def _seed_db(path):
+def seed_row_count_db(path):
     adapter = SqliteAdapter(str(path))
     adapter.rows("CREATE TABLE t (id INTEGER)")
     adapter.rows("INSERT INTO t (id) VALUES (1), (2), (3)")
     adapter.close()
 
 
-def _config(path, db, expect):
+def row_count_config(path, db, expect):
     path.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
         "checks:\n"
@@ -27,10 +27,12 @@ def _config(path, db, expect):
     return path
 
 
-def test_run_and_persist_runs_checks_and_returns_run_result(tmp_path):
+def test_run_and_persist_runs_checks_and_returns_run_result(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
 
     run = run_and_persist(config, store=None)
@@ -40,10 +42,12 @@ def test_run_and_persist_runs_checks_and_returns_run_result(tmp_path):
     assert run.results[0].value == 3
 
 
-def test_run_and_persist_writes_observations_when_store_given(tmp_path):
+def test_run_and_persist_writes_observations_when_store_given(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -55,10 +59,12 @@ def test_run_and_persist_writes_observations_when_store_given(tmp_path):
     store.close()
 
 
-def test_run_and_persist_observations_use_injected_now_not_wall_clock(tmp_path):
+def test_run_and_persist_observations_use_injected_now_not_wall_clock(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
@@ -70,10 +76,12 @@ def test_run_and_persist_observations_use_injected_now_not_wall_clock(tmp_path):
     store.close()
 
 
-def test_run_and_persist_start_run_started_at_is_injected_now(tmp_path):
+def test_run_and_persist_start_run_started_at_is_injected_now(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
@@ -85,10 +93,12 @@ def test_run_and_persist_start_run_started_at_is_injected_now(tmp_path):
     store.close()
 
 
-def test_run_and_persist_starts_run_row_before_evaluation(tmp_path, monkeypatch):
+def test_run_and_persist_starts_run_row_before_evaluation(
+    tmp_path, monkeypatch, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -109,10 +119,12 @@ def test_run_and_persist_starts_run_row_before_evaluation(tmp_path, monkeypatch)
     store.close()
 
 
-def test_run_and_persist_leaves_store_open_for_reuse(tmp_path):
+def test_run_and_persist_leaves_store_open_for_reuse(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -124,10 +136,12 @@ def test_run_and_persist_leaves_store_open_for_reuse(tmp_path):
     store.close()
 
 
-def test_run_and_persist_failure_status_reflected_in_run(tmp_path):
+def test_run_and_persist_failure_status_reflected_in_run(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ max: 1 }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ max: 1 }")
     config = load_config(cfg)
 
     run = run_and_persist(config, store=None)
@@ -135,11 +149,13 @@ def test_run_and_persist_failure_status_reflected_in_run(tmp_path):
     assert run.status == Status.FAIL
 
 
-def test_run_and_persist_only_builds_adapters_for_referenced_sources(tmp_path):
+def test_run_and_persist_only_builds_adapters_for_referenced_sources(
+    tmp_path, seed_row_count_db
+):
     # "unused" is never referenced by a check and would fail to build --
     # run_and_persist must never even try, so it does not affect the run.
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -157,9 +173,11 @@ def test_run_and_persist_only_builds_adapters_for_referenced_sources(tmp_path):
     assert run.status == Status.OK
 
 
-def test_run_and_persist_unreachable_source_is_error_others_still_run(tmp_path):
+def test_run_and_persist_unreachable_source_is_error_others_still_run(
+    tmp_path, seed_row_count_db
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
@@ -185,9 +203,11 @@ def test_run_and_persist_unreachable_source_is_error_others_still_run(tmp_path):
     assert by_source["down"].error is not None
 
 
-def test_run_and_persist_unreachable_source_still_persists_healthy_results(tmp_path):
+def test_run_and_persist_unreachable_source_still_persists_healthy_results(
+    tmp_path, seed_row_count_db
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
@@ -217,10 +237,12 @@ def test_run_and_persist_unreachable_source_still_persists_healthy_results(tmp_p
     store.close()
 
 
-def test_run_and_persist_run_id_is_none_without_store(tmp_path):
+def test_run_and_persist_run_id_is_none_without_store(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
 
@@ -231,10 +253,12 @@ def test_run_and_persist_run_id_is_none_without_store(tmp_path):
     assert run.finished_at is not None
 
 
-def test_run_and_persist_run_id_set_when_store_given(tmp_path):
+def test_run_and_persist_run_id_set_when_store_given(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -248,13 +272,13 @@ def test_run_and_persist_run_id_set_when_store_given(tmp_path):
     store.close()
 
 
-def test_run_and_persist_only_restricts_to_one_source(tmp_path):
+def test_run_and_persist_only_restricts_to_one_source(tmp_path, seed_row_count_db):
     # "down" would fail to build were it ever touched -- --only excludes
     # it from the run entirely, not just from the result set, so the run
     # stays OK instead of the worst-status ERROR an untouched-but-included
     # unreachable source would otherwise force.
     db = tmp_path / "data.db"
-    _seed_db(db)
+    seed_row_count_db(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
@@ -278,10 +302,12 @@ def test_run_and_persist_only_restricts_to_one_source(tmp_path):
     assert run.results[0].source == "ok"
 
 
-def test_run_and_persist_on_result_invoked_per_check(tmp_path):
+def test_run_and_persist_on_result_invoked_per_check(
+    tmp_path, seed_row_count_db, row_count_config
+):
     db = tmp_path / "data.db"
-    _seed_db(db)
-    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    seed_row_count_db(db)
+    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
     config = load_config(cfg)
     seen = []
 
