@@ -24,7 +24,7 @@ reviewed config commit that produced it.
 ## `vs_previous`
 
 A numeric metric can compare its current value to a prior observation of
-the same check instead of (or as well as) a static bound:
+the same check instead of a static bound:
 
 ```yaml
 metric: row_count

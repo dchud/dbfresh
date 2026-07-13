@@ -45,7 +45,6 @@ class ObjectInfo:
 
     columns: list[Column]
     keys: list[list[str]] | None = None
-    approx_row_count: int | None = None
     last_modified: datetime | None = None
     is_view: bool = False
 
@@ -64,10 +63,55 @@ def category_for(sqla_type: Any) -> Category:
 
 
 def _split_object(obj: str) -> tuple[str | None, str]:
+    """Split ``obj`` into ``(schema, table)`` for ``Inspector`` reflection.
+
+    Splits at the *last* dot, so a three-part name (``db.schema.table``,
+    SQL Server's cross-database form) yields ``schema="db.schema"``, not
+    ``("db", "schema", "table")``. That is not a bug for SQL Server: its
+    SQLAlchemy dialect re-splits a dotted ``schema`` string itself (see
+    ``sqlalchemy.dialects.mssql.base._schema_elements``), interpreting
+    ``"db.schema"`` as database ``db`` / owner ``schema`` -- so the
+    compound schema this returns reflects correctly end-to-end for T-SQL.
+    Other SQLAlchemy-backed engines here (PostgreSQL, sqlite) have no such
+    convention and only ever see two-part ``schema.table`` names in
+    practice; passing a three-part name to one of them fails reflection
+    outright rather than silently mapping to the wrong object.
+    """
     if "." in obj:
         schema, _, table = obj.rpartition(".")
         return schema, table
     return None, obj
+
+
+# freshness_source values that read Delta table metadata via DESCRIBE
+# instead of querying a timestamp column -- Databricks-only, table-only
+# (a view has no Delta storage for DESCRIBE to describe).
+_DESCRIBE_FRESHNESS_SOURCES = frozenset({"describe_history", "describe_detail"})
+
+
+def validate_freshness_source(
+    freshness_source: str, dialect: Dialect, is_view: bool = False
+) -> None:
+    """Validate a ``freshness_source`` against dialect capability and object kind.
+
+    Raises ``ValueError`` when the dialect doesn't declare the source as a
+    freshness capability, or when a metadata-based source
+    (``describe_history``/``describe_detail``) is used against a view --
+    those DESCRIBE forms describe table storage, which a view has none of;
+    a view must use a timestamp ``column`` instead. Generic across every
+    engine: the DESCRIBE forms happen to be Databricks-only today only
+    because no other dialect declares them in ``freshness_sources``.
+    """
+    if freshness_source not in dialect.freshness_sources:
+        raise ValueError(
+            f"{dialect.name!r} dialect does not support "
+            f"freshness_source {freshness_source!r}"
+        )
+    if freshness_source in _DESCRIBE_FRESHNESS_SOURCES and is_view:
+        raise ValueError(
+            f"freshness_source {freshness_source!r} is not valid for a view; "
+            "views must use a timestamp column"
+        )
 
 
 class Dialect:

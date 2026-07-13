@@ -34,6 +34,26 @@ class _FakeViewAdapter:
         pass
 
 
+class _FakeKeylessAdapter:
+    """A Databricks-dialect adapter with no key metadata at all -- proves the
+    wizard explains why no ``duplicate_count`` was proposed rather than
+    staying silent about it."""
+
+    dialect = DatabricksDialect()
+
+    def scalar(self, sql):
+        return 1
+
+    def describe(self, obj):
+        column = Column(
+            name="id", type="INT", nullable=False, category=Category.NUMERIC
+        )
+        return ObjectInfo(columns=[column])
+
+    def close(self):
+        pass
+
+
 def _table(db):
     adapter = SqliteAdapter(str(db))
     adapter.rows(
@@ -333,6 +353,31 @@ def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
     data = yaml.safe_load(cfg.read_text())
     metrics = {c["metric"] for c in data["checks"]}
     assert "freshness" not in metrics
+
+
+def test_add_wizard_notes_when_engine_cannot_introspect_keys(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setitem(factory._ADAPTERS, "keyless", _FakeKeylessAdapter)
+    monkeypatch.setitem(factory._DIALECTS, "keyless", DatabricksDialect)
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources:\n  s: { type: keyless }\nchecks: []\n")
+
+    answers = iter(
+        [
+            "s",  # source name (existing)
+            "t",  # object name
+            "y",  # accept the full proposed bundle
+            "",  # skip offered checks on id
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    code = main(["add", "-c", str(cfg)])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "cannot introspect key" in out
 
 
 def _ambiguous_table(db):

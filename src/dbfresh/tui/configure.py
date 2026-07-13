@@ -20,6 +20,7 @@ from dbfresh.config import Config
 from dbfresh.configurator import (
     append_checks,
     check_object_exists,
+    key_introspection_note,
     pick_timestamp_column,
     propose_checks,
     target_files,
@@ -122,10 +123,13 @@ class ConfigureScreen(Screen[bool]):
                 is_view=existence.info.is_view,
                 timestamp_override=timestamp_override,
             )
+            key_note = key_introspection_note(adapter.dialect, existence.info)
         finally:
             adapter.close()
 
         lines = [f"{c['metric']}: {c['expect']}" for c in self._proposed]
+        if key_note is not None:
+            lines.insert(0, key_note)
         if ambiguity_note is not None:
             lines.insert(0, ambiguity_note)
 

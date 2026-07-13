@@ -56,6 +56,26 @@ class _FakeViewAdapter:
         pass
 
 
+class _FakeKeylessAdapter:
+    """A Databricks-dialect adapter with no key metadata at all -- proves the
+    Configure screen explains why no ``duplicate_count`` was proposed rather
+    than staying silent about it."""
+
+    dialect = DatabricksDialect()
+
+    def scalar(self, sql):
+        return 1
+
+    def describe(self, obj):
+        column = Column(
+            name="id", type="INT", nullable=False, category=Category.NUMERIC
+        )
+        return ObjectInfo(columns=[column])
+
+    def close(self):
+        pass
+
+
 def _config(path, db):
     path.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -150,6 +170,33 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
             assert "freshness" not in proposal_text
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_notes_when_engine_cannot_introspect_keys(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "keyless", _FakeKeylessAdapter)
+        monkeypatch.setitem(factory._DIALECTS, "keyless", DatabricksDialect)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: keyless }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "t"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "cannot introspect key" in proposal_text
 
     asyncio.run(scenario())
 

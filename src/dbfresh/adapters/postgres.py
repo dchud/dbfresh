@@ -2,10 +2,10 @@
 
 PostgreSQL is not a supported v1 source; this module exists to prove the
 claim that adding a new source engine is one module plus one factory
-registration. ``scalar``, ``rows``, and the columns+keys of ``describe`` are
+registration. ``scalar``, ``rows``, and ``describe`` (columns, keys) are
 inherited from the SQLAlchemy-backed base's reflection; the only PostgreSQL-
-specific pieces are a category-mapping refinement for native type names the
-base doesn't already resolve, and a ``pg_class.reltuples`` row-count estimate.
+specific piece is a category-mapping refinement for native type names the
+base doesn't already resolve.
 
 ``psycopg`` is an optional dependency (the ``postgres`` extra), not a core
 runtime dependency. Nothing at module level imports it: ``create_engine``
@@ -46,7 +46,9 @@ class PostgresDialect(Dialect):
 
     name = "postgres"
     freshness_sources = frozenset({"column"})
-    introspection_capabilities = frozenset({"keys", "stats"})
+    # describe() reflects keys via the base's Inspector; it never populates
+    # a "stats" field (no reltuples row-count estimate, no last_modified).
+    introspection_capabilities = frozenset({"keys"})
 
 
 class PostgresAdapter(SqlAlchemyAdapter):
@@ -76,11 +78,10 @@ class PostgresAdapter(SqlAlchemyAdapter):
         super().__init__(engine, PostgresDialect())
 
     def describe(self, obj: str) -> ObjectInfo:
-        """Reflect columns/keys via the base, then apply PG-specific extras.
+        """Reflect columns/keys via the base, then refine PG-specific categories.
 
-        Refines each column's category (see ``refine_category``) and adds a
-        ``pg_class.reltuples`` row-count estimate the base has no way to
-        populate generically.
+        Refines each column's category (see ``refine_category``); everything
+        else comes from the base's reflection unchanged.
         """
         info = super().describe(obj)
         columns = [
@@ -90,21 +91,5 @@ class PostgresAdapter(SqlAlchemyAdapter):
         return ObjectInfo(
             columns=columns,
             keys=info.keys,
-            approx_row_count=self._reltuples_estimate(obj),
             last_modified=info.last_modified,
         )
-
-    def _reltuples_estimate(self, obj: str) -> int | None:
-        """A cheap, approximate row count from planner catalog statistics.
-
-        ``reltuples`` is -1 for a relation that has never been analyzed, and
-        the catalog lookup returns no row at all for an object that doesn't
-        exist; both degrade to ``None`` rather than a misleading estimate.
-        """
-        reltuples = self.scalar(
-            f"SELECT reltuples FROM pg_class WHERE oid = to_regclass('{obj}')"
-        )
-        if reltuples is None:
-            return None
-        count = int(reltuples)
-        return count if count >= 0 else None

@@ -57,38 +57,12 @@ def category_for_databricks(type_name: str) -> Category:
     return Category.OTHER
 
 
-_DESCRIBE_FRESHNESS_SOURCES = frozenset({"describe_history", "describe_detail"})
-
-
-def validate_freshness_source(
-    freshness_source: str, dialect: Dialect, is_view: bool = False
-) -> None:
-    """Validate a ``freshness_source`` against dialect capability and object kind.
-
-    Raises ``ValueError`` when the dialect doesn't declare the source as a
-    freshness capability, or when a metadata-based source
-    (``describe_history``/``describe_detail``) is used against a view --
-    those DESCRIBE forms describe table storage, which a view has none of;
-    a view must use a timestamp ``column`` instead.
-    """
-    if freshness_source not in dialect.freshness_sources:
-        raise ValueError(
-            f"{dialect.name!r} dialect does not support "
-            f"freshness_source {freshness_source!r}"
-        )
-    if freshness_source in _DESCRIBE_FRESHNESS_SOURCES and is_view:
-        raise ValueError(
-            f"freshness_source {freshness_source!r} is not valid for a view; "
-            "views must use a timestamp column"
-        )
-
-
 class DatabricksDialect(Dialect):
     name = "databricks"
     # Delta tables expose freshness via DESCRIBE metadata as well as a column.
     freshness_sources = frozenset({"column", "describe_history", "describe_detail"})
     # describe() populates only last_modified (a "stats" field): keys are
-    # always None and approx_row_count is never populated.
+    # always None (Unity Catalog exposes no constraint metadata here).
     introspection_capabilities = frozenset({"stats"})
 
 
@@ -150,12 +124,31 @@ class DatabricksAdapter:
         finally:
             cursor.close()
 
+    def _rows_with_params(self, sql: str, parameters: dict[str, Any]) -> list[dict]:
+        """Like :meth:`rows`, but with server-side bound parameters.
+
+        Used only by the ``describe()`` metadata queries below, which embed
+        a user-typed object name (the wizard/TUI feed exactly this path) --
+        named paramstyle (``:name`` placeholders bound via ``parameters``)
+        keeps a name containing a quote from ever landing in the SQL text,
+        rather than the ``rows(sql)`` contract's plain string, which is fine
+        for the compiler's own trusted-config SQL but not for this path.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(sql, parameters)
+            if cursor.description is None:
+                return []
+            columns = [d[0] for d in cursor.description]
+            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+
     def describe(self, obj: str) -> ObjectInfo:
         """Hand-written object metadata: Unity Catalog reflection is thin.
 
         Columns come from ``information_schema.columns``; keys are always
-        ``None`` and ``approx_row_count`` is never populated (neither is
-        exposed cheaply here); ``is_view`` comes from
+        ``None`` (not exposed cheaply here); ``is_view`` comes from
         ``information_schema.tables`` -- it is what lets the freshness
         run-time guard reject ``describe_history``/``describe_detail``
         against a view. ``is_view`` is computed before ``last_modified``:
@@ -169,7 +162,6 @@ class DatabricksAdapter:
         return ObjectInfo(
             columns=columns,
             keys=None,
-            approx_row_count=None,
             last_modified=last_modified,
             is_view=is_view,
         )
@@ -181,9 +173,11 @@ class DatabricksAdapter:
             if catalog
             else "information_schema.columns"
         )
-        where = [f"table_name = '{table}'"]
+        where = ["table_name = :table_name"]
+        params: dict[str, Any] = {"table_name": table}
         if schema:
-            where.append(f"table_schema = '{schema}'")
+            where.append("table_schema = :table_schema")
+            params["table_schema"] = schema
         sql = (
             f"SELECT column_name, data_type, is_nullable FROM {info_schema} "
             f"WHERE {' AND '.join(where)} ORDER BY ordinal_position"
@@ -195,7 +189,7 @@ class DatabricksAdapter:
                 nullable=row["is_nullable"] == "YES",
                 category=category_for_databricks(row["data_type"]),
             )
-            for row in self.rows(sql)
+            for row in self._rows_with_params(sql, params)
         ]
 
     def _is_view(self, obj: str) -> bool:
@@ -212,11 +206,13 @@ class DatabricksAdapter:
             if catalog
             else "information_schema.tables"
         )
-        where = [f"table_name = '{table}'"]
+        where = ["table_name = :table_name"]
+        params: dict[str, Any] = {"table_name": table}
         if schema:
-            where.append(f"table_schema = '{schema}'")
+            where.append("table_schema = :table_schema")
+            params["table_schema"] = schema
         sql = f"SELECT table_type FROM {info_schema} WHERE {' AND '.join(where)}"
-        result = self.rows(sql)
+        result = self._rows_with_params(sql, params)
         if not result:
             return False
         return result[0]["table_type"] == "VIEW"

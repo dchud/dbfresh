@@ -38,11 +38,26 @@ class DbfreshApp(App):
         Binding("q", "quit", "Quit"),
     ]
 
-    def __init__(self, config_path: str | Path, store_path: str | None = None) -> None:
+    def __init__(
+        self,
+        config_path: str | Path,
+        store_path: str | None = None,
+        initial_config: Config | None = None,
+    ) -> None:
+        """Build the app; ``initial_config``, when given, is used as-is at
+        mount time instead of re-parsing ``config_path``.
+
+        ``dbfresh ui`` (``cli._ui_command``) already parses the config once
+        to fail cleanly before the Textual session ever starts; passing
+        that same :class:`~dbfresh.config.Config` through here avoids
+        parsing the same unchanged file a second time. Omit it (the
+        default) to have :meth:`on_mount` load it itself -- what every
+        test that constructs ``DbfreshApp`` directly relies on.
+        """
         super().__init__()
         self.config_path = Path(config_path)
         self._store_path_override = store_path
-        self.config: Config | None = None
+        self.config: Config | None = initial_config
         self.store: Store | None = None
         self.last_run: RunResult | None = None
 
@@ -52,7 +67,8 @@ class DbfreshApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self._reload_config()
+        if self.config is None:
+            self._reload_config()
         self._open_store()
         self.refresh_dashboard()
 

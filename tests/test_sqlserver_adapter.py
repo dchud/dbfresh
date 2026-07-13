@@ -2,9 +2,8 @@
 
 No live SQL Server is required: the dialect, category-mapping, and SQL
 compilation tests are pure; ``describe()`` is exercised against a mocked
-reflection ``Inspector`` and a stubbed ``scalar`` (the partition-stats row
-count query). A live round-trip sits behind ``DBFRESH_SQLSERVER_URL`` and is
-skipped unless that env var is set.
+reflection ``Inspector``. A live round-trip sits behind
+``DBFRESH_SQLSERVER_URL`` and is skipped unless that env var is set.
 """
 
 from __future__ import annotations
@@ -81,8 +80,11 @@ def test_dialect_freshness_capability_is_column_only():
     assert TSqlDialect().freshness_sources == frozenset({"column"})
 
 
-def test_dialect_introspection_capabilities_are_keys_and_stats():
-    assert TSqlDialect().introspection_capabilities == frozenset({"keys", "stats"})
+def test_dialect_introspection_capabilities_are_keys_only():
+    # describe() no longer issues a partition-stats row-count query, and the
+    # base reflection it inherits never populates last_modified -- "stats"
+    # would promise a field this adapter can no longer deliver.
+    assert TSqlDialect().introspection_capabilities == frozenset({"keys"})
 
 
 def test_null_rate_compiles_with_tsql_float_ratio():
@@ -134,8 +136,10 @@ class _FakeInspector:
         self._columns = columns
         self._pk_columns = pk_columns
         self._uniques = uniques
+        self.get_columns_calls: list[tuple[str, str | None]] = []
 
     def get_columns(self, table, schema=None):
+        self.get_columns_calls.append((table, schema))
         return self._columns
 
     def get_pk_constraint(self, table, schema=None):
@@ -153,7 +157,7 @@ def _make_bare_adapter() -> SqlServerAdapter:
     return adapter
 
 
-def test_describe_normalizes_mocked_reflection_and_row_count(monkeypatch):
+def test_describe_normalizes_mocked_reflection(monkeypatch):
     columns = [
         {"name": "id", "type": mssql.INTEGER(), "nullable": False},
         {"name": "amount", "type": mssql.MONEY(), "nullable": True},
@@ -169,7 +173,6 @@ def test_describe_normalizes_mocked_reflection_and_row_count(monkeypatch):
     )
 
     adapter = _make_bare_adapter()
-    monkeypatch.setattr(adapter, "scalar", lambda sql: 4200)
 
     info = adapter.describe("dbo.fct_sales")
 
@@ -183,32 +186,30 @@ def test_describe_normalizes_mocked_reflection_and_row_count(monkeypatch):
     assert by_name["row_id"].category == Category.OTHER
 
     assert info.keys == [["id"], ["row_id"]]
-    assert info.approx_row_count == 4200
 
 
-def test_describe_row_count_is_none_when_object_has_no_partition_stats(monkeypatch):
-    fake_inspector = _FakeInspector(
-        [{"name": "id", "type": mssql.INTEGER(), "nullable": False}],
-        pk_columns=[],
-        uniques=[],
-    )
+def test_describe_three_part_name_passes_compound_schema_to_reflection(monkeypatch):
+    # "db.schema.table" splits (at the last dot) into schema="db.schema",
+    # table="table" -- SQLAlchemy's MSSQL dialect re-splits a dotted schema
+    # string itself as database.owner, so passing the compound string
+    # through unchanged is what makes three-part cross-database names
+    # reflect correctly (see adapters/base.py's _split_object docstring).
+    fake_inspector = _FakeInspector([], pk_columns=[], uniques=[])
     monkeypatch.setattr(
         "dbfresh.adapters.base.sqla_inspect", lambda conn: fake_inspector
     )
-
     adapter = _make_bare_adapter()
-    monkeypatch.setattr(adapter, "scalar", lambda sql: None)
 
-    info = adapter.describe("dbo.empty_or_missing")
-    assert info.approx_row_count is None
-    assert info.keys is None
+    adapter.describe("otherdb.dbo.fct_sales")
+
+    assert fake_inspector.get_columns_calls == [("fct_sales", "otherdb.dbo")]
 
 
-def test_row_count_query_targets_partition_stats(monkeypatch):
-    captured = {}
+def test_describe_does_not_issue_a_partition_stats_query(monkeypatch):
+    calls = []
 
     def fake_scalar(sql):
-        captured["sql"] = sql
+        calls.append(sql)
         return 10
 
     monkeypatch.setattr(
@@ -220,15 +221,14 @@ def test_row_count_query_targets_partition_stats(monkeypatch):
 
     adapter.describe("dbo.fct_sales")
 
-    assert "sys.dm_db_partition_stats" in captured["sql"]
-    assert "dbo.fct_sales" in captured["sql"]
+    assert calls == []  # no per-run catalog query for an unused value
 
 
 @pytest.mark.skipif(
     not SQLSERVER_URL,
     reason="set DBFRESH_SQLSERVER_URL to run against a live SQL Server",
 )
-def test_live_describe_reflects_columns_keys_and_row_estimate():
+def test_live_describe_reflects_columns_and_keys():
     adapter = SqlServerAdapter(SQLSERVER_URL)
     try:
         adapter.rows(

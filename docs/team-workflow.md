@@ -55,7 +55,9 @@ checks/
 .env                  # gitignored; the real values, per clone
 ```
 
-`dbfresh add` and the TUI's Configure screen both ask which file should
-receive a newly proposed check whenever `include:` is configured, so
-authoring checks doesn't require remembering the layout by hand -- see
+`dbfresh add` asks which included file should receive a newly proposed
+check whenever `include:` is configured; the TUI's Configure screen resolves
+the same choice automatically (the first included file, named in the
+proposal) rather than prompting for it. Either way, authoring checks
+doesn't require remembering the layout by hand -- see
 [Authoring checks](authoring-checks.md).

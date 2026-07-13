@@ -4,8 +4,9 @@ and Databricks-only paths."""
 
 from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
-from dbfresh.adapters.sqlite import SqliteAdapter
-from dbfresh.configurator import propose_checks
+from dbfresh.adapters.sqlite import SqliteAdapter, SqliteDialect
+from dbfresh.adapters.sqlserver import TSqlDialect
+from dbfresh.configurator import key_introspection_note, propose_checks
 
 
 def _col(name, category=Category.NUMERIC, nullable=False, type_="INT"):
@@ -69,6 +70,30 @@ def test_no_duplicate_count_proposal_without_keys():
     proposals = propose_checks("s", "t", info, a.dialect)
     assert not [p for p in proposals if p["metric"] == "duplicate_count"]
     a.close()
+
+
+def test_key_introspection_note_is_none_when_keys_are_present():
+    info = ObjectInfo(columns=[_col("id")], keys=[["id"]])
+    assert key_introspection_note(Dialect(), info) is None
+
+
+def test_key_introspection_note_is_none_when_engine_can_say_and_has_none():
+    # SqliteDialect/TSqlDialect declare "keys" as an introspection
+    # capability, so an object with none is a genuine fact, not a gap.
+    info = ObjectInfo(columns=[_col("id")], keys=None)
+    assert key_introspection_note(SqliteDialect(), info) is None
+    assert key_introspection_note(TSqlDialect(), info) is None
+
+
+def test_key_introspection_note_explains_when_engine_cannot_say():
+    # DatabricksDialect never declares "keys": Unity Catalog exposes no
+    # constraint metadata, so a missing duplicate_count proposal here means
+    # "this engine cannot say", not "this object has none".
+    info = ObjectInfo(columns=[_col("id")], keys=None)
+    note = key_introspection_note(DatabricksDialect(), info)
+    assert note is not None
+    assert "databricks" in note
+    assert "duplicate_count" in note
 
 
 def test_composite_keys_are_skipped():

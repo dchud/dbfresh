@@ -1,9 +1,9 @@
 """SQL Server adapter (T-SQL) over ``mssql+pymssql://``.
 
-``scalar``/``rows`` and the columns+keys half of ``describe`` are inherited
-from the SQLAlchemy-backed base's reflection; the SQL-Server-specific pieces
-are a category-mapping refinement for native type names the base doesn't
-already resolve, and a ``sys.dm_db_partition_stats`` row-count estimate.
+``scalar``/``rows`` and ``describe`` (columns, keys) are inherited from the
+SQLAlchemy-backed base's reflection; the only SQL-Server-specific piece is a
+category-mapping refinement for native type names the base doesn't already
+resolve.
 
 Config carries a single usql-style connection URL, kept in an environment
 variable so credentials never appear in the checked-in YAML;
@@ -28,7 +28,10 @@ from dbfresh.connection import parse_sqlserver_url
 class TSqlDialect(Dialect):
     name = "tsql"
     freshness_sources = frozenset({"column"})
-    introspection_capabilities = frozenset({"keys", "stats"})
+    # describe() reflects keys via the base's Inspector; it never populates
+    # a "stats" field (no partition-stats row-count estimate, no
+    # last_modified).
+    introspection_capabilities = frozenset({"keys"})
 
     def limit(self, sql: str, n: int) -> str:
         # T-SQL caps rows with TOP after SELECT, not a trailing LIMIT.
@@ -83,11 +86,10 @@ class SqlServerAdapter(SqlAlchemyAdapter):
         super().__init__(engine, TSqlDialect())
 
     def describe(self, obj: str) -> ObjectInfo:
-        """Reflect columns/keys via the base, then apply T-SQL-specific extras.
+        """Reflect columns/keys via the base, then refine T-SQL-specific categories.
 
-        Refines each column's category (see ``refine_category``) and adds a
-        ``sys.dm_db_partition_stats`` row-count estimate the base has no
-        way to populate generically.
+        Refines each column's category (see ``refine_category``); everything
+        else comes from the base's reflection unchanged.
         """
         info = super().describe(obj)
         columns = [
@@ -97,21 +99,5 @@ class SqlServerAdapter(SqlAlchemyAdapter):
         return ObjectInfo(
             columns=columns,
             keys=info.keys,
-            approx_row_count=self._partition_stats_row_count(obj),
             last_modified=info.last_modified,
         )
-
-    def _partition_stats_row_count(self, obj: str) -> int | None:
-        """A cheap, approximate row count from partition catalog statistics.
-
-        Sums ``row_count`` across the heap (``index_id = 0``) or clustered
-        index (``index_id = 1``) partitions, whichever applies -- a table
-        has exactly one of the two, so this never double-counts. An object
-        with no matching partition stats (e.g. it doesn't exist) degrades
-        to ``None`` rather than a misleading estimate.
-        """
-        count = self.scalar(
-            "SELECT SUM(row_count) FROM sys.dm_db_partition_stats "
-            f"WHERE object_id = OBJECT_ID('{obj}') AND index_id IN (0, 1)"
-        )
-        return None if count is None else int(count)

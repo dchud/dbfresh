@@ -343,6 +343,7 @@ def _add_command(args: argparse.Namespace) -> int:
         add_source,
         append_checks,
         check_object_exists,
+        key_introspection_note,
         offered_column_checks,
         pick_timestamp_column,
         propose_checks,
@@ -401,6 +402,9 @@ def _add_command(args: argparse.Namespace) -> int:
                 is_view=info.is_view,
                 timestamp_override=timestamp_override,
             )
+            note = key_introspection_note(adapter.dialect, info)
+            if note is not None:
+                print(note)
             print(f"Proposed {len(bundle)} check(s):")
             for block in bundle:
                 print(f"  - {block}")
@@ -466,11 +470,13 @@ def _ui_command(args: argparse.Namespace) -> int:
 
     config_path = Path(args.config)
     try:
-        load_config(config_path)
+        config = load_config(config_path)
     except (ConfigError, OSError, yaml.YAMLError) as exc:
         return _report_config_error(exc)
 
-    app = DbfreshApp(config_path=args.config, store_path=args.store)
+    app = DbfreshApp(
+        config_path=args.config, store_path=args.store, initial_config=config
+    )
     app.run()
     return 0
 

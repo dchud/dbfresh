@@ -12,9 +12,10 @@ from dbfresh.cli import main
 class _FakeApp:
     instances: list[_FakeApp] = []
 
-    def __init__(self, config_path, store_path=None):
+    def __init__(self, config_path, store_path=None, initial_config=None):
         self.config_path = config_path
         self.store_path = store_path
+        self.initial_config = initial_config
         _FakeApp.instances.append(self)
 
     def run(self):
@@ -35,6 +36,23 @@ def test_ui_command_constructs_app_with_config_and_store(tmp_path, monkeypatch):
     launched = _FakeApp.instances[0]
     assert str(launched.config_path) == str(cfg)
     assert launched.store_path == str(store)
+
+
+def test_ui_command_passes_the_already_parsed_config_to_the_app(tmp_path, monkeypatch):
+    # _ui_command validates the config before ever constructing the app; it
+    # must hand that same Config to DbfreshApp instead of just the path, so
+    # on_mount() doesn't parse the same unchanged file a second time.
+    _FakeApp.instances.clear()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+    monkeypatch.setattr("dbfresh.tui.app.DbfreshApp", _FakeApp)
+
+    code = main(["ui", "-c", str(cfg)])
+
+    assert code == 0
+    launched = _FakeApp.instances[0]
+    assert launched.initial_config is not None
+    assert launched.initial_config.sources == {}
 
 
 def test_ui_command_defaults_config_path_and_no_store_override(tmp_path, monkeypatch):

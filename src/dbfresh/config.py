@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from dbfresh.adapters.databricks import validate_freshness_source
+from dbfresh.adapters.base import validate_freshness_source
 from dbfresh.adapters.factory import adapter_class_for, dialect_for_type
 from dbfresh.calendar import WEEKDAY_NAMES, BusinessCalendar, build_calendar
 from dbfresh.checks import Check, check_id, describe_check, parse_expectation
