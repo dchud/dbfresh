@@ -202,6 +202,37 @@ checks:
     assert "severity must be" in message
 
 
+def test_check_with_no_metric_assert_or_assert_sql_is_a_validation_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+""",
+    )
+    with pytest.raises(ValueError, match="none of metric, assert, or assert_sql"):
+        load_config(path, env={})
+
+
+def test_assert_sql_check_loads_and_needs_no_expectation(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    assert_sql: "SELECT * FROM t WHERE amount < 0"
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].assert_sql == "SELECT * FROM t WHERE amount < 0"
+
+
 def test_single_problem_message_is_not_wrapped_in_a_multi_error_summary(tmp_path):
     # Exactly one problem: the message is that problem's own text, not
     # "N problems found" framing -- keeps the single-error case's message

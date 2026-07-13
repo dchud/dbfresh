@@ -193,6 +193,7 @@ class Check:
     key: str | None = None
     where: str | None = None
     assert_: str | None = None
+    assert_sql: str | None = None
     expect: Expectation | None = None
     allow_empty: bool = False
     severity: str = "error"
@@ -226,6 +227,12 @@ def check_id(check: Check) -> str:
     if check.assert_ is not None:
         metric = ""
         discriminant = _normalize_assert_text(check.assert_)
+    elif check.assert_sql is not None:
+        # A distinct, non-registered "metric" marker (never colliding with a
+        # real metric name) so an assert_sql check never shares an identity
+        # with an assert: check over the same literal text.
+        metric = "assert_sql"
+        discriminant = _normalize_assert_text(check.assert_sql)
     else:
         metric = check.metric or ""
         if metric in _TABLE_LEVEL_METRICS:
@@ -245,6 +252,8 @@ def describe_check(check: Check) -> str:
     """
     if check.assert_ is not None:
         return f"{check.source}.{check.object} assert {check.assert_!r}"
+    if check.assert_sql is not None:
+        return f"{check.source}.{check.object} assert_sql {check.assert_sql!r}"
     metric = check.metric or "?"
     if check.column:
         return f"{check.source}.{check.object}/{metric} (column={check.column!r})"

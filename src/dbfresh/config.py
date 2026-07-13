@@ -31,6 +31,7 @@ _CHECK_KEYS = frozenset(
         "key",
         "where",
         "assert",
+        "assert_sql",
         "expect",
         "allow_empty",
         "severity",
@@ -191,6 +192,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
         key=raw.get("key"),
         where=raw.get("where", defaults.get("where")),
         assert_=raw.get("assert"),
+        assert_sql=raw.get("assert_sql"),
         expect=expect,
         allow_empty=raw.get("allow_empty", defaults.get("allow_empty", False)),
         severity=raw.get("severity", defaults.get("severity", "error")),
@@ -353,11 +355,11 @@ def _validate_checks(
     the first one found.
 
     Covers: unknown source references, unknown metrics, missing
-    discriminating fields, a metric check with no expectation, unknown
-    check-block keys, an invalid ``severity``, ``max_lag`` used outside
-    ``freshness``, freshness-source problems (missing column, dialect
-    capability), duplicate ``check_id``s, and calendar features used
-    without a top-level ``calendar:`` block.
+    discriminating fields, a metric check with no expectation, a check with
+    none of metric/assert/assert_sql, unknown check-block keys, an invalid
+    ``severity``, ``max_lag`` used outside ``freshness``, freshness-source
+    problems (missing column, dialect capability), duplicate ``check_id``s,
+    and calendar features used without a top-level ``calendar:`` block.
     """
     errors: list[ValueError] = []
     seen: dict[str, Check] = {}
@@ -369,6 +371,11 @@ def _validate_checks(
         extra_keys = sorted(set(raw) - _CHECK_KEYS)
         if extra_keys:
             errors.append(ValueError(f"{label}: unknown check field(s): {extra_keys}"))
+
+        if check.metric is None and check.assert_ is None and check.assert_sql is None:
+            errors.append(
+                ValueError(f"{label}: check has none of metric, assert, or assert_sql")
+            )
 
         if check.severity not in _VALID_SEVERITIES:
             errors.append(
