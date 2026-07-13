@@ -4,10 +4,25 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from dbfresh import __version__
+
+_CONFIG_ERROR_EXIT = 2
+
+
+def _report_config_error(exc: ValueError) -> int:
+    """Print a config validation failure as one clean stderr line.
+
+    Used at every command boundary that calls ``load_config`` so a
+    validation problem (unknown source reference, duplicate check_id,
+    calendar features without a calendar block, operator misuse, ...) exits
+    cleanly instead of surfacing as an unhandled traceback.
+    """
+    print(f"config error: {exc}", file=sys.stderr)
+    return _CONFIG_ERROR_EXIT
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,8 +85,6 @@ def _resolve_read_context(config_path: Path):
 
 
 def _run_command(args: argparse.Namespace) -> int:
-    from dotenv import load_dotenv
-
     from dbfresh.config import load_config
     from dbfresh.engine import exit_code
     from dbfresh.report import display_timezone, render_digest, render_json
@@ -79,8 +92,10 @@ def _run_command(args: argparse.Namespace) -> int:
     from dbfresh.store import Store, resolve_store_path
 
     config_path = Path(args.config)
-    load_dotenv(config_path.parent / ".env")
-    config = load_config(config_path)
+    try:
+        config = load_config(config_path)
+    except ValueError as exc:
+        return _report_config_error(exc)
 
     # Opened before run_and_persist (not just after) so history-based
     # expectations (schema unchanged; vs_previous) can read prior
@@ -114,7 +129,10 @@ def _history_command(args: argparse.Namespace) -> int:
     from dbfresh.report import display_timezone, render_candidates, render_history
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
+    try:
+        config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
+    except ValueError as exc:
+        return _report_config_error(exc)
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,
@@ -143,7 +161,10 @@ def _prune_command(args: argparse.Namespace) -> int:
     from dbfresh.config import StoreConfig
     from dbfresh.store import Store, resolve_store_path
 
-    config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
+    try:
+        config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
+    except ValueError as exc:
+        return _report_config_error(exc)
     store_path = resolve_store_path(
         config_dir=config_dir,
         store_config=store_config,
@@ -266,7 +287,10 @@ def _add_command(args: argparse.Namespace) -> int:
     )
 
     config_path = Path(args.config)
-    config = load_config(config_path) if config_path.exists() else None
+    try:
+        config = load_config(config_path) if config_path.exists() else None
+    except ValueError as exc:
+        return _report_config_error(exc)
     has_calendar = config.calendar is not None if config else False
 
     source_name, adapter, aborted, new_source = _select_source(config, config_path)
@@ -345,16 +369,41 @@ def _add_command(args: argparse.Namespace) -> int:
 
 
 def _ui_command(args: argparse.Namespace) -> int:
+    from dbfresh.config import load_config
     from dbfresh.tui.app import DbfreshApp
+
+    config_path = Path(args.config)
+    try:
+        load_config(config_path)
+    except ValueError as exc:
+        return _report_config_error(exc)
 
     app = DbfreshApp(config_path=args.config, store_path=args.store)
     app.run()
     return 0
 
 
+_CONFIG_READING_COMMANDS = frozenset({"run", "history", "prune", "add", "ui"})
+
+
+def _load_dotenv_beside_config(config_path: Path) -> None:
+    """Load a ``.env`` file next to ``config_path``, if one is present.
+
+    ``${VAR}`` interpolation in config happens for every command that reads
+    it, not only ``run``, so this runs once at the CLI dispatch boundary
+    rather than being duplicated inside each command function. Real
+    environment variables already set take precedence over ``.env``.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv(config_path.parent / ".env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command in _CONFIG_READING_COMMANDS:
+        _load_dotenv_beside_config(Path(args.config))
     if args.command == "run":
         return _run_command(args)
     if args.command == "history":

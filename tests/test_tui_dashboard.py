@@ -141,6 +141,39 @@ def test_column_node_status_is_worst_of_its_checks():
     assert "FAIL" in str(email_node.label)
 
 
+def test_column_node_rolls_up_to_skipped_when_all_checks_are_skipped():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_observation(store, checks[2], Status.SKIPPED)  # email null_rate
+    tree = Tree("dbfresh")
+
+    build_dashboard(tree, _config(checks), store)
+
+    s_node = _find_child(tree.root, "s")
+    orders_node = _find_child(s_node, "orders")
+    email_node = _find_child(orders_node, "email")
+    assert "SKIPPED" in str(email_node.label)
+    assert "OK" not in str(email_node.label)
+
+
+def test_column_node_rolls_up_to_ok_when_ok_and_skipped_are_mixed():
+    checks = [
+        Check(source="s", object="orders", metric="null_rate", column="email"),
+        Check(source="s", object="orders", metric="sum", column="email"),
+    ]
+    store = Store(":memory:")
+    _seed_observation(store, checks[0], Status.OK, value=0.01)
+    _seed_observation(store, checks[1], Status.SKIPPED)
+    tree = Tree("dbfresh")
+
+    build_dashboard(tree, _config(checks), store)
+
+    s_node = _find_child(tree.root, "s")
+    orders_node = _find_child(s_node, "orders")
+    email_node = _find_child(orders_node, "email")
+    assert "OK" in str(email_node.label)
+
+
 def test_object_and_source_node_status_is_worst_of_their_checks():
     checks = _checks()
     store = Store(":memory:")
