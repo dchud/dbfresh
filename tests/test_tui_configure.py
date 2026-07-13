@@ -285,6 +285,52 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
     asyncio.run(scenario())
 
 
+def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+
+        checks_dir = tmp_path / "checks"
+        checks_dir.mkdir()
+        (checks_dir / "a.yaml").write_text("checks: []\n")
+        (checks_dir / "b.yaml").write_text("checks: []\n")
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "include: [checks/*.yaml]\n"
+            "checks: []\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Several included files match: the proposal names the one
+            # that Accept will actually write to, rather than writing
+            # silently to whichever one happened to sort first.
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "a.yaml" in proposal_text
+            assert "2 included files" in proposal_text
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+        a_data = yaml.safe_load((checks_dir / "a.yaml").read_text())
+        b_data = yaml.safe_load((checks_dir / "b.yaml").read_text())
+        assert a_data["checks"]
+        assert b_data["checks"] == []
+
+    asyncio.run(scenario())
+
+
 def test_configure_screen_unknown_object_disables_accept(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"

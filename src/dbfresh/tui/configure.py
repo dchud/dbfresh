@@ -40,6 +40,7 @@ class ConfigureScreen(Screen[bool]):
         self._config_path = Path(config_path)
         self._config = config
         self._proposed: list[dict] = []
+        self._target_file: Path | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -124,13 +125,24 @@ class ConfigureScreen(Screen[bool]):
         lines = [f"{c['metric']}: {c['expect']}" for c in self._proposed]
         if ambiguity_note is not None:
             lines.insert(0, ambiguity_note)
+
+        files = target_files(self._config_path)
+        self._target_file = files[0] if files else self._config_path
+        if len(files) > 1:
+            lines.append(
+                f"writing to {self._target_file} (of {len(files)} included files)"
+            )
+
         proposal_widget.update("\n".join(lines) if lines else "no checks proposed")
         accept_button.disabled = not self._proposed
 
     def _accept(self) -> None:
         if not self._proposed:
             return
-        target = target_files(self._config_path)[0]
+        target = self._target_file
+        if target is None:
+            files = target_files(self._config_path)
+            target = files[0] if files else self._config_path
         append_checks(target, self._proposed, config_path=self._config_path)
         self.dismiss(True)
 
