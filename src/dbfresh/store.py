@@ -11,7 +11,7 @@ from typing import Any
 
 from dbfresh.calendar import BusinessCalendar
 from dbfresh.config import StoreConfig
-from dbfresh.engine import Result, Status, split_value
+from dbfresh.models import Result, Status, split_value
 
 _CLEAN_STATUSES = (Status.OK.value, Status.WARN.value, Status.FAIL.value)
 

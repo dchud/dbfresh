@@ -94,6 +94,9 @@ class ConfigureScreen(Screen[bool]):
                     f"object not found: {object_name!r} ({existence.error})"
                 )
                 return
+            # existence.exists is only True when describe() succeeded, which
+            # is exactly when info is populated (see ExistenceCheck).
+            assert existence.info is not None
 
             ambiguity_note = None
             timestamp_override = None

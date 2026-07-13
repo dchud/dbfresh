@@ -18,7 +18,7 @@ from textual.widgets import Footer, Header, Tree
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, load_config
-from dbfresh.engine import RunResult
+from dbfresh.models import RunResult
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import NodeInfo, build_dashboard
 
@@ -59,10 +59,21 @@ class DbfreshApp(App):
     def _reload_config(self) -> None:
         self.config = load_config(self.config_path)
 
+    def _require_config(self) -> Config:
+        """``self.config``, guaranteed set: every caller runs after ``on_mount``."""
+        assert self.config is not None
+        return self.config
+
+    def _require_store(self) -> Store:
+        """``self.store``, guaranteed set: every caller runs after ``on_mount``."""
+        assert self.store is not None
+        return self.store
+
     def _open_store(self) -> None:
+        config = self._require_config()
         store_path = resolve_store_path(
-            config_dir=self.config.config_dir,
-            store_config=self.config.store,
+            config_dir=config.config_dir,
+            store_config=config.store,
             cli_store=self._store_path_override,
             env_store=os.environ.get("DBFRESH_STORE"),
         )
@@ -71,7 +82,7 @@ class DbfreshApp(App):
     def refresh_dashboard(self) -> None:
         """Rebuild the dashboard tree from the current config and store."""
         tree = self.query_one(f"#{_TREE_ID}", Tree)
-        build_dashboard(tree, self.config, self.store)
+        build_dashboard(tree, self._require_config(), self._require_store())
 
     def action_run_checks(self) -> None:
         """Start a check run in a worker thread; the UI stays responsive."""
@@ -81,7 +92,7 @@ class DbfreshApp(App):
     def _run_checks_worker(self) -> RunResult:
         from dbfresh.runner import run_and_persist
 
-        return run_and_persist(self.config, self.store)
+        return run_and_persist(self._require_config(), self.store)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
@@ -100,7 +111,7 @@ class DbfreshApp(App):
         from dbfresh.tui.configure import ConfigureScreen
 
         self.push_screen(
-            ConfigureScreen(self.config_path, self.config),
+            ConfigureScreen(self.config_path, self._require_config()),
             self._on_configure_dismissed,
         )
 
@@ -123,7 +134,7 @@ class DbfreshApp(App):
         from dbfresh.report import display_timezone
         from dbfresh.tui.screens import ReportScreen
 
-        tz = display_timezone(self.config.calendar)
+        tz = display_timezone(self._require_config().calendar)
         self.push_screen(ReportScreen(self.last_run, tz=tz))
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
@@ -133,8 +144,8 @@ class DbfreshApp(App):
             from dbfresh.report import display_timezone
             from dbfresh.tui.screens import HistoryScreen
 
-            tz = display_timezone(self.config.calendar)
-            self.push_screen(HistoryScreen(self.store, info.check, tz=tz))
+            tz = display_timezone(self._require_config().calendar)
+            self.push_screen(HistoryScreen(self._require_store(), info.check, tz=tz))
 
     def on_unmount(self) -> None:
         if self.store is not None:

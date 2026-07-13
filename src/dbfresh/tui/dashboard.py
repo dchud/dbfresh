@@ -17,7 +17,7 @@ from textual.widgets import Tree
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
-from dbfresh.engine import Status, worst_status
+from dbfresh.models import Status, worst_status
 from dbfresh.store import Store
 
 _STATUS_STYLE: dict[Status | None, str] = {
