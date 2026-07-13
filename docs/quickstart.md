@@ -68,6 +68,10 @@ loads `.env` (from the config file's directory) automatically, before
 parsing the config -- so a config committed to a team repo never carries a
 connection string or credential.
 
+See [Environment & secrets](environment.md) for the field-by-field
+`${VAR}` reference per source type, and the copyable
+`config.example.yaml` / `.env.example` pair at the repo root.
+
 ## First run
 
 Seed a table to check against (any means works; here's the sqlite adapter

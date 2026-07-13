@@ -153,7 +153,8 @@ config-load error -- there is no silent empty-string fallback. Every command
 that parses a config loads a gitignored, per-user `.env` file (from the
 config's directory) before parsing it, so `${VAR}` values can live outside
 both the committed config and the shell's persistent environment (see
-[Quickstart](quickstart.md)).
+[Quickstart](quickstart.md)). See [Environment & secrets](environment.md)
+for the field-by-field `${VAR}` table per source type.
 
 ## `check_id` and identity
 

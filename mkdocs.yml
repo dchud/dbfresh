@@ -39,6 +39,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
+  - Environment & secrets: environment.md
   - Concepts: concepts.md
   - Check reference:
       - Check reference: checks.md
