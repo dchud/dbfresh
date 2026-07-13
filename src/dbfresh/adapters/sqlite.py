@@ -10,6 +10,9 @@ from dbfresh.adapters.base import Dialect, SqlAlchemyAdapter
 
 class SqliteDialect(Dialect):
     name = "sqlite"
+    # describe() reflects primary/unique keys via the base's SQLAlchemy
+    # Inspector; it never populates approx_row_count or last_modified.
+    introspection_capabilities = frozenset({"keys"})
 
 
 class SqliteAdapter(SqlAlchemyAdapter):

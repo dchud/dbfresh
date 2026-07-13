@@ -1,5 +1,6 @@
 from dbfresh.adapters.base import Dialect
 from dbfresh.adapters.databricks import DatabricksDialect
+from dbfresh.adapters.sqlite import SqliteDialect
 from dbfresh.adapters.sqlserver import TSqlDialect
 
 
@@ -23,3 +24,10 @@ def test_base_introspection_capabilities_is_empty():
 def test_databricks_adds_describe_freshness_capabilities():
     caps = DatabricksDialect().freshness_sources
     assert caps == frozenset({"column", "describe_history", "describe_detail"})
+
+
+def test_sqlite_introspection_capabilities_is_keys_only():
+    # SqliteAdapter.describe() reflects primary/unique keys via the base's
+    # SQLAlchemy Inspector, but never populates approx_row_count or
+    # last_modified -- only "keys" is a genuine capability.
+    assert SqliteDialect().introspection_capabilities == frozenset({"keys"})

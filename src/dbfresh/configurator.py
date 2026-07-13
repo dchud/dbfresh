@@ -278,6 +278,28 @@ def propose_checks(
     return checks
 
 
+def key_introspection_note(dialect: Dialect, info: ObjectInfo) -> str | None:
+    """Explain a missing ``duplicate_count`` proposal opportunity, when due.
+
+    ``None`` when ``info.keys`` already has something to propose from, or
+    when the dialect's ``introspection_capabilities`` declares ``"keys"`` --
+    in that case an empty/``None`` ``info.keys`` means the object genuinely
+    has no primary key or unique constraint, not that the engine has
+    nothing to report. Otherwise the engine cannot introspect keys at all
+    (e.g. Databricks/Unity Catalog), which is worth surfacing so the
+    absence of a proposal doesn't read as "this object has no keys".
+    """
+    if info.keys:
+        return None
+    if "keys" in dialect.introspection_capabilities:
+        return None
+    return (
+        f"note: the {dialect.name!r} dialect cannot introspect key/uniqueness "
+        "metadata; add duplicate_count checks by hand if this object has a "
+        "natural key"
+    )
+
+
 @dataclass(frozen=True)
 class ConnectionProbe:
     """Result of a mandatory connection test for a new source."""
