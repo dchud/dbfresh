@@ -1,12 +1,16 @@
 # dbfresh
 
-External, value-level freshness and constraint checks for SQL Server and
-Databricks data sources, plus a built-in sqlite adapter for local testing and
-lightweight sources. `dbfresh` validates the data those pipelines produce --
-row-count ranges, aggregate bounds, freshness, null rates, uniqueness,
-arbitrary SQL assertions -- not whether the jobs ran. It runs from outside
-the systems it watches and reports through the CLI's exit codes plus a
-copy-pasteable digest.
+External, value-level freshness and constraint checks for the tables in your
+database. `dbfresh` validates the data your pipelines produce -- row-count
+ranges, aggregate bounds, freshness, null rates, uniqueness, arbitrary SQL
+assertions -- not whether the jobs ran. It runs from outside the systems it
+watches and reports through the CLI's exit codes plus a copy-pasteable digest.
+
+Everything above the adapter layer is engine-agnostic, so supporting a new
+database is a single adapter module. Adapters ship today for **SQL Server**,
+**Databricks** (Unity Catalog), and **SQLite** (for local testing and
+lightweight sources), with a **PostgreSQL** reference adapter that shows how
+little it takes to add another.
 
 **Full documentation: <https://dchud.github.io/dbfresh/>**
 
