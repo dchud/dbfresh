@@ -52,9 +52,11 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "hypothesis>=6.156.6",
+    "mypy>=1.19",
     "pytest>=9.1.1",
     "pytest-textual-snapshot>=1.0.0",
     "ruff>=0.15.21",
+    "types-pyyaml>=6.0.12",
 ]
 docs = [
     "mkdocs-material>=9.7.6",
@@ -66,3 +68,18 @@ select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.mypy]
+files = ["src/dbfresh"]
+python_version = "3.14"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Optional runtime dependency (the "databricks" extra): not installed in
+# the dev environment, so no stub or implementation is ever available
+# here. The import itself lives inside DatabricksAdapter.__init__, not at
+# module level, so the driver's absence never breaks a normal import.
+module = ["databricks.*"]
+ignore_missing_imports = true

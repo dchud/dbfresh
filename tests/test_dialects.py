@@ -16,6 +16,10 @@ def test_base_freshness_capability_is_column_only():
     assert Dialect().freshness_sources == frozenset({"column"})
 
 
+def test_base_introspection_capabilities_is_empty():
+    assert Dialect().introspection_capabilities == frozenset()
+
+
 def test_databricks_adds_describe_freshness_capabilities():
     caps = DatabricksDialect().freshness_sources
     assert caps == frozenset({"column", "describe_history", "describe_detail"})

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from dbfresh import __version__
+from dbfresh.adapters.base import Adapter
 
 if TYPE_CHECKING:
     from dbfresh.config import Config
@@ -100,7 +101,7 @@ def _resolve_read_context(config_path: Path):
 
 def _run_command(args: argparse.Namespace) -> int:
     from dbfresh.config import ConfigError, load_config
-    from dbfresh.engine import exit_code
+    from dbfresh.models import exit_code
     from dbfresh.report import (
         display_timezone,
         progress_reporter,
@@ -276,7 +277,7 @@ def _looks_like_secret_key(key: str) -> bool:
 
 def _select_source(
     config: Config | None,
-) -> tuple[str, Any | None, bool, tuple[str, dict] | None]:
+) -> tuple[str, Adapter | None, bool, tuple[str, dict] | None]:
     """Prompt for a source name; a new source is probed before anything else.
 
     Returns ``(source_name, adapter, aborted, new_source)``. ``adapter`` is
@@ -375,6 +376,9 @@ def _add_command(args: argparse.Namespace) -> int:
 
         proposed: list[dict] = []
         if info is not None:
+            # existence.info is only set when check_object_exists actually
+            # called adapter.describe(), which requires a non-None adapter.
+            assert adapter is not None
             timestamp_override = None
             timestamp = pick_timestamp_column(info.columns)
             if timestamp.needs_choice:

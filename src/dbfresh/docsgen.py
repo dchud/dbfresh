@@ -20,7 +20,7 @@ from dbfresh import registry
 from dbfresh.adapters.base import Category
 from dbfresh.cli import build_parser
 from dbfresh.configurator import category_offers
-from dbfresh.engine import Status, exit_code
+from dbfresh.models import Status, exit_code
 
 DEFAULT_OUTPUT_DIR = Path("docs/reference")
 

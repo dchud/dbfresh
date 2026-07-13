@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ _CHECK_KEYS = frozenset(
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def interpolate_env(value: Any, env: dict[str, str] | None = None) -> Any:
+def interpolate_env(value: Any, env: Mapping[str, str] | None = None) -> Any:
     """Replace ``${VAR}`` tokens in strings from ``env`` (default the process env).
 
     A referenced variable that is not set is a hard error.
@@ -310,6 +311,7 @@ def _validate_metric_fields(check: Check, label: str) -> list[ValueError]:
     metric name -- an unknown metric is reported on its own, without also
     complaining about a discriminating field it can't even look up.
     """
+    assert check.metric is not None
     errors: list[ValueError] = []
     required = _METRIC_REQUIRED.get(check.metric)
     # freshness's "column" requirement is conditional on freshness_source,
@@ -451,7 +453,9 @@ def _validate_sources(sources: dict[str, SourceConfig]) -> list[ValueError]:
             cls = adapter_class_for(source.type)
         except ValueError:
             continue
-        valid_params = set(inspect.signature(cls.__init__).parameters) - {"self"}
+        # inspect.signature(cls), not cls.__init__: the constructor
+        # signature already excludes ``self``.
+        valid_params = set(inspect.signature(cls).parameters)
         unknown = sorted(set(source.params) - valid_params)
         if unknown:
             errors.append(

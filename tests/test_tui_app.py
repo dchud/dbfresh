@@ -131,6 +131,9 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
             assert "unknown" in str(row_count_leaf.label)
 
             await pilot.press("r")
+            # The Run action starts the check run on a background worker;
+            # wait for it to finish before asserting on its results.
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             tree = app.query_one("#dashboard-tree")
@@ -307,6 +310,11 @@ def test_report_screen_uses_calendar_timezone(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("r")
+            # The Run action starts the check run on a background worker;
+            # wait for it to finish rather than a single pause, so the
+            # report below always reflects a completed run instead of
+            # racing it.
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.press("p")
             await pilot.pause()
@@ -330,6 +338,11 @@ def test_report_action_shows_last_in_session_run_digest(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             await pilot.press("r")
+            # The Run action starts the check run on a background worker;
+            # wait for it to finish rather than a single pause, so the
+            # report below always reflects a completed run instead of
+            # racing it.
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.press("p")
             await pilot.pause()

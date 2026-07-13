@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
+from dbfresh.adapters.base import Adapter, Category, Column, Dialect, ObjectInfo
 
 _ROW_COUNT_MIN_RATIO = 0.5
 _ROW_COUNT_MAX_RATIO = 2.0
@@ -347,7 +347,7 @@ class ExistenceCheck:
     error: str | None = None
 
 
-def check_object_exists(adapter: Any | None, object_name: str) -> ExistenceCheck:
+def check_object_exists(adapter: Adapter | None, object_name: str) -> ExistenceCheck:
     """Existence-check ``object_name`` on ``adapter`` via ``describe()``.
 
     ``adapter`` is ``None`` when an already-configured source was found
@@ -485,7 +485,12 @@ def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> 
     entry = {"type": type_, **params}
 
     if not config_path.exists() or not config_path.read_text().strip():
-        raw = {"sources": {name: entry}, "checks": []}
+        # Annotated (not left to infer from this literal): `raw` is
+        # reassigned below from `yaml.safe_load`, a differently-shaped
+        # dict each time a config is re-read, so it needs one wide,
+        # explicit type across the whole function rather than one pinned
+        # to this branch's literal shape.
+        raw: dict[str, Any] = {"sources": {name: entry}, "checks": []}
         config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
         return
 

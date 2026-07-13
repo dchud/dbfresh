@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import Engine, text
 from sqlalchemy import inspect as sqla_inspect
@@ -80,6 +80,10 @@ class Dialect:
 
     name: str = "ansi"
     freshness_sources: frozenset[str] = frozenset({"column"})
+    # What describe() can populate for this engine (e.g. "keys", "stats");
+    # the base declares none so a bare Dialect() never raises when a caller
+    # inspects it. Every shipped engine dialect overrides this.
+    introspection_capabilities: frozenset[str] = frozenset()
 
     def limit(self, sql: str, n: int) -> str:
         """Cap a query's returned rows to ``n``."""
@@ -88,6 +92,46 @@ class Dialect:
     def float_ratio(self, numerator: str, denominator: str) -> str:
         """Null-safe float division (portable ``* 1.0`` form)."""
         return f"{numerator} * 1.0 / NULLIF({denominator}, 0)"
+
+
+class Adapter(Protocol):
+    """The contract every source adapter implements: ``scalar``, ``rows``,
+    ``describe``, ``close``, plus the ``dialect`` it compiles SQL for.
+
+    Structural, not nominal: :class:`SqlAlchemyAdapter` subclasses and
+    :class:`~dbfresh.adapters.databricks.DatabricksAdapter` (a native adapter
+    with no shared base class) both satisfy it without inheriting from it.
+    A Databricks-only capability like ``describe_history_last_modified`` is
+    deliberately not part of this contract -- see
+    :class:`HistoryAwareAdapter`.
+    """
+
+    dialect: Dialect
+
+    def scalar(self, sql: str) -> Any: ...
+
+    def rows(self, sql: str) -> list[dict[str, Any]]: ...
+
+    def describe(self, obj: str) -> ObjectInfo: ...
+
+    def close(self) -> None: ...
+
+
+class HistoryAwareAdapter(Protocol):
+    """Extension of :class:`Adapter` for engines with a DESCRIBE HISTORY-style
+    freshness source -- currently Databricks only.
+
+    Not merged into :class:`Adapter`: forcing every adapter to define
+    ``describe_history_last_modified`` would mean stubbing it out on engines
+    that have no such concept. The engine only reaches for it after
+    ``validate_freshness_source`` has already confirmed the active dialect
+    declares ``describe_history`` as a capability, so by the time it's
+    called the adapter is guaranteed (at runtime) to provide it; the call
+    site narrows via ``typing.cast`` rather than carrying the method on
+    every adapter.
+    """
+
+    def describe_history_last_modified(self, obj: str) -> datetime | None: ...
 
 
 class SqlAlchemyAdapter:

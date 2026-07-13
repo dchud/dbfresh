@@ -20,7 +20,7 @@ from rich.progress import (
 )
 
 from dbfresh.calendar import BusinessCalendar
-from dbfresh.engine import Result, RunResult, Status, split_value
+from dbfresh.models import Result, RunResult, Status, split_value
 
 if TYPE_CHECKING:
     from typing import TextIO

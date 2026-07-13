@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from dbfresh.adapters.base import Adapter, HistoryAwareAdapter
 from dbfresh.adapters.databricks import validate_freshness_source
 from dbfresh.calendar import BusinessCalendar, weekday_key
 from dbfresh.checks import (
@@ -20,47 +19,14 @@ from dbfresh.checks import (
     diff_fingerprints,
     fingerprint_columns,
 )
-
-
-class Status(StrEnum):
-    OK = "OK"
-    WARN = "WARN"
-    FAIL = "FAIL"
-    ERROR = "ERROR"
-    SKIPPED = "SKIPPED"
-
-
-@dataclass
-class Result:
-    object: str
-    metric: str | None
-    status: Status
-    source: str = ""
-    value: Any = None
-    expected: str | None = None
-    error: str | None = None
-    label: str | None = None
-    samples: list | None = None
-    check_id: str | None = None
-    diff: list[str] | None = None
-    tier: str = "table"
-
-
-def split_value(value: Any) -> tuple[float | None, str | None]:
-    """Numeric scalars go in ``value``; everything else in ``value_text``.
-
-    Shared by the store (persisted columns) and the JSON report (the
-    ``value`` / ``value_text`` pair in the stable contract) so a schema
-    fingerprint always lands in ``value_text`` and a numeric observation
-    always lands in ``value``, in both places, the same way.
-    """
-    if value is None:
-        return None, None
-    if isinstance(value, bool):
-        return None, str(value)
-    if isinstance(value, (int, float)):
-        return float(value), None
-    return None, str(value)
+from dbfresh.models import (
+    ObservationReader,
+    Result,
+    RunResult,
+    Status,
+    worst_status,
+)
+from dbfresh.models import exit_code as exit_code
 
 
 def _result(check: Check, status: Status, **fields: Any) -> Result:
@@ -97,10 +63,10 @@ def _verdict(check: Check, passed: bool) -> Status:
 
 def evaluate_check(
     check: Check,
-    adapter: Any,
+    adapter: Adapter,
     now: datetime | None = None,
     calendar: BusinessCalendar | None = None,
-    store: Any | None = None,
+    store: ObservationReader | None = None,
 ) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
@@ -156,10 +122,10 @@ def _should_skip(
 
 def _evaluate_check(
     check: Check,
-    adapter: Any,
+    adapter: Adapter,
     now: datetime | None = None,
     calendar: BusinessCalendar | None = None,
-    store: Any | None = None,
+    store: ObservationReader | None = None,
 ) -> Result:
     now = now or datetime.now(UTC)
     if _should_skip(check, calendar, now):
@@ -209,7 +175,7 @@ def _assertion_label(check: Check) -> str | None:
     return None
 
 
-def _evaluate_assertion(check: Check, adapter: Any) -> Result:
+def _evaluate_assertion(check: Check, adapter: Adapter) -> Result:
     """Run an assert predicate; any row for which it is false is a violation."""
     violation = f"FROM {check.object} WHERE NOT ({check.assert_})"
     label = _assertion_label(check)
@@ -226,7 +192,7 @@ def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     )
 
 
-def _evaluate_assert_sql(check: Check, adapter: Any) -> Result:
+def _evaluate_assert_sql(check: Check, adapter: Adapter) -> Result:
     """Run a raw, author-supplied violation-selecting query directly.
 
     Unlike ``assert:`` (a predicate compiled into a ``COUNT(*)`` query plus
@@ -235,6 +201,7 @@ def _evaluate_assert_sql(check: Check, adapter: Any) -> Result:
     once, capped via the dialect's row-limiting form, and the row
     count from that single capped fetch is the persisted violation count.
     """
+    assert check.assert_sql is not None  # only called from that branch
     label = _assertion_label(check)
     try:
         rows = adapter.rows(adapter.dialect.limit(check.assert_sql, 20))
@@ -249,7 +216,7 @@ def _evaluate_assert_sql(check: Check, adapter: Any) -> Result:
     )
 
 
-def _freshness_raw(check: Check, adapter: Any) -> Any:
+def _freshness_raw(check: Check, adapter: Adapter) -> Any:
     """The observed freshness timestamp, dispatched on ``check.freshness_source``.
 
     ``column`` runs the usual ``MAX(column)`` query. The two DESCRIBE origins
@@ -268,12 +235,18 @@ def _freshness_raw(check: Check, adapter: Any) -> Any:
     validate_freshness_source(check.freshness_source, adapter.dialect, info.is_view)
     if check.freshness_source == "describe_detail":
         return info.last_modified
-    return adapter.describe_history_last_modified(check.object)
+    # describe_history is a Databricks-only capability, not part of the
+    # base Adapter contract; validate_freshness_source above has already
+    # confirmed the dialect declares it, so only an adapter implementing
+    # HistoryAwareAdapter can reach this line at runtime.
+    return cast(HistoryAwareAdapter, adapter).describe_history_last_modified(
+        check.object
+    )
 
 
 def _evaluate_freshness(
     check: Check,
-    adapter: Any,
+    adapter: Adapter,
     now: datetime,
     expect: Expectation | None,
     calendar: BusinessCalendar | None,
@@ -303,9 +276,9 @@ def _evaluate_freshness(
 
 def _evaluate_schema(
     check: Check,
-    adapter: Any,
+    adapter: Adapter,
     expect: Expectation | None,
-    store: Any | None,
+    store: ObservationReader | None,
 ) -> Result:
     """Fingerprint the object's columns and evaluate unchanged/equals.
 
@@ -354,11 +327,11 @@ _ON_MISSING_STATUS = {
 
 def _evaluate_vs_previous(
     check: Check,
-    adapter: Any,
+    adapter: Adapter,
     now: datetime,
     expect: Expectation,
     calendar: BusinessCalendar | None,
-    store: Any | None,
+    store: ObservationReader | None,
 ) -> Result:
     """Compare the current scalar to a prior observation.
 
@@ -399,7 +372,7 @@ def _read_vs_previous_baseline(
     check: Check,
     now: datetime,
     calendar: BusinessCalendar | None,
-    store: Any | None,
+    store: ObservationReader | None,
     spec: dict,
 ) -> float | None:
     """The baseline scalar for ``vs_previous``, or ``None`` if unavailable."""
@@ -449,36 +422,6 @@ def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
     return value.astimezone(UTC)
 
 
-_SEVERITY = {
-    Status.OK: 0,
-    Status.SKIPPED: 0,
-    Status.WARN: 1,
-    Status.FAIL: 2,
-    Status.ERROR: 3,
-}
-_RANK_STATUS = {0: Status.OK, 1: Status.WARN, 2: Status.FAIL, 3: Status.ERROR}
-
-
-def worst_status(statuses: Iterable[Status]) -> Status:
-    """The most severe status; OK when empty. ERROR (3) outranks FAIL (2)."""
-    rank = max((_SEVERITY[s] for s in statuses), default=0)
-    return _RANK_STATUS[rank]
-
-
-def exit_code(status: Status) -> int:
-    """Map a status to a process exit code: OK/SKIPPED 0, WARN 1, FAIL 2, ERROR 3."""
-    return _SEVERITY[status]
-
-
-@dataclass
-class RunResult:
-    results: list[Result]
-    status: Status
-    run_id: int | None = None
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-
-
 def _connect_error_result(check: Check, exc: BaseException) -> Result:
     """An ERROR Result for a check whose source's adapter failed to build.
 
@@ -491,11 +434,11 @@ def _connect_error_result(check: Check, exc: BaseException) -> Result:
 
 
 def run_checks(
-    adapters: dict[str, Any],
+    adapters: dict[str, Adapter],
     checks: list[Check],
     calendar: BusinessCalendar | None = None,
     now: datetime | None = None,
-    store: Any | None = None,
+    store: ObservationReader | None = None,
     failed_sources: dict[str, BaseException] | None = None,
     on_result: Callable[[Result], None] | None = None,
 ) -> RunResult:

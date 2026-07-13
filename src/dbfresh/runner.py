@@ -10,11 +10,12 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 
+from dbfresh.adapters.base import Adapter
 from dbfresh.checks import Check
 from dbfresh.config import Config
-from dbfresh.engine import Result, RunResult, run_checks
+from dbfresh.engine import run_checks
+from dbfresh.models import Result, RunResult
 from dbfresh.store import Store, capture_git_sha
 
 
@@ -71,7 +72,7 @@ def run_and_persist(
     checks = filter_checks(config.checks, only)
 
     referenced = {check.source for check in checks}
-    adapters: dict[str, Any] = {}
+    adapters: dict[str, Adapter] = {}
     failed_sources: dict[str, BaseException] = {}
     for name in referenced:
         source = config.sources[name]
@@ -108,7 +109,7 @@ def run_and_persist(
                 adapter.close()
 
     finished_at = datetime.now(UTC)
-    if store is not None:
+    if store is not None and run_id is not None:
         store.record_observations(
             run_id, run.results, observed_at=now, calendar=config.calendar
         )

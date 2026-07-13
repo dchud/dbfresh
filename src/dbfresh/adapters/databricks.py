@@ -122,7 +122,11 @@ class DatabricksAdapter:
         self._conn = dbsql.connect(
             server_hostname=host, http_path=http_path, access_token=token
         )
-        self.dialect = DatabricksDialect()
+        # Declared as the base Dialect, not the inferred DatabricksDialect:
+        # the Adapter protocol's `dialect` attribute is invariant, so a
+        # narrower inferred type here would make DatabricksAdapter fail
+        # structural matching against Adapter.
+        self.dialect: Dialect = DatabricksDialect()
 
     def scalar(self, sql: str) -> Any:
         """Run a query expected to return a single value."""

@@ -11,7 +11,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Header, Static
 
 from dbfresh.checks import Check, check_id
-from dbfresh.engine import RunResult
+from dbfresh.models import RunResult
 from dbfresh.report import render_digest, render_history
 from dbfresh.store import Store
 from dbfresh.tui.dashboard import check_label
