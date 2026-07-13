@@ -34,7 +34,7 @@ def test_category_offers_other():
 
 def test_offered_column_checks_keys_off_category_not_native_type_name():
     # A column with a made-up native type string still offers numeric checks
-    # -- offers key off `category` only, never the native type name (§11.2).
+    # -- offers key off `category` only, never the native type name.
     columns = [
         Column(
             name="weird", type="MADE_UP_TYPE", nullable=True, category=Category.NUMERIC

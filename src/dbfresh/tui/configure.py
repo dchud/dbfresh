@@ -1,6 +1,6 @@
 """Configure screen: introspect a source+object, propose, append YAML.
 
-Reuses the front-end-agnostic ``configurator`` module (spec §11) exactly as
+Reuses the front-end-agnostic ``configurator`` module exactly as
 `dbfresh add` does -- the same introspection, proposal, and YAML-emission
 functions; only the prompt/rendering layer differs. Never writes to the
 observation store.

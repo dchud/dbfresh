@@ -105,7 +105,7 @@ _ON_MISSING_MODES = frozenset({"pass", "warn", "skip"})
 
 
 def _parse_vs_previous(operand: Any) -> dict:
-    """Validate and normalize a ``vs_previous`` operand (§8.3).
+    """Validate and normalize a ``vs_previous`` operand.
 
     Requires ``baseline`` (``previous`` | ``last_same_weekday``) and at
     least one guard (a ratio pair and/or a delta pair); ``on_missing``
@@ -149,7 +149,7 @@ def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
 
     Exactly one operator is allowed per check; ``{min, max}`` together is a
     validation error (use ``between``). When ``metric`` is given, operator
-    compatibility is enforced (§6.3): ``unchanged`` is valid only for a
+    compatibility is enforced: ``unchanged`` is valid only for a
     ``schema`` check, a ``schema`` check accepts only ``unchanged`` or
     ``equals``/``eq``, and ``vs_previous`` is rejected on ``freshness`` and
     ``schema`` (numeric metrics only).
@@ -218,7 +218,7 @@ def check_id(check: Check) -> str:
 
     The derived form hashes the identity tuple (source, object, metric, and
     the discriminating column/key, or the normalized assertion text) — never
-    the expectation, so tuning a threshold preserves history (§8.2).
+    the expectation, so tuning a threshold preserves history.
     """
     if check.id:
         return check.id
@@ -263,7 +263,7 @@ def compile_metric_sql(check: Check, dialect: Any) -> str:
 
 
 def fingerprint_columns(columns: Iterable[Column]) -> str:
-    """A stable serialization of a column set for the ``schema`` metric (§6.2).
+    """A stable serialization of a column set for the ``schema`` metric.
 
     Order-insensitive over ``(name, data_type)`` pairs; column order and
     nullability are excluded. Sorted, so identical column sets always
@@ -282,7 +282,7 @@ def _parse_fingerprint(fingerprint: str) -> dict[str, str]:
 
 
 def diff_fingerprints(current: str, prior: str) -> list[str]:
-    """Added / removed / retyped columns between two fingerprints (§6.2).
+    """Added / removed / retyped columns between two fingerprints.
 
     Each line is one of ``+ name (type)``, ``- name (type)``, or
     ``~ name (old_type -> new_type)``. Sorted by column name within each

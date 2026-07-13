@@ -32,7 +32,7 @@ Selecting a check's leaf node in the dashboard tree opens that check's
 ## Configure
 
 The Configure screen is the TUI surface of the [configurator](
-authoring-checks.md) (§11) -- literally the same `configurator` module
+authoring-checks.md) -- literally the same `configurator` module
 `dbfresh add` uses, so proposals, YAML shape, and safety behavior are
 identical; only the prompts differ (widgets instead of stdin prompts).
 Enter a source and object name, press **Propose** to introspect the object

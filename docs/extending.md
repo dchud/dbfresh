@@ -68,8 +68,7 @@ target engine (`COUNT(*)`, `SUM(CASE WHEN ... THEN 1 ELSE 0 END)`,
 
 ## Worked example: the reference PostgreSQL adapter
 
-`src/dbfresh/adapters/postgres.py` is the actual sketch from §5.4, built
-end to end:
+`src/dbfresh/adapters/postgres.py` is a worked example, built end to end:
 
 1. **The adapter.** `PostgresAdapter` subclasses `SqlAlchemyAdapter` with a
    `postgresql+psycopg://user:pass@host:port/db` engine URL built via

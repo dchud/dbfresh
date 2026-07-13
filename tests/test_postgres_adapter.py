@@ -1,8 +1,8 @@
-"""Contract-level tests for the reference PostgreSQL adapter (§16 E10).
+"""Contract-level tests for the reference PostgreSQL adapter.
 
 No live PostgreSQL is required: the dialect and category-mapping tests are
 pure. A live round-trip sits behind ``DBFRESH_PG_URL`` and is skipped unless
-that env var is set, per the epic's "no live PostgreSQL required" scope.
+that env var is set.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ PG_URL = os.environ.get("DBFRESH_PG_URL")
 
 
 def test_module_imports_without_psycopg_installed():
-    # psycopg is an optional extra, not a core dependency (§16 E10); this test
+    # psycopg is an optional extra, not a core dependency; this test
     # environment doesn't install it, so a bare import proves the module has
     # no module-level `import psycopg`. Constructing an adapter still needs
     # the driver -- see test_constructing_adapter_needs_psycopg below.

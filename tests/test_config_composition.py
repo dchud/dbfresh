@@ -1,4 +1,4 @@
-"""Config composition: splitting checks across included files (§12.2, §12.3)."""
+"""Config composition: splitting checks across included files."""
 
 import os
 

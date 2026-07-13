@@ -123,7 +123,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
     """Build one Check, merging ``defaults:`` fields the check itself omits.
 
     Merged fields are ``severity``, ``calendar``, ``where``, ``allow_empty``,
-    and ``skip_off_schedule`` (§12.1); a per-check value always overrides the
+    and ``skip_off_schedule``; a per-check value always overrides the
     default, including an explicit falsy value such as ``allow_empty: false``.
     """
     metric = raw.get("metric")
@@ -158,10 +158,10 @@ def _build_check(raw: dict, defaults: dict) -> Check:
 
 
 def _resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
-    """Resolve root-only ``include:`` globs (§12.2) to matched files.
+    """Resolve root-only ``include:`` globs to matched files.
 
     Each glob is relative to ``config_dir`` — the root config's directory,
-    never the process CWD (§12.3). A glob matching no files is a validation
+    never the process CWD. A glob matching no files is a validation
     error (a mistyped include must not silently drop checks). Matched files
     across all globs are deduplicated and returned in lexicographic path
     order; the load order itself carries no semantics.
@@ -189,7 +189,7 @@ def _load_included_checks(raw: Any, path: Path) -> list[dict]:
     blocks, or a mapping with a single ``checks:`` key. ``include:``,
     ``sources:``, ``calendar:``, ``store:``, and ``defaults:`` may appear
     only in the root config, so any other top-level key here is a
-    validation error (§12.2).
+    validation error.
     """
     if raw is None:
         return []
@@ -217,7 +217,7 @@ def _read_included_file(path: Path, env: dict[str, str] | None) -> list[dict]:
 def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     """Parse a YAML config, interpolate secrets, and validate references.
 
-    Supports composition (§12.2): the root config's ``include:`` list of
+    Supports composition: the root config's ``include:`` list of
     path globs, resolved relative to the root config's directory, whose
     matched files each contribute a ``checks:`` list merged with the root
     file's own. The composed check list is validated as one unit, so a

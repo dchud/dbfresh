@@ -1,6 +1,6 @@
 """defaults: merging beyond skip_off_schedule (severity, calendar, where,
 
-allow_empty) — a per-check value always overrides the default (§12.1).
+allow_empty) — a per-check value always overrides the default.
 """
 
 from dbfresh.config import load_config

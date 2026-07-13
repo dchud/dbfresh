@@ -1,4 +1,4 @@
-"""The interactive Textual TUI: ``dbfresh ui`` (spec §10.2)."""
+"""The interactive Textual TUI: ``dbfresh ui``."""
 
 from __future__ import annotations
 

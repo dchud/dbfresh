@@ -50,7 +50,7 @@ checks:
 ```
 
 `${DEMO_DB_PATH}` is a secret/parameter interpolated from the environment
-(§4, §12.4) -- the same mechanism used for `${MSSQL_URL}` or
+-- the same mechanism used for `${MSSQL_URL}` or
 `${DATABRICKS_TOKEN}` against a real warehouse. Nothing connection-specific
 is hard-coded into the committed config.
 

@@ -1,4 +1,4 @@
-"""Report and History screens pushed from the Home dashboard (spec §10.2)."""
+"""Report and History screens pushed from the Home dashboard."""
 
 from __future__ import annotations
 

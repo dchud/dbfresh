@@ -1,7 +1,7 @@
 """PostgreSQL adapter — reference engine validating adapter extensibility.
 
-PostgreSQL is not a supported v1 source (§1); this module exists to prove the
-§5.4 claim that adding a new source engine is one module plus one factory
+PostgreSQL is not a supported v1 source; this module exists to prove the
+claim that adding a new source engine is one module plus one factory
 registration. ``scalar``, ``rows``, and the columns+keys of ``describe`` are
 inherited from the SQLAlchemy-backed base's reflection; the only PostgreSQL-
 specific pieces are a category-mapping refinement for native type names the
@@ -42,7 +42,7 @@ def refine_category(type_name: str, base_category: Category) -> Category:
 
 
 class PostgresDialect(Dialect):
-    """Reference PostgreSQL dialect (§5.4): `LIMIT` row cap is inherited."""
+    """Reference PostgreSQL dialect: `LIMIT` row cap is inherited."""
 
     name = "postgres"
     freshness_sources = frozenset({"column"})
@@ -52,8 +52,8 @@ class PostgresDialect(Dialect):
 class PostgresAdapter(SqlAlchemyAdapter):
     """Reference adapter over ``postgresql+psycopg://user:pass@host:port/db``.
 
-    Not a supported v1 engine (§1) — this validates that a new source engine
-    is cheap and additive, per the §5.4 worked sketch.
+    Not a supported v1 engine — this validates that a new source engine
+    is cheap and additive.
     """
 
     def __init__(

@@ -106,7 +106,7 @@ mappings are implemented and tested, ahead of their live connection
 adapters. **sqlite** is a fully working adapter today: it's dbfresh's own
 primary test engine, and legitimate to point at a real file-based database
 too (see the [Quickstart](quickstart.md)). **PostgreSQL** ships only as a
-reference adapter proving the [extending](extending.md) contract (§5.4) --
+reference adapter proving the [extending](extending.md) contract --
 it is explicitly not a supported v1 target, even though it is registered
 and functional.
 
@@ -159,7 +159,7 @@ that parse a config do not load `.env` automatically (see
 
 ## `check_id` and identity
 
-Every check has a stable identity (§8.2), used as its observation-history
+Every check has a stable identity, used as its observation-history
 key: an explicit `id:` if given, else a hash of `source`, `object`,
 `metric`, and whichever field discriminates that metric (`column`, `key`,
 or nothing for `schema`/`row_count`), or the normalized assertion text for

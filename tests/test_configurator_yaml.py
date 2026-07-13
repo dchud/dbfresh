@@ -1,4 +1,4 @@
-"""YAML emission (§11, §12.1): building blocks, target-file selection for
+"""YAML emission: building blocks, target-file selection for
 `include:`-composed configs, appending, and the re-parse/run round trip."""
 
 import yaml

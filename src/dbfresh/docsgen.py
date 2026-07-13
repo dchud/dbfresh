@@ -1,8 +1,8 @@
-"""Generate registry-derived reference pages for the docs site (§14).
+"""Generate registry-derived reference pages for the docs site.
 
 Renders Markdown from `registry.py` (metrics, operators),
 `configurator.category_offers` (the check x data-type applicability
-matrix, §11.2), and `cli.build_parser()` (commands, flags, exit codes) --
+matrix), and `cli.build_parser()` (commands, flags, exit codes) --
 never from hand-maintained prose -- so these reference pages cannot drift
 from the code they describe.
 
@@ -41,7 +41,7 @@ _EXIT_CODE_MEANING = {
 
 
 def render_metrics() -> str:
-    """The metric reference table (§6.2), one row per registered metric."""
+    """The metric reference table, one row per registered metric."""
     lines = [_GENERATED_BANNER, "# Metric reference", ""]
     lines.append("| metric | tier | required | description |")
     lines.append("| --- | --- | --- | --- |")
@@ -54,7 +54,7 @@ def render_metrics() -> str:
 
 
 def render_operators() -> str:
-    """The expectation-operator reference table (§6.3)."""
+    """The expectation-operator reference table."""
     lines = [_GENERATED_BANNER, "# Expectation operator reference", ""]
     lines.append("| operator | meaning |")
     lines.append("| --- | --- |")
@@ -75,12 +75,12 @@ def _matrix_columns() -> list[str]:
 
 
 def render_matrix() -> str:
-    """The check x data-type applicability matrix (§11.2), from category_offers."""
+    """The check x data-type applicability matrix, from category_offers."""
     columns = _matrix_columns()
     lines = [_GENERATED_BANNER, "# Check x data-type applicability matrix", ""]
     lines.append(
-        "Column-level checks offered per canonical column category "
-        "(§5.2). Table-level checks -- `row_count`, `schema`, and "
+        "Column-level checks offered per canonical column category. "
+        "Table-level checks -- `row_count`, `schema`, and "
         "assertions -- apply regardless of column category and are not "
         "shown here."
     )
@@ -129,7 +129,7 @@ def _flag_rows(subparser: argparse.ArgumentParser) -> list[str]:
 
 
 def render_cli() -> str:
-    """The CLI reference (§9): every command, its flags, and exit codes."""
+    """The CLI reference: every command, its flags, and exit codes."""
     parser = build_parser()
     sub_action = _subparsers_action(parser)
     command_help = _command_help(sub_action)
@@ -151,7 +151,7 @@ def render_cli() -> str:
 
     lines.append("## Exit codes")
     lines.append("")
-    lines.append("Worst status across all checks (§9).")
+    lines.append("Worst status across all checks.")
     lines.append("")
     lines.append("| code | status | meaning |")
     lines.append("| --- | --- | --- |")

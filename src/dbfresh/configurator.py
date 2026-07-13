@@ -1,9 +1,9 @@
-"""Front-end-agnostic configurator: introspect, propose, emit YAML (§11).
+"""Front-end-agnostic configurator: introspect, propose, emit YAML.
 
 All proposal, validation, YAML-serialization, connection-test, and
 existence-check logic lives here as plain functions and dataclasses, so both
 `dbfresh add` (a thin interactive shell) and the future TUI Configure screen
-(E8) share one tested surface. This module never writes to the observation
+share one tested surface. This module never writes to the observation
 store; it only reads catalog metadata via an adapter's ``describe()`` and
 emits YAML for the version-controlled config.
 """
@@ -30,7 +30,7 @@ _CONVENTIONAL_TIMESTAMP_SUFFIXES = ("_at", "_ts", "_date")
 
 @dataclass(frozen=True)
 class TimestampChoice:
-    """Result of the freshness timestamp-column heuristic (§11.1).
+    """Result of the freshness timestamp-column heuristic.
 
     ``column`` is set when a single unambiguous candidate was found.
     ``needs_choice`` is set instead when several temporal columns match and
@@ -53,7 +53,7 @@ def pick_timestamp_column(columns: list[Column]) -> TimestampChoice:
 
     Prefers conventional names; if exactly one temporal column exists at
     all, uses it even when unconventionally named; otherwise several
-    candidates match and the caller must ask the user to pick (§11.1).
+    candidates match and the caller must ask the user to pick.
     """
     temporal = [c for c in columns if c.category == Category.TEMPORAL]
     if not temporal:
@@ -79,7 +79,7 @@ _CATEGORY_OFFERS: dict[Category, list[str]] = {
 
 
 def category_offers(category: Category) -> list[str]:
-    """Column-level checks offered for a category (§11.2).
+    """Column-level checks offered for a category.
 
     The single source of truth for the docs applicability matrix and for
     the wizard's per-column offer listing; keys off ``category`` only,
@@ -92,7 +92,7 @@ def offered_column_checks(columns: list[Column]) -> list[dict]:
     """Per-column offer entries: category-appropriate checks, not preselected.
 
     ``null_rate`` is omitted for ``NOT NULL`` columns -- the engine already
-    enforces them (§11.1).
+    enforces them.
     """
     offers = []
     for column in columns:
@@ -117,7 +117,7 @@ def build_check(
     expect: dict,
     **extra: Any,
 ) -> dict:
-    """Assemble one YAML-ready check block (§12.1 shape).
+    """Assemble one YAML-ready check block.
 
     The single builder used both by :func:`propose_checks` and by a wizard
     turning an offered column check (or a fully manual entry) into a block,
@@ -145,7 +145,7 @@ def propose_checks(
     has_calendar: bool = False,
     is_view: bool = False,
 ) -> list[dict]:
-    """The metadata-driven proposal bundle for a named source + object (§11.1).
+    """The metadata-driven proposal bundle for a named source + object.
 
     Always proposes ``schema`` (unchanged) and a ``row_count`` volume-stability
     check. Proposes ``freshness`` on the auto-detected timestamp column
@@ -153,7 +153,7 @@ def propose_checks(
     Databricks-capable dialect on a table (not a view) falls back to
     ``describe_history``, otherwise no freshness check is proposed. Proposes
     one ``duplicate_count`` check per single-column key in ``info.keys``
-    (composite keys are out of scope, §6.2).
+    (composite keys are out of scope).
     """
     checks: list[dict] = [
         build_check(source, obj, "schema", expect={"unchanged": True}),
@@ -211,7 +211,7 @@ def propose_checks(
 
 @dataclass(frozen=True)
 class ConnectionProbe:
-    """Result of a mandatory connection test for a new source (§11.3)."""
+    """Result of a mandatory connection test for a new source."""
 
     ok: bool
     error: str | None = None
@@ -220,7 +220,7 @@ class ConnectionProbe:
 def probe_connection(type_: str, params: dict) -> ConnectionProbe:
     """Build the adapter and run a trivial query to confirm it connects.
 
-    Mandatory before writing a block for a brand-new source (§11.3); never
+    Mandatory before writing a block for a brand-new source; never
     raises -- any failure (unknown type, bad credentials, unreachable host)
     comes back as ``ConnectionProbe(ok=False, error=...)``.
     """
@@ -241,7 +241,7 @@ def probe_connection(type_: str, params: dict) -> ConnectionProbe:
 
 @dataclass(frozen=True)
 class ExistenceCheck:
-    """Result of existence-checking a named object via ``describe()`` (§11.3).
+    """Result of existence-checking a named object via ``describe()``.
 
     ``verified`` is ``False`` only when the source itself could not be
     reached (the caller passes ``adapter=None``), in which case ``exists``
@@ -273,7 +273,7 @@ def check_object_exists(adapter: Any | None, object_name: str) -> ExistenceCheck
 
 
 def target_files(config_path: str | Path) -> list[Path]:
-    """Files eligible to receive new checks (§11.3, §12.2).
+    """Files eligible to receive new checks.
 
     When the root config declares ``include:``, the wizard asks which
     included checks file receives the new block: this returns the resolved
@@ -293,7 +293,7 @@ def target_files(config_path: str | Path) -> list[Path]:
 
 
 def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> None:
-    """Write a new source definition into the root config (§12.1, §12.2).
+    """Write a new source definition into the root config.
 
     ``sources:`` is declared only in the root config, never an included
     checks file, so this always targets ``config_path`` directly.

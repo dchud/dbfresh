@@ -1,7 +1,7 @@
 # Authoring checks
 
 `configurator.py` is one front-end-agnostic module with two surfaces:
-`dbfresh add` (a CLI wizard) and the TUI's Configure screen (§10.2, §11) --
+`dbfresh add` (a CLI wizard) and the TUI's Configure screen --
 only the prompt/rendering layer differs between them. It **emits YAML**
 into the version-controlled config; it never writes a check into the
 observation store. The design goal is minimal required input: name a source
@@ -43,7 +43,7 @@ named object's own metadata.
 ## The timestamp-column heuristic
 
 `pick_timestamp_column()` selects the `freshness` column among a table's
-`temporal`-category columns (§5.2):
+`temporal`-category columns:
 
 1. If any column name is conventional (`modified_at`, `updated_at`,
    `loaded_at`, `load_ts`, `created_at`, or ends in `_at` / `_ts` /
@@ -77,7 +77,7 @@ offering the check would be redundant.
   unverified rather than reporting the object as missing (it genuinely
   doesn't know). Manual entry is also the fallback whenever metadata is
   unavailable for any other reason.
-- When the config uses `include:` (§12.2), the wizard asks which file
+- When the config uses `include:`, the wizard asks which file
   receives the new block (`target_files()` lists the root config plus every
   resolved included file, in load order); without `include:`, it always
   appends to the root config.

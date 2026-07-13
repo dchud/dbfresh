@@ -230,11 +230,11 @@ def _select_source(config, config_path):
 
     Returns ``(source_name, adapter, aborted, new_source)``. ``adapter`` is
     ``None`` when the source could not be reached, degrading the rest of
-    the wizard to manual entry with unverified existence (§11.3); ``aborted``
+    the wizard to manual entry with unverified existence; ``aborted``
     is ``True`` only when the user declined to add an unreachable new
     source. ``new_source`` is ``(type_, params)`` when the user just defined
     a brand-new source -- written to the config only once the rest of the
-    wizard confirms, never before the connection test (§11.3).
+    wizard confirms, never before the connection test.
     """
     from dbfresh.adapters.factory import create_adapter
     from dbfresh.configurator import probe_connection

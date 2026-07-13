@@ -13,7 +13,7 @@ job's own exit code or logging.
 
 ## The two primitives
 
-Every check compiles down to one of exactly two primitives (§6.1):
+Every check compiles down to one of exactly two primitives:
 
 - **metric + expectation.** A metric compiles to a single scalar-returning
   query (`row_count`, `null_rate`, `sum`/`avg`/`min`/`max`, `freshness`,
@@ -46,15 +46,15 @@ distinct config field.
 ## Definitions in git, observations in SQLite
 
 Check *definitions* are YAML, reviewed like any other code change and
-committed to a team repository (§12.4); dbfresh never writes a check
+committed to a team repository; dbfresh never writes a check
 definition anywhere but the config file a human edited or `dbfresh add`
 appended to. Check *observations* -- the scalar or fingerprint a run
 actually saw, its status, and when it ran -- live in a local SQLite
-observation store, separate from the config (§8). That split is what makes
+observation store, separate from the config. That split is what makes
 `vs_previous` expectations, `dbfresh history`, and the TUI's status
 dashboard possible without turning the YAML into a database, and why
 renaming a file or moving a check between included files never loses its
-history (§8.2, §12.4).
+history.
 
 ## One engine, two front ends
 

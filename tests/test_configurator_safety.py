@@ -1,4 +1,4 @@
-"""Configurator safety and degradation (§11.3): connection test, existence
+"""Configurator safety and degradation: connection test, existence
 check, and unverified-manual-entry degradation."""
 
 from dbfresh.adapters.sqlite import SqliteAdapter
