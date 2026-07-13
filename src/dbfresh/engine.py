@@ -44,6 +44,35 @@ class Result:
     diff: list[str] | None = None
 
 
+def _result(check: Check, status: Status, **fields: Any) -> Result:
+    """Build a Result for ``check``, defaulting object/metric/source from it.
+
+    A keyword in ``fields`` overrides the matching default -- e.g. an
+    assertion check's Results always pin ``metric=None`` regardless of
+    ``check.metric`` -- and any other Result field (``value``, ``expected``,
+    ``label``, ...) is passed straight through.
+    """
+    base: dict[str, Any] = {
+        "object": check.object,
+        "metric": check.metric,
+        "source": check.source,
+    }
+    base.update(fields)
+    return Result(status=status, **base)
+
+
+def _error_result(check: Check, exc: BaseException, **fields: Any) -> Result:
+    """A ``Status.ERROR`` Result for ``check``, carrying ``exc``'s message."""
+    return _result(check, Status.ERROR, error=str(exc), **fields)
+
+
+def _verdict(check: Check, passed: bool) -> Status:
+    """OK when ``passed``; else WARN if ``check.severity`` is warn, else FAIL."""
+    if passed:
+        return Status.OK
+    return Status.WARN if check.severity == "warn" else Status.FAIL
+
+
 def evaluate_check(
     check: Check,
     adapter: Any,
@@ -72,13 +101,7 @@ def evaluate_check(
     try:
         result = _evaluate_check(check, adapter, now, calendar, store)
     except Exception as exc:
-        result = Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
-            error=str(exc),
-        )
+        result = _error_result(check, exc)
     result.check_id = check_id(check)
     return result
 
@@ -119,13 +142,7 @@ def _evaluate_check(
     now = now or datetime.now(UTC)
     if _should_skip(check, calendar, now):
         label = f"assert {check.assert_}" if check.assert_ is not None else None
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.SKIPPED,
-            source=check.source,
-            label=label,
-        )
+        return _result(check, Status.SKIPPED, label=label)
     expect = _effective_expectation(check, calendar, now)
     if check.assert_ is not None:
         return _evaluate_assertion(check, adapter)
@@ -140,52 +157,24 @@ def _evaluate_check(
     try:
         value = adapter.scalar(sql)
     except Exception as exc:  # unreachable source / query error -> ERROR
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
-            expected=expected,
-            error=str(exc),
-        )
+        return _error_result(check, exc, expected=expected)
     if value is None:
         return _empty_result(check, expected)
     passed = expect.evaluate(value) if expect else True
-    if passed:
-        status = Status.OK
-    else:
-        status = Status.WARN if check.severity == "warn" else Status.FAIL
-    return Result(
-        object=check.object,
-        metric=check.metric,
-        status=status,
-        source=check.source,
-        value=value,
-        expected=expected,
-    )
+    status = _verdict(check, passed)
+    return _result(check, status, value=value, expected=expected)
 
 
 def _empty_result(check: Check, expected: str | None) -> Result:
     """Handle a null scalar (empty table / MAX of no rows)."""
     if check.metric == "null_rate":
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
+        return _result(
+            check,
+            Status.ERROR,
             expected=expected,
             error="empty result: cannot compute null_rate",
         )
-    status = Status.OK if check.allow_empty else Status.FAIL
-    if not check.allow_empty and check.severity == "warn":
-        status = Status.WARN
-    return Result(
-        object=check.object,
-        metric=check.metric,
-        status=status,
-        source=check.source,
-        expected=expected,
-    )
+    return _result(check, _verdict(check, check.allow_empty), expected=expected)
 
 
 def _evaluate_assertion(check: Check, adapter: Any) -> Result:
@@ -195,34 +184,13 @@ def _evaluate_assertion(check: Check, adapter: Any) -> Result:
     try:
         count = adapter.scalar(f"SELECT COUNT(*) {violation}")
     except Exception as exc:  # unreachable source / query error -> ERROR
-        return Result(
-            object=check.object,
-            metric=None,
-            status=Status.ERROR,
-            source=check.source,
-            label=label,
-            error=str(exc),
-        )
+        return _error_result(check, exc, metric=None, label=label)
     if count == 0:
-        return Result(
-            object=check.object,
-            metric=None,
-            status=Status.OK,
-            source=check.source,
-            value=0,
-            label=label,
-            samples=[],
-        )
+        return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
     samples = adapter.rows(adapter.dialect.limit(f"SELECT * {violation}", 20))
-    status = Status.WARN if check.severity == "warn" else Status.FAIL
-    return Result(
-        object=check.object,
-        metric=None,
-        status=status,
-        source=check.source,
-        value=count,
-        label=label,
-        samples=samples,
+    status = _verdict(check, False)
+    return _result(
+        check, status, metric=None, value=count, label=label, samples=samples
     )
 
 
@@ -265,14 +233,7 @@ def _evaluate_freshness(
     try:
         raw = _freshness_raw(check, adapter)
     except Exception as exc:  # unreachable source / query error -> ERROR
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
-            expected=expected,
-            error=str(exc),
-        )
+        return _error_result(check, exc, expected=expected)
     if raw is None:
         return _empty_result(check, expected)
     t0 = _to_aware_utc(raw)
@@ -281,18 +242,8 @@ def _evaluate_freshness(
     else:
         lag_seconds = (now - t0).total_seconds()
     passed = expect.evaluate(lag_seconds) if expect else True
-    if passed:
-        status = Status.OK
-    else:
-        status = Status.WARN if check.severity == "warn" else Status.FAIL
-    return Result(
-        object=check.object,
-        metric=check.metric,
-        status=status,
-        source=check.source,
-        value=lag_seconds,
-        expected=expected,
-    )
+    status = _verdict(check, passed)
+    return _result(check, status, value=lag_seconds, expected=expected)
 
 
 def _evaluate_schema(
@@ -315,23 +266,10 @@ def _evaluate_schema(
     try:
         info = adapter.describe(check.object)
     except Exception as exc:  # unreachable source / missing object -> ERROR
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
-            expected=expected,
-            error=str(exc),
-        )
+        return _error_result(check, exc, expected=expected)
     fingerprint = fingerprint_columns(info.columns)
     if expect is None:
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.OK,
-            source=check.source,
-            value=fingerprint,
-        )
+        return _result(check, Status.OK, value=fingerprint)
 
     prior: str | None
     if expect.operator == "unchanged":
@@ -345,18 +283,8 @@ def _evaluate_schema(
         prior = expect.operand
         passed = expect.evaluate(fingerprint)
 
-    if passed:
-        status = Status.OK
-    else:
-        status = Status.WARN if check.severity == "warn" else Status.FAIL
-    result = Result(
-        object=check.object,
-        metric=check.metric,
-        status=status,
-        source=check.source,
-        value=fingerprint,
-        expected=expected,
-    )
+    status = _verdict(check, passed)
+    result = _result(check, status, value=fingerprint, expected=expected)
     if not passed and prior is not None:
         result.diff = diff_fingerprints(fingerprint, prior)
     return result
@@ -393,14 +321,7 @@ def _evaluate_vs_previous(
     try:
         value = adapter.scalar(sql)
     except Exception as exc:  # unreachable source / query error -> ERROR
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=Status.ERROR,
-            source=check.source,
-            expected=expected,
-            error=str(exc),
-        )
+        return _error_result(check, exc, expected=expected)
     if value is None:
         return _empty_result(check, expected)
 
@@ -412,28 +333,11 @@ def _evaluate_vs_previous(
 
     if baseline is None:
         status = _ON_MISSING_STATUS[spec["on_missing"]]
-        return Result(
-            object=check.object,
-            metric=check.metric,
-            status=status,
-            source=check.source,
-            value=value,
-            expected=expected,
-        )
+        return _result(check, status, value=value, expected=expected)
 
     passed = _vs_previous_passed(value, baseline, spec)
-    if passed:
-        status = Status.OK
-    else:
-        status = Status.WARN if check.severity == "warn" else Status.FAIL
-    return Result(
-        object=check.object,
-        metric=check.metric,
-        status=status,
-        source=check.source,
-        value=value,
-        expected=expected,
-    )
+    status = _verdict(check, passed)
+    return _result(check, status, value=value, expected=expected)
 
 
 def _read_vs_previous_baseline(
@@ -519,14 +423,7 @@ def _connect_error_result(check: Check, exc: BaseException) -> Result:
     ``adapters`` for it, since no adapter exists.
     """
     label = f"assert {check.assert_}" if check.assert_ is not None else None
-    result = Result(
-        object=check.object,
-        metric=check.metric,
-        status=Status.ERROR,
-        source=check.source,
-        label=label,
-        error=str(exc),
-    )
+    result = _error_result(check, exc, label=label)
     result.check_id = check_id(check)
     return result
 

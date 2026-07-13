@@ -1,6 +1,6 @@
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, parse_expectation
-from dbfresh.engine import Status, evaluate_check
+from dbfresh.engine import Status, _error_result, _result, _verdict, evaluate_check
 
 
 def _adapter_with_rows(n):
@@ -79,3 +79,44 @@ def test_unsupported_metric_is_error_status_not_a_crash():
     assert result.object == "t"
     assert result.metric == "not_a_real_metric"
     a.close()
+
+
+def test_verdict_ok_when_passed_regardless_of_severity():
+    check = Check(source="s", object="t", metric="row_count", severity="warn")
+    assert _verdict(check, passed=True) == Status.OK
+
+
+def test_verdict_fail_when_not_passed_and_severity_is_error():
+    check = Check(source="s", object="t", metric="row_count", severity="error")
+    assert _verdict(check, passed=False) == Status.FAIL
+
+
+def test_verdict_warn_when_not_passed_and_severity_is_warn():
+    check = Check(source="s", object="t", metric="row_count", severity="warn")
+    assert _verdict(check, passed=False) == Status.WARN
+
+
+def test_result_defaults_object_metric_source_from_check():
+    check = Check(source="s", object="t", metric="row_count")
+    result = _result(check, Status.OK, value=5)
+    assert result.object == "t"
+    assert result.metric == "row_count"
+    assert result.source == "s"
+    assert result.value == 5
+
+
+def test_result_field_override_wins_over_check_default():
+    check = Check(source="s", object="t", metric="row_count")
+    result = _result(check, Status.OK, metric=None, label="assert x")
+    assert result.metric is None
+    assert result.label == "assert x"
+
+
+def test_error_result_carries_exception_message_and_check_defaults():
+    check = Check(source="s", object="t", metric="row_count")
+    result = _error_result(check, ValueError("boom"))
+    assert result.status == Status.ERROR
+    assert result.error == "boom"
+    assert result.object == "t"
+    assert result.metric == "row_count"
+    assert result.source == "s"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,11 @@ from dbfresh.engine import Result, Status
 _CLEAN_STATUSES = (Status.OK.value, Status.WARN.value, Status.FAIL.value)
 
 _DEFAULT_STORE_FILENAME = "dbfresh.db"
+
+# How long a writer waits on a locked database before raising
+# "database is locked" -- long enough that two overlapping `dbfresh run`
+# processes (e.g. a cron overlap) serialize instead of failing outright.
+_BUSY_TIMEOUT_MS = 5000
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS run (
@@ -123,9 +129,22 @@ class Store:
         if str(self._path) != ":memory:":
             self._path.parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False: run_checks reads this store (for
-        # history-based expectations) from each source's worker thread.
+        # history-based expectations) from each source's worker thread
+        # while evaluation is in progress. Writes -- start_run,
+        # record_observation(s), finish_run -- happen only afterward, from
+        # the single controller thread that called run_and_persist; worker
+        # threads never write. That read-only-during-evaluation invariant
+        # is what makes sharing one sqlite3 connection across threads safe
+        # here without additional locking.
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout let two overlapping `dbfresh run` processes
+        # read and write this file concurrently instead of hitting
+        # "database is locked" under the default rollback-journal mode.
+        # journal_mode=WAL is a no-op on an in-memory database (sqlite
+        # reports "memory" instead); busy_timeout still applies there.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
@@ -152,17 +171,19 @@ class Store:
         )
         self._conn.commit()
 
-    def record_observation(
+    def _insert_observation(
         self,
         run_id: int,
         result: Result,
-        observed_at: datetime | None = None,
-        calendar: BusinessCalendar | None = None,
+        observed_at: datetime | None,
+        calendar: BusinessCalendar | None,
     ) -> None:
-        """Persist one observation for a check's result, OK or not.
+        """``INSERT`` one observation row without committing.
 
-        ``weekday`` is stored in ``calendar``'s timezone when given, else UTC,
-        so ``last_same_weekday_observation`` compares like for like.
+        Shared by :meth:`record_observation` (single row, own commit) and
+        :meth:`record_observations` (many rows, one commit for all of them).
+        ``weekday`` is stored in ``calendar``'s timezone when given, else
+        UTC, so ``last_same_weekday_observation`` compares like for like.
         """
         observed_at = _to_utc(observed_at)
         value, value_text = _split_value(result.value)
@@ -190,6 +211,34 @@ class Store:
                 weekday,
             ),
         )
+
+    def record_observation(
+        self,
+        run_id: int,
+        result: Result,
+        observed_at: datetime | None = None,
+        calendar: BusinessCalendar | None = None,
+    ) -> None:
+        """Persist one observation for a check's result, OK or not."""
+        self._insert_observation(run_id, result, observed_at, calendar)
+        self._conn.commit()
+
+    def record_observations(
+        self,
+        run_id: int,
+        results: Iterable[Result],
+        observed_at: datetime | None = None,
+        calendar: BusinessCalendar | None = None,
+    ) -> None:
+        """Persist every result from one run's evaluation in one transaction.
+
+        Same per-row insert as :meth:`record_observation`, but commits once
+        after every row instead of once per row -- a run with many checks
+        doesn't turn into that many separate disk syncs, and the run's
+        observations either all land or none do.
+        """
+        for result in results:
+            self._insert_observation(run_id, result, observed_at, calendar)
         self._conn.commit()
 
     def latest_observation(self, check_id: str) -> dict | None:

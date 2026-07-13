@@ -33,6 +33,7 @@ dbfresh.db
 
 # Local tool state
 .abacus/
+.claude/
 
 # Project-local scratch
 tmp/

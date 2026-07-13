@@ -8,7 +8,7 @@ once so `dbfresh run` and `dbfresh ui` never duplicate it.
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from dbfresh.config import Config
@@ -23,14 +23,19 @@ def run_and_persist(
 ) -> RunResult:
     """Run every check in ``config`` and persist its results to ``store``.
 
+    ``now`` is resolved once, up front, and reused throughout: it is the
+    run's ``started_at`` (the run row opens before any check executes) and
+    every observation's ``observed_at``, rather than the wall-clock time at
+    which each is written after evaluation finishes.
+
     Builds one adapter per source actually referenced by ``config.checks``
     (never every configured source -- an unrelated, unreachable source must
     not affect a run that never touches it), evaluates every check via
     :func:`~dbfresh.engine.run_checks`, and always closes the adapters
     afterward. When ``store`` is given, records one observation per result
-    inside a new run; ``store`` itself is left open -- the caller (CLI or
-    TUI) owns its lifecycle, so it can be reused across repeated calls
-    (e.g. the TUI's Run action).
+    inside the run opened up front; ``store`` itself is left open -- the
+    caller (CLI or TUI) owns its lifecycle, so it can be reused across
+    repeated calls (e.g. the TUI's Run action).
 
     A source whose adapter fails to build (unreachable host, bad
     credentials, unknown type, ...) does not abort the run: its exception is
@@ -39,6 +44,8 @@ def run_and_persist(
     source evaluates normally.
     """
     from dbfresh.adapters.factory import create_adapter
+
+    now = now or datetime.now(UTC)
 
     referenced = {check.source for check in config.checks}
     adapters: dict[str, Any] = {}
@@ -49,6 +56,15 @@ def run_and_persist(
             adapters[name] = create_adapter(source.type, source.params)
         except Exception as exc:  # connect-time failure -> ERROR per source
             failed_sources[name] = exc
+
+    # Open the run row before evaluation, stamped with the same `now` that
+    # evaluation uses, so started_at reflects when the run began rather
+    # than when it finished.
+    run_id = None
+    if store is not None:
+        run_id = store.start_run(
+            git_sha=capture_git_sha(config.config_dir), started_at=now
+        )
 
     try:
         run = run_checks(
@@ -66,9 +82,9 @@ def run_and_persist(
                 adapter.close()
 
     if store is not None:
-        run_id = store.start_run(git_sha=capture_git_sha(config.config_dir))
-        for result in run.results:
-            store.record_observation(run_id, result, calendar=config.calendar)
+        store.record_observations(
+            run_id, run.results, observed_at=now, calendar=config.calendar
+        )
         store.finish_run(run_id, run.status)
 
     return run
