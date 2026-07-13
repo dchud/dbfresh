@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS run (
   finished_at TEXT,
   status     TEXT NOT NULL,
   git_sha    TEXT
-);
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS observation (
   run_id    INTEGER NOT NULL REFERENCES run(run_id),
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS observation (
   status    TEXT    NOT NULL,
   observed_at TEXT  NOT NULL,
   weekday   INTEGER NOT NULL
-);
+) STRICT;
 
 CREATE INDEX IF NOT EXISTS ix_obs_checkid_time
   ON observation(check_id, observed_at);

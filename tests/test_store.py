@@ -443,3 +443,16 @@ def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
     assert row["value"] == 36000.0  # 10h lag, in seconds
     assert row["value_text"] is None
     store.close()
+
+
+def test_observation_table_is_strict_rejects_mistyped_value(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    store.start_run()
+    with pytest.raises(sqlite3.IntegrityError):
+        store._conn.execute(
+            "INSERT INTO observation (run_id, check_id, source, object, "
+            "label, value, status, observed_at, weekday) "
+            "VALUES (1, 'c', 's', 'o', 'l', 'not-a-number', 'OK', "
+            "'2026-01-01T00:00:00Z', 3)"
+        )
+    store.close()
