@@ -49,10 +49,18 @@ _CHECK_KEYS = frozenset(
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def interpolate_env(value: Any, env: Mapping[str, str] | None = None) -> Any:
+def interpolate_env(
+    value: Any,
+    env: Mapping[str, str] | None = None,
+    missing: set[str] | None = None,
+) -> Any:
     """Replace ``${VAR}`` tokens in strings from ``env`` (default the process env).
 
-    A referenced variable that is not set is a hard error.
+    A referenced variable that is not set is a hard error, unless ``missing``
+    is given: then the variable's name is added to it, the ``${VAR}`` token
+    is left in place, and no exception is raised -- letting a caller collect
+    every undefined variable across several calls before reporting them all
+    at once.
     """
     environ = os.environ if env is None else env
 
@@ -61,14 +69,19 @@ def interpolate_env(value: Any, env: Mapping[str, str] | None = None) -> Any:
         def replace(match: re.Match) -> str:
             name = match.group(1)
             if name not in environ:
+                if missing is not None:
+                    missing.add(name)
+                    return match.group(0)
                 raise ValueError(f"undefined environment variable: {name}")
             return environ[name]
 
         return _VAR.sub(replace, value)
     if isinstance(value, dict):
-        return {key: interpolate_env(item, environ) for key, item in value.items()}
+        return {
+            key: interpolate_env(item, environ, missing) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [interpolate_env(item, environ) for item in value]
+        return [interpolate_env(item, environ, missing) for item in value]
     return value
 
 
@@ -265,9 +278,11 @@ def _load_included_checks(raw: Any, path: Path) -> list[dict]:
     )
 
 
-def _read_included_file(path: Path, env: dict[str, str] | None) -> list[dict]:
+def _read_included_file(
+    path: Path, env: dict[str, str] | None, missing: set[str] | None = None
+) -> list[dict]:
     raw = yaml.safe_load(path.read_text())
-    raw = interpolate_env(raw, env)
+    raw = interpolate_env(raw, env, missing)
     return _load_included_checks(raw, path)
 
 
@@ -486,7 +501,22 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     path = Path(path)
     config_dir = path.resolve().parent
     data = yaml.safe_load(path.read_text()) or {}
-    data = interpolate_env(data, env)
+    missing: set[str] = set()
+    data = interpolate_env(data, env, missing)
+
+    raw_checks = list(data.get("checks") or [])
+    include_patterns = data.get("include")
+    if include_patterns:
+        for include_path in resolve_includes(config_dir, include_patterns):
+            raw_checks.extend(_read_included_file(include_path, env, missing))
+
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise ConfigError(
+            f"undefined environment variable: {names}"
+            if len(missing) == 1
+            else f"undefined environment variables: {names}"
+        )
 
     sources = {
         name: SourceConfig(
@@ -500,12 +530,6 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     }
 
     defaults = data.get("defaults") or {}
-
-    raw_checks = list(data.get("checks") or [])
-    include_patterns = data.get("include")
-    if include_patterns:
-        for include_path in resolve_includes(config_dir, include_patterns):
-            raw_checks.extend(_read_included_file(include_path, env))
 
     checks = [_build_check(raw, defaults) for raw in raw_checks]
     for check in checks:
