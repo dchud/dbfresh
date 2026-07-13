@@ -126,10 +126,27 @@ class _FakeConnection:
         self.closed = True
 
 
-def _make_bare_adapter(responses) -> DatabricksAdapter:
+class _RaisingOnDescribeDetailConnection(_FakeConnection):
+    """A fake connection that fails hard if DESCRIBE DETAIL is ever issued.
+
+    Used to prove a code path never queries DESCRIBE DETAIL at all -- a
+    plain "no fake response configured" AssertionError from the base fake
+    would be ambiguous with a test author simply forgetting to configure
+    one.
+    """
+
+    def resolve(self, sql):
+        if "DESCRIBE DETAIL" in sql:
+            raise AssertionError(
+                f"DESCRIBE DETAIL must not be issued here, got: {sql!r}"
+            )
+        return super().resolve(sql)
+
+
+def _make_bare_adapter(responses, connection_cls=_FakeConnection) -> DatabricksAdapter:
     """A DatabricksAdapter over a fake connection, no live driver needed."""
     adapter = DatabricksAdapter.__new__(DatabricksAdapter)
-    adapter._conn = _FakeConnection(responses)
+    adapter._conn = connection_cls(responses)
     adapter.dialect = DatabricksDialect()
     return adapter
 
@@ -313,6 +330,23 @@ def test_describe_queries_the_catalog_qualified_information_schema_tables():
     assert "main.information_schema.tables" in query
     assert "table_schema = 'gold'" in query
     assert "table_name = 'customer_360'" in query
+
+
+def test_describe_never_issues_describe_detail_for_a_view():
+    # DESCRIBE DETAIL is valid only for Delta tables; issuing it against a
+    # view raises. describe() must compute is_view first and skip DESCRIBE
+    # DETAIL entirely for a view -- proven here by a connection that fails
+    # hard if DESCRIBE DETAIL is ever queried.
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("information_schema.tables", _TABLES_DESC, [("VIEW",)]),
+        ],
+        connection_cls=_RaisingOnDescribeDetailConnection,
+    )
+    info = adapter.describe("main.gold.active_customers")
+    assert info.is_view is True
+    assert info.last_modified is None
 
 
 def test_real_adapter_describe_is_view_true_rejects_describe_history_source():

@@ -147,18 +147,23 @@ class DatabricksAdapter:
 
         Columns come from ``information_schema.columns``; keys are always
         ``None`` and ``approx_row_count`` is never populated (neither is
-        exposed cheaply here); ``last_modified`` comes from
-        ``DESCRIBE DETAIL``; ``is_view`` comes from
+        exposed cheaply here); ``is_view`` comes from
         ``information_schema.tables`` -- it is what lets the freshness
         run-time guard reject ``describe_history``/``describe_detail``
-        against a view.
+        against a view. ``is_view`` is computed before ``last_modified``:
+        DESCRIBE DETAIL describes Delta table storage, which a view has
+        none of, so it is skipped entirely for a view rather than issued
+        and made to fail.
         """
+        columns = self._columns(obj)
+        is_view = self._is_view(obj)
+        last_modified = None if is_view else self._describe_detail_last_modified(obj)
         return ObjectInfo(
-            columns=self._columns(obj),
+            columns=columns,
             keys=None,
             approx_row_count=None,
-            last_modified=self._describe_detail_last_modified(obj),
-            is_view=self._is_view(obj),
+            last_modified=last_modified,
+            is_view=is_view,
         )
 
     def _columns(self, obj: str) -> list[Column]:
