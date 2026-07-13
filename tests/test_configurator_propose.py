@@ -1,4 +1,4 @@
-"""Metadata-driven proposal bundle (§11.1): against the real sqlite adapter
+"""Metadata-driven proposal bundle: against the real sqlite adapter
 for genuine columns/keys, and constructed ObjectInfo for capability-absence
 and Databricks-only paths."""
 

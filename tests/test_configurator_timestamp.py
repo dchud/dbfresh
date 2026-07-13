@@ -1,4 +1,4 @@
-"""Freshness timestamp-column auto-detection heuristic (§11.1)."""
+"""Freshness timestamp-column auto-detection heuristic."""
 
 from dbfresh.adapters.base import Category, Column
 from dbfresh.configurator import pick_timestamp_column
