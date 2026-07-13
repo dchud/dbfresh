@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import subprocess
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -158,17 +159,19 @@ class Store:
         )
         self._conn.commit()
 
-    def record_observation(
+    def _insert_observation(
         self,
         run_id: int,
         result: Result,
-        observed_at: datetime | None = None,
-        calendar: BusinessCalendar | None = None,
+        observed_at: datetime | None,
+        calendar: BusinessCalendar | None,
     ) -> None:
-        """Persist one observation for a check's result, OK or not.
+        """``INSERT`` one observation row without committing.
 
-        ``weekday`` is stored in ``calendar``'s timezone when given, else UTC,
-        so ``last_same_weekday_observation`` compares like for like.
+        Shared by :meth:`record_observation` (single row, own commit) and
+        :meth:`record_observations` (many rows, one commit for all of them).
+        ``weekday`` is stored in ``calendar``'s timezone when given, else
+        UTC, so ``last_same_weekday_observation`` compares like for like.
         """
         observed_at = _to_utc(observed_at)
         value, value_text = _split_value(result.value)
@@ -196,6 +199,34 @@ class Store:
                 weekday,
             ),
         )
+
+    def record_observation(
+        self,
+        run_id: int,
+        result: Result,
+        observed_at: datetime | None = None,
+        calendar: BusinessCalendar | None = None,
+    ) -> None:
+        """Persist one observation for a check's result, OK or not."""
+        self._insert_observation(run_id, result, observed_at, calendar)
+        self._conn.commit()
+
+    def record_observations(
+        self,
+        run_id: int,
+        results: Iterable[Result],
+        observed_at: datetime | None = None,
+        calendar: BusinessCalendar | None = None,
+    ) -> None:
+        """Persist every result from one run's evaluation in one transaction.
+
+        Same per-row insert as :meth:`record_observation`, but commits once
+        after every row instead of once per row -- a run with many checks
+        doesn't turn into that many separate disk syncs, and the run's
+        observations either all land or none do.
+        """
+        for result in results:
+            self._insert_observation(run_id, result, observed_at, calendar)
         self._conn.commit()
 
     def latest_observation(self, check_id: str) -> dict | None:

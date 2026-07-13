@@ -82,10 +82,9 @@ def run_and_persist(
                 adapter.close()
 
     if store is not None:
-        for result in run.results:
-            store.record_observation(
-                run_id, result, observed_at=now, calendar=config.calendar
-            )
+        store.record_observations(
+            run_id, run.results, observed_at=now, calendar=config.calendar
+        )
         store.finish_run(run_id, run.status)
 
     return run

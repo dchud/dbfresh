@@ -3,6 +3,8 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, parse_expectation
 from dbfresh.config import StoreConfig
@@ -128,6 +130,42 @@ def test_record_observation_persists_error_status_with_no_value(tmp_path):
     assert row[1] is None
     assert row[2] is None
     store.close()
+
+
+def test_record_observations_persists_every_result(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    results = [_result(check_id="a", value=1), _result(check_id="b", value=2)]
+    store.record_observations(run_id, results)
+    rows = store._conn.execute(
+        "SELECT check_id, value FROM observation ORDER BY check_id"
+    ).fetchall()
+    assert [(row["check_id"], row["value"]) for row in rows] == [
+        ("a", 1.0),
+        ("b", 2.0),
+    ]
+    store.close()
+
+
+def test_record_observations_is_a_single_transaction_not_one_per_row(tmp_path):
+    # If a mid-batch failure still leaves an earlier row durable, each row
+    # was committed on its own; a single transaction discards all of them
+    # together once the connection closes without ever reaching commit().
+    db_path = tmp_path / "obs.db"
+    store = Store(db_path)
+    run_id = store.start_run()
+    good = _result(check_id="a", value=1)
+    bad = _result(check_id="b", value=2)
+    bad.status = "NOT_A_STATUS"  # not a valid Status -> raises mid-batch
+
+    with pytest.raises(ValueError):
+        store.record_observations(run_id, [good, bad])
+    store.close()  # uncommitted writes are discarded here
+
+    reopened = Store(db_path)
+    count = reopened._conn.execute("SELECT COUNT(*) FROM observation").fetchone()[0]
+    assert count == 0
+    reopened.close()
 
 
 def test_record_observation_uses_explicit_label_for_assertions(tmp_path):
