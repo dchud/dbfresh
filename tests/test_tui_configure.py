@@ -27,6 +27,14 @@ def _ambiguous_table(db):
     adapter.close()
 
 
+class _FakeUnreachableAdapter:
+    """A source that fails to connect at construction time, the way a
+    real network adapter would against an unreachable host."""
+
+    def __init__(self, timeout=None):
+        raise ConnectionError("could not connect")
+
+
 class _FakeViewAdapter:
     """A Databricks-capable view with no timestamp candidate -- proves
     ``is_view`` reaches ``propose_checks`` so no invalid ``describe_history``
@@ -197,6 +205,36 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
         data = yaml.safe_load(cfg.read_text())
         freshness = next(c for c in data["checks"] if c["metric"] == "freshness")
         assert freshness["column"] == "updated_at"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_unreachable_source_shows_error_not_crash(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: unreachable }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Did not crash: still on the Configure screen.
+            assert isinstance(app.screen, ConfigureScreen)
+            proposal_text = str(app.screen.query_one("#proposal-text").content)
+            assert "could not connect" in proposal_text
+            accept_btn = app.screen.query_one("#accept-btn")
+            assert accept_btn.disabled
 
     asyncio.run(scenario())
 

@@ -80,7 +80,12 @@ class ConfigureScreen(Screen[bool]):
             proposal_widget.update(f"unknown source: {source_name!r}")
             return
 
-        adapter = create_adapter(source.type, source.params, timeout=source.timeout)
+        try:
+            adapter = create_adapter(source.type, source.params, timeout=source.timeout)
+        except Exception as exc:
+            proposal_widget.update(f"could not connect to {source_name!r}: {exc}")
+            return
+
         try:
             existence = check_object_exists(adapter, object_name)
             if not existence.exists:
