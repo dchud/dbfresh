@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import re
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from typing import Any
 import yaml
 
 from dbfresh.adapters.databricks import validate_freshness_source
-from dbfresh.adapters.factory import dialect_for_type
+from dbfresh.adapters.factory import adapter_class_for, dialect_for_type
 from dbfresh.calendar import WEEKDAY_NAMES, BusinessCalendar, build_calendar
 from dbfresh.checks import Check, check_id, describe_check, parse_expectation
 from dbfresh.registry import METRICS
@@ -20,6 +21,7 @@ _CHECK_CALENDAR_MODES = frozenset({"business"})
 _FRESHNESS_SOURCES = frozenset({"column", "describe_history", "describe_detail"})
 _METRIC_REQUIRED = {spec.name: spec.required for spec in METRICS}
 _VALID_SEVERITIES = frozenset({"error", "warn"})
+_SOURCE_OWN_FIELDS = frozenset({"type", "timezone", "timeout"})
 _CHECK_KEYS = frozenset(
     {
         "source",
@@ -72,6 +74,8 @@ class SourceConfig:
     name: str
     type: str
     params: dict
+    timezone: str | None = None
+    timeout: int | None = None
 
 
 _DEFAULT_RETAIN_DAYS = 400
@@ -407,6 +411,36 @@ def _validate_checks(
     return errors
 
 
+def _validate_sources(sources: dict[str, SourceConfig]) -> list[ValueError]:
+    """Reject a genuinely-unknown source parameter with a clean error.
+
+    Introspects the adapter class's ``__init__`` parameters via the
+    factory (:func:`~dbfresh.adapters.factory.adapter_class_for`) without
+    constructing or connecting it. A source whose ``type:`` isn't a
+    registered adapter is skipped here -- that is a connect-time concern
+    (``create_adapter`` already raises there, turned into a per-check
+    ``ERROR`` result, see ``runner.run_and_persist``), not a config
+    validation failure: an unreferenced or intentionally-unreachable
+    source must not block a load that never touches it.
+    """
+    errors: list[ValueError] = []
+    for name, source in sources.items():
+        try:
+            cls = adapter_class_for(source.type)
+        except ValueError:
+            continue
+        valid_params = set(inspect.signature(cls.__init__).parameters) - {"self"}
+        unknown = sorted(set(source.params) - valid_params)
+        if unknown:
+            errors.append(
+                ValueError(
+                    f"source {name!r} ({source.type}): unknown parameter(s) "
+                    f"{unknown}; expected one of {sorted(valid_params)}"
+                )
+            )
+    return errors
+
+
 def _raise_validation_errors(errors: list[ValueError]) -> None:
     """Raise the sole error verbatim; several are joined into one summary.
 
@@ -432,7 +466,9 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
         name: SourceConfig(
             name=name,
             type=spec["type"],
-            params={k: v for k, v in spec.items() if k != "type"},
+            params={k: v for k, v in spec.items() if k not in _SOURCE_OWN_FIELDS},
+            timezone=spec.get("timezone"),
+            timeout=spec.get("timeout"),
         )
         for name, spec in (data.get("sources") or {}).items()
     }
@@ -450,7 +486,9 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     calendar_raw = data.get("calendar")
     calendar = build_calendar(calendar_raw) if calendar_raw else None
 
-    errors = _validate_checks(raw_checks, checks, sources, calendar)
+    errors = _validate_sources(sources) + _validate_checks(
+        raw_checks, checks, sources, calendar
+    )
     if errors:
         _raise_validation_errors(errors)
 

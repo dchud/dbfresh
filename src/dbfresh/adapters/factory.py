@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from dbfresh.adapters.base import Dialect
@@ -25,13 +26,32 @@ _DIALECTS: dict[str, type[Dialect]] = {
 }
 
 
-def create_adapter(type_: str, params: dict[str, Any]):
-    """Construct the adapter for a source ``type`` from its config params."""
+def adapter_class_for(type_: str) -> type:
+    """The adapter class registered for ``type_``, without constructing it.
+
+    Used by config validation to introspect a source's accepted
+    constructor parameters (via ``inspect.signature``) before any
+    connection is attempted.
+    """
     try:
-        cls = _ADAPTERS[type_]
+        return _ADAPTERS[type_]
     except KeyError:
         raise ValueError(f"unknown source type: {type_!r}") from None
-    return cls(**params)
+
+
+def create_adapter(type_: str, params: dict[str, Any], timeout: int | None = None):
+    """Construct the adapter for a source ``type`` from its config params.
+
+    ``timeout`` (a source's connection timeout, §12.1) is forwarded to the
+    adapter's constructor only when it declares a ``timeout`` parameter --
+    engines that don't support one simply never receive it, with no
+    engine-name test here.
+    """
+    cls = adapter_class_for(type_)
+    kwargs = dict(params)
+    if timeout is not None and "timeout" in inspect.signature(cls.__init__).parameters:
+        kwargs["timeout"] = timeout
+    return cls(**kwargs)
 
 
 def dialect_for_type(type_: str) -> Dialect:

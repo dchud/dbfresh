@@ -53,7 +53,9 @@ def run_and_persist(
     for name in referenced:
         source = config.sources[name]
         try:
-            adapters[name] = create_adapter(source.type, source.params)
+            adapters[name] = create_adapter(
+                source.type, source.params, timeout=source.timeout
+            )
         except Exception as exc:  # connect-time failure -> ERROR per source
             failed_sources[name] = exc
 
