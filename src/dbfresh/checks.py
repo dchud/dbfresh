@@ -235,6 +235,23 @@ def check_id(check: Check) -> str:
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
 
 
+def describe_check(check: Check) -> str:
+    """A short human-readable identity for error messages.
+
+    Mirrors the discriminant :func:`check_id` hashes -- source, object,
+    metric, and whichever of column/key applies (or the assertion text) --
+    so a duplicate check_id error can name exactly what collided.
+    """
+    if check.assert_ is not None:
+        return f"{check.source}.{check.object} assert {check.assert_!r}"
+    metric = check.metric or "?"
+    if check.column:
+        return f"{check.source}.{check.object}/{metric} (column={check.column!r})"
+    if check.key:
+        return f"{check.source}.{check.object}/{metric} (key={check.key!r})"
+    return f"{check.source}.{check.object}/{metric}"
+
+
 def compile_metric_sql(check: Check, dialect: Any) -> str:
     """Compile a metric check to a single scalar-returning SQL query.
 

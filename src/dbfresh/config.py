@@ -13,7 +13,7 @@ import yaml
 from dbfresh.adapters.databricks import validate_freshness_source
 from dbfresh.adapters.factory import dialect_for_type
 from dbfresh.calendar import WEEKDAY_NAMES, BusinessCalendar, build_calendar
-from dbfresh.checks import Check, check_id, parse_expectation
+from dbfresh.checks import Check, check_id, describe_check, parse_expectation
 
 _CHECK_CALENDAR_MODES = frozenset({"business"})
 _FRESHNESS_SOURCES = frozenset({"column", "describe_history", "describe_detail"})
@@ -81,6 +81,19 @@ class Config:
     config_dir: Path
     store: StoreConfig | None = None
     calendar: BusinessCalendar | None = None
+
+
+class ConfigError(ValueError):
+    """A config file could not be loaded, parsed, or validated.
+
+    Raised by :func:`load_config` for every failure mode: a missing or
+    unreadable file, a YAML parse error, a missing required field, an
+    invalid expectation, or any validation problem (unknown source
+    reference, duplicate check_id, calendar misuse, ...) -- always chained
+    from the underlying cause via ``raise ... from exc``. Subclasses
+    ``ValueError`` so callers that only care about "config problem" can
+    keep catching ``ValueError``.
+    """
 
 
 def _parse_by_weekday(raw: Any, metric: str | None = None) -> dict[str, Any] | None:
@@ -223,7 +236,31 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     file's own. The composed check list is validated as one unit, so a
     duplicate ``check_id`` anywhere across the root and included files is a
     validation error.
+
+    Every load, parse, or validation failure surfaces as a single
+    :class:`ConfigError`, chained from its underlying cause -- a missing
+    or unreadable file, a YAML parse error, a missing required field, an
+    invalid expectation, or any of the validation checks below.
     """
+    try:
+        return _load_config(path, env)
+    except ConfigError:
+        raise
+    except FileNotFoundError as exc:
+        raise ConfigError(f"config file not found: {path}") from exc
+    except OSError as exc:
+        raise ConfigError(f"cannot read config file {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
+    except KeyError as exc:
+        raise ConfigError(f"missing required field: {exc}") from exc
+    except TypeError as exc:
+        raise ConfigError(f"invalid expectation: {exc}") from exc
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
+def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     path = Path(path)
     config_dir = path.resolve().parent
     data = yaml.safe_load(path.read_text()) or {}
@@ -257,12 +294,16 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
             dialect = dialect_for_type(sources[check.source].type)
             validate_freshness_source(check.freshness_source, dialect)
 
-    seen_ids: set[str] = set()
+    seen: dict[str, Check] = {}
     for check in checks:
         cid = check_id(check)
-        if cid in seen_ids:
-            raise ValueError(f"duplicate check_id across composed config: {cid!r}")
-        seen_ids.add(cid)
+        if cid in seen:
+            raise ValueError(
+                f"duplicate check_id {cid!r}: {describe_check(seen[cid])} and "
+                f"{describe_check(check)} collide -- add an explicit id: to "
+                "one of them to disambiguate"
+            )
+        seen[cid] = check
 
     calendar_raw = data.get("calendar")
     calendar = build_calendar(calendar_raw) if calendar_raw else None

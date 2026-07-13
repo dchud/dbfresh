@@ -1,6 +1,6 @@
 import pytest
 
-from dbfresh.config import interpolate_env, load_config
+from dbfresh.config import ConfigError, interpolate_env, load_config
 
 
 def test_interpolate_env_replaces_var():
@@ -150,3 +150,155 @@ checks:
     )
     with pytest.raises(ValueError):
         load_config(path, env={})
+
+
+def test_load_config_missing_file_raises_config_error(tmp_path):
+    missing = tmp_path / "does_not_exist.yaml"
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(missing, env={})
+    assert excinfo.value.__cause__ is not None
+
+
+def test_load_config_invalid_yaml_raises_config_error(tmp_path):
+    path = _write(tmp_path, "sources: [this is not: valid: yaml\n")
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert excinfo.value.__cause__ is not None
+
+
+def test_load_config_missing_object_field_raises_config_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert isinstance(excinfo.value.__cause__, KeyError)
+
+
+def test_load_config_missing_source_field_raises_config_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert isinstance(excinfo.value.__cause__, KeyError)
+
+
+def test_load_config_missing_source_type_raises_config_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { database: ":memory:" }
+checks: []
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert isinstance(excinfo.value.__cause__, KeyError)
+
+
+def test_load_config_bad_expectation_raises_config_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: 5
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert isinstance(excinfo.value.__cause__, TypeError)
+
+
+def test_load_config_unknown_source_ref_is_a_config_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: other
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    assert isinstance(excinfo.value.__cause__, ValueError)
+
+
+def test_duplicate_check_id_message_names_both_colliding_checks(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    id: dup
+    expect: { max: 5 }
+  - source: s
+    object: t
+    metric: schema
+    id: dup
+    expect: { unchanged: true }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    message = str(excinfo.value)
+    assert "dup" in message
+    assert "row_count" in message
+    assert "schema" in message
+    assert "id:" in message
+
+
+def test_duplicate_check_id_differing_only_by_where_names_metric(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    where: "region = 'US'"
+    expect: { max: 100 }
+  - source: s
+    object: t
+    metric: row_count
+    where: "region = 'EU'"
+    expect: { max: 100 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(path, env={})
+    message = str(excinfo.value)
+    assert "row_count" in message
+    assert "id:" in message
