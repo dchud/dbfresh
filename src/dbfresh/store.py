@@ -17,6 +17,11 @@ _CLEAN_STATUSES = (Status.OK.value, Status.WARN.value, Status.FAIL.value)
 
 _DEFAULT_STORE_FILENAME = "dbfresh.db"
 
+# How long a writer waits on a locked database before raising
+# "database is locked" -- long enough that two overlapping `dbfresh run`
+# processes (e.g. a cron overlap) serialize instead of failing outright.
+_BUSY_TIMEOUT_MS = 5000
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS run (
   run_id     INTEGER PRIMARY KEY,
@@ -133,6 +138,13 @@ class Store:
         # here without additional locking.
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL + busy_timeout let two overlapping `dbfresh run` processes
+        # read and write this file concurrently instead of hitting
+        # "database is locked" under the default rollback-journal mode.
+        # journal_mode=WAL is a no-op on an in-memory database (sqlite
+        # reports "memory" instead); busy_timeout still applies there.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 

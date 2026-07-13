@@ -46,6 +46,20 @@ def test_store_creates_run_and_observation_tables(tmp_path):
     store.close()
 
 
+def test_store_open_sets_wal_journal_mode(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    mode = store._conn.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode == "wal"
+    store.close()
+
+
+def test_store_open_sets_busy_timeout(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    timeout = store._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert timeout == 5000
+    store.close()
+
+
 def test_start_run_records_started_at_and_git_sha(tmp_path):
     store = Store(tmp_path / "obs.db")
     before = datetime.now(UTC)
