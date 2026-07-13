@@ -99,7 +99,7 @@ _DEFAULT_RETAIN_DAYS = 400
 
 @dataclass
 class StoreConfig:
-    """Observation-store settings (spec section 8.1)."""
+    """Observation-store settings."""
 
     path: str | None = None
     retain_days: int = _DEFAULT_RETAIN_DAYS
