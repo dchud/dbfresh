@@ -1,3 +1,5 @@
+import pytest
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 
 
@@ -30,3 +32,24 @@ def test_in_memory_state_persists_across_queries():
     a.rows("INSERT INTO t (id) VALUES (7)")
     assert a.scalar("SELECT MAX(id) FROM t") == 7
     a.close()
+
+
+def test_close_disposes_engine_even_if_conn_close_raises():
+    a = SqliteAdapter()
+    disposed = []
+    original_dispose = a._engine.dispose
+
+    def tracking_dispose(*args, **kwargs):
+        disposed.append(True)
+        original_dispose(*args, **kwargs)
+
+    def raising_close():
+        raise RuntimeError("boom on close")
+
+    a._engine.dispose = tracking_dispose
+    a._conn.close = raising_close
+
+    with pytest.raises(RuntimeError, match="boom on close"):
+        a.close()
+
+    assert disposed == [True]

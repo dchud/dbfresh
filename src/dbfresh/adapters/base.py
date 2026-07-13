@@ -137,5 +137,14 @@ class SqlAlchemyAdapter:
         return ObjectInfo(columns=columns, keys=keys or None)
 
     def close(self) -> None:
-        self._conn.close()
-        self._engine.dispose()
+        """Close the connection, then always dispose the engine.
+
+        ``_conn.close()`` raising must not leak the engine's pool, so the
+        dispose is unconditional; the original exception still propagates
+        to the caller, which is expected to close every adapter under its
+        own exception-safe guard (see ``dbfresh.runner.run_and_persist``).
+        """
+        try:
+            self._conn.close()
+        finally:
+            self._engine.dispose()

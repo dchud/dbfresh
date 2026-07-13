@@ -158,3 +158,49 @@ def test_run_and_persist_unreachable_source_still_persists_healthy_results(tmp_p
     run_row = store._conn.execute("SELECT status FROM run").fetchone()
     assert run_row["status"] == "ERROR"
     store.close()
+
+
+def test_run_and_persist_closes_every_adapter_even_if_one_close_raises(
+    tmp_path, monkeypatch
+):
+    closed = []
+
+    class _FakeAdapter:
+        def __init__(self, name):
+            self.name = name
+            self.dialect = None
+
+        def scalar(self, sql):
+            return 3
+
+        def close(self):
+            closed.append(self.name)
+            if self.name == "bad":
+                raise RuntimeError("boom on close")
+
+    def fake_create_adapter(type_, params):
+        return _FakeAdapter(type_)
+
+    monkeypatch.setattr("dbfresh.adapters.factory.create_adapter", fake_create_adapter)
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n"
+        "  bad: { type: bad }\n"
+        "  good: { type: good }\n"
+        "checks:\n"
+        "  - source: bad\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: good\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    config = load_config(cfg)
+
+    run = run_and_persist(config, store=None)
+
+    assert run.status == Status.OK
+    assert set(closed) == {"bad", "good"}
