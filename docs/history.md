@@ -4,7 +4,7 @@
 
 Check *definitions* stay in YAML; the store holds only *observations* --
 enabling "today vs. previous" comparisons and trend inspection without
-turning the config into a database (§8.1). It's a local SQLite file, one
+turning the config into a database. It's a local SQLite file, one
 `run` row per invocation and one `observation` row per check per run
 (including `OK` and `ERROR` runs -- every check writes an observation, not
 just failures).
@@ -14,7 +14,7 @@ The store path resolves with precedence `--store` flag →
 `./dbfresh.db`. A relative `store.path` (the default included) resolves
 against the *root config's* directory, never the process's current
 directory -- so every clone of a shared config repo gets its own store file
-without a machine-specific path ever being committed (§8.1, §12.3).
+without a machine-specific path ever being committed.
 
 Each run also records the config repository's `git_sha` (best-effort HEAD
 of the git repo containing the root config; `null` when the config isn't in
@@ -54,7 +54,7 @@ expect:
 - `vs_previous` requires the observation store -- with `--no-store` nothing
   ever accumulates, so every run stays permanently on the `on_missing` path.
 - Like every expectation, a check uses `vs_previous` *or* a static bound,
-  never both (§6.3).
+  never both.
 
 `schema`'s `unchanged:` operator is its own history comparison, reusing the
 same store -- see [Check reference](checks.md).

@@ -1,7 +1,7 @@
 # Check reference
 
 Every check is one of the metrics below (compiled to a single scalar query
-and compared via an expectation, §6.1) or an assertion. Object names are
+and compared via an expectation) or an assertion. Object names are
 used verbatim, exactly as authored (`dbo.fct_sales`,
 `main.gold.customer_360`) -- dbfresh never quotes or rewrites them. An
 optional `where:` clause is appended to every metric query.
@@ -86,9 +86,9 @@ of wall-clock lag -- see [Calendar & scheduling](calendar.md).
 ## Applicability matrix
 
 Which column-level checks are offered for which canonical column category
-(`numeric`, `temporal`, `string`, `boolean`, `other`, §5.2) is generated
+(`numeric`, `temporal`, `string`, `boolean`, `other`) is generated
 directly from the same mapping the [configurator](authoring-checks.md) uses
-to propose checks (§11.2), so the matrix can never disagree with the
+to propose checks, so the matrix can never disagree with the
 wizard's actual offers: see the
 [generated applicability matrix](reference/matrix.md). Table-level checks
 (`row_count`, `schema`, assertions) apply regardless of column category.
@@ -100,7 +100,7 @@ wizard's actual offers: see the
   them on any other engine, and on a Databricks *view* (Delta metadata
   describes tables, not views) -- both fail validation without an
   engine-name check in the compiler, purely from the dialect's declared
-  freshness capabilities (§5.3).
+  freshness capabilities.
 - **Row-limiting form.** Assertion evidence and the configurator's catalog
   probes are capped per dialect: `LIMIT n` (sqlite, Databricks, PostgreSQL,
   MySQL), `TOP n` (SQL Server / T-SQL), or `FETCH FIRST n ROWS ONLY` /
@@ -110,8 +110,8 @@ wizard's actual offers: see the
   `timestamp_ntz`, ...) so drift detection is exact per engine, but every
   other engine-agnostic check (the applicability matrix, the configurator's
   offers) keys off the canonical `category` an adapter maps that native
-  name to -- never off the native name itself (§5.2).
-- **Oracle specifics**, should an Oracle adapter be added (§5.4): columns
+  name to -- never off the native name itself.
+- **Oracle specifics**, should an Oracle adapter be added: columns
   reflect via `ALL_TAB_COLUMNS` rather than the generic SQLAlchemy
   reflection path most engines get for free, and row limiting uses
   `FETCH FIRST … ROWS ONLY` (12c+) or a `ROWNUM` wrapper on older versions --
