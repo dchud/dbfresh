@@ -198,6 +198,66 @@ checks:
     assert cfg.checks[0].skip_off_schedule is False
 
 
+def test_skip_on_holiday_is_an_alias_for_skip_off_schedule(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+    skip_on_holiday: true
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is True
+
+
+def test_defaults_skip_on_holiday_alias_applies_to_every_check(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+defaults:
+  skip_on_holiday: true
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is True
+
+
+def test_per_check_skip_on_holiday_false_overrides_default_true(tmp_path):
+    path = _write(
+        tmp_path,
+        _CALENDAR_BLOCK
+        + """
+defaults:
+  skip_on_holiday: true
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+    skip_on_holiday: false
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].skip_off_schedule is False
+
+
 def test_skip_off_schedule_without_calendar_block_is_a_validation_error(tmp_path):
     path = _write(
         tmp_path,

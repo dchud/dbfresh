@@ -39,6 +39,7 @@ _CHECK_KEYS = frozenset(
         "on_holiday",
         "calendar",
         "skip_off_schedule",
+        "skip_on_holiday",
         "freshness_source",
     }
 )
@@ -142,6 +143,22 @@ def _parse_check_calendar_mode(raw: Any) -> str | None:
     return raw
 
 
+def _resolve_skip_off_schedule(raw: dict, defaults: dict) -> bool:
+    """``skip_off_schedule``, or its alias ``skip_on_holiday`` (spec 7.4).
+
+    A check's own value (under either key name) wins over ``defaults:``
+    (also under either key name); an explicit falsy value still counts as
+    "own", so it correctly overrides a truthy default. Absent from both,
+    the result is ``False``.
+    """
+    for mapping in (raw, defaults):
+        if "skip_off_schedule" in mapping:
+            return mapping["skip_off_schedule"]
+        if "skip_on_holiday" in mapping:
+            return mapping["skip_on_holiday"]
+    return False
+
+
 def _parse_freshness_source(raw: dict) -> str:
     """Return the ``freshness_source`` field verbatim; default ``column``.
 
@@ -185,9 +202,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
         calendar=_parse_check_calendar_mode(
             raw.get("calendar", defaults.get("calendar"))
         ),
-        skip_off_schedule=raw.get(
-            "skip_off_schedule", defaults.get("skip_off_schedule", False)
-        ),
+        skip_off_schedule=_resolve_skip_off_schedule(raw, defaults),
         freshness_source=_parse_freshness_source(raw),
     )
 
