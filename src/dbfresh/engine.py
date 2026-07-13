@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from dbfresh.adapters.databricks import validate_freshness_source
 from dbfresh.calendar import BusinessCalendar, weekday_key
@@ -236,7 +237,7 @@ def _evaluate_freshness(
         return _error_result(check, exc, expected=expected)
     if raw is None:
         return _empty_result(check, expected)
-    t0 = _to_aware_utc(raw)
+    t0 = _to_aware_utc(raw, check.source_timezone)
     if check.calendar == "business" and calendar is not None:
         lag_seconds = calendar.business_time_between(t0, now).total_seconds()
     else:
@@ -380,12 +381,17 @@ def _vs_previous_passed(value: float, baseline: float, spec: dict) -> bool:
     return passed
 
 
-def _to_aware_utc(value: Any) -> datetime:
-    """Coerce a DB timestamp to a tz-aware UTC datetime; naive is assumed UTC."""
+def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
+    """Coerce a DB timestamp to a tz-aware UTC datetime.
+
+    A naive value is interpreted in ``source_timezone`` (the check's
+    source's declared ``timezone:``, default UTC per §13) before being
+    converted; an already-aware value is unaffected.
+    """
     if isinstance(value, str):
         value = datetime.fromisoformat(value)
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
+        value = value.replace(tzinfo=ZoneInfo(source_timezone))
     return value.astimezone(UTC)
 
 

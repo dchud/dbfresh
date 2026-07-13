@@ -482,6 +482,10 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
             raw_checks.extend(_read_included_file(include_path, env))
 
     checks = [_build_check(raw, defaults) for raw in raw_checks]
+    for check in checks:
+        source = sources.get(check.source)
+        if source is not None and source.timezone:
+            check.source_timezone = source.timezone
 
     calendar_raw = data.get("calendar")
     calendar = build_calendar(calendar_raw) if calendar_raw else None

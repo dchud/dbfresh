@@ -84,6 +84,45 @@ checks: []
     assert source.timezone == "America/New_York"
 
 
+def test_check_source_timezone_comes_from_its_source(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s:
+    type: sqlite
+    database: ":memory:"
+    timezone: America/New_York
+checks:
+  - source: s
+    object: t
+    metric: freshness
+    column: created_at
+    expect: { max_lag: 26h }
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].source_timezone == "America/New_York"
+
+
+def test_check_source_timezone_defaults_to_utc_when_source_has_none(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: freshness
+    column: created_at
+    expect: { max_lag: 26h }
+""",
+    )
+    cfg = load_config(path, env={})
+    assert cfg.checks[0].source_timezone == "UTC"
+
+
 def test_unknown_source_type_is_not_flagged_here_only_at_connect_time(tmp_path):
     # A bad `type:` is a connect-time concern (create_adapter already
     # raises there); config validation must not also reject it, since an

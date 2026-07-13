@@ -202,6 +202,7 @@ class Check:
     calendar: str | None = None
     skip_off_schedule: bool = False
     freshness_source: str = "column"
+    source_timezone: str = "UTC"
 
 
 _TABLE_LEVEL_METRICS = frozenset({"row_count", "schema"})
