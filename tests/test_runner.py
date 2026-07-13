@@ -1,3 +1,6 @@
+from datetime import UTC, datetime
+
+import dbfresh.runner
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.config import load_config
 from dbfresh.engine import Status
@@ -49,6 +52,60 @@ def test_run_and_persist_writes_observations_when_store_given(tmp_path):
     obs = store._conn.execute("SELECT status, value FROM observation").fetchone()
     assert obs["status"] == "OK"
     assert obs["value"] == 3.0
+    store.close()
+
+
+def test_run_and_persist_observations_use_injected_now_not_wall_clock(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+    frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
+
+    run_and_persist(config, store=store, now=frozen_now)
+
+    row = store._conn.execute("SELECT observed_at FROM observation").fetchone()
+    assert row["observed_at"] == frozen_now.isoformat()
+    store.close()
+
+
+def test_run_and_persist_start_run_started_at_is_injected_now(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+    frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
+
+    run_and_persist(config, store=store, now=frozen_now)
+
+    row = store._conn.execute("SELECT started_at FROM run").fetchone()
+    assert row["started_at"] == frozen_now.isoformat()
+    store.close()
+
+
+def test_run_and_persist_starts_run_row_before_evaluation(tmp_path, monkeypatch):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = _config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+
+    run_counts_at_evaluation = []
+    original_run_checks = dbfresh.runner.run_checks
+
+    def spy_run_checks(*args, **kwargs):
+        # The run row must already exist by the time evaluation starts.
+        count = store._conn.execute("SELECT COUNT(*) FROM run").fetchone()[0]
+        run_counts_at_evaluation.append(count)
+        return original_run_checks(*args, **kwargs)
+
+    monkeypatch.setattr("dbfresh.runner.run_checks", spy_run_checks)
+
+    run_and_persist(config, store=store)
+
+    assert run_counts_at_evaluation == [1]
     store.close()
 
 

@@ -123,7 +123,13 @@ class Store:
         if str(self._path) != ":memory:":
             self._path.parent.mkdir(parents=True, exist_ok=True)
         # check_same_thread=False: run_checks reads this store (for
-        # history-based expectations) from each source's worker thread.
+        # history-based expectations) from each source's worker thread
+        # while evaluation is in progress. Writes -- start_run,
+        # record_observation(s), finish_run -- happen only afterward, from
+        # the single controller thread that called run_and_persist; worker
+        # threads never write. That read-only-during-evaluation invariant
+        # is what makes sharing one sqlite3 connection across threads safe
+        # here without additional locking.
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
