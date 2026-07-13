@@ -53,7 +53,14 @@ class Expectation:
     operator: str
     operand: Any
 
-    def evaluate(self, value: float | None) -> bool:
+    def evaluate(self, value: float | str | None) -> bool:
+        """Evaluate ``value`` against this expectation.
+
+        ``value`` is a metric scalar for every numeric operator and for
+        ``max_lag``, but a schema fingerprint string for the ``schema``
+        check's ``equals``/``eq`` path -- the only operators that ever see
+        a ``str``.
+        """
         if value is None:
             return False
         op, x = self.operator, self.operand
@@ -71,6 +78,10 @@ class Expectation:
         if op == "gt":
             return value > x
         if op == "max_lag":
+            if not isinstance(value, int | float):
+                raise TypeError(
+                    f"max_lag expectation requires a numeric value, got {value!r}"
+                )
             return value <= parse_duration(x).total_seconds()
         raise AssertionError(f"unhandled operator: {op!r}")
 

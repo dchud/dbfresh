@@ -147,7 +147,13 @@ class Store:
             (started_at.isoformat(), _RUN_STARTED, git_sha),
         )
         self._conn.commit()
-        return cur.lastrowid
+        run_id = cur.lastrowid
+        if run_id is None:
+            # sqlite3 only returns None for lastrowid when the statement
+            # wasn't an INSERT (or the table has WITHOUT ROWID) -- neither
+            # applies to this fixed INSERT, so this never actually happens.
+            raise RuntimeError("run insert did not return a row id")
+        return run_id
 
     def finish_run(
         self, run_id: int, status: Status, finished_at: datetime | None = None
