@@ -143,6 +143,16 @@ class _RaisingOnDescribeDetailConnection(_FakeConnection):
         return super().resolve(sql)
 
 
+class _FailingDescribeDetailConnection(_FakeConnection):
+    """A fake connection where DESCRIBE DETAIL raises, as it does against a
+    table whose format DESCRIBE DETAIL doesn't apply to."""
+
+    def resolve(self, sql):
+        if "DESCRIBE DETAIL" in sql:
+            raise RuntimeError("DESCRIBE DETAIL is not supported for this table")
+        return super().resolve(sql)
+
+
 def _make_bare_adapter(responses, connection_cls=_FakeConnection) -> DatabricksAdapter:
     """A DatabricksAdapter over a fake connection, no live driver needed."""
     adapter = DatabricksAdapter.__new__(DatabricksAdapter)
@@ -346,6 +356,22 @@ def test_describe_never_issues_describe_detail_for_a_view():
     )
     info = adapter.describe("main.gold.active_customers")
     assert info.is_view is True
+    assert info.last_modified is None
+
+
+def test_describe_last_modified_none_when_describe_detail_raises():
+    # A base table whose format DESCRIBE DETAIL can't handle must still
+    # describe() successfully, degrading to last_modified=None rather than
+    # raising the whole describe() call.
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
+        ],
+        connection_cls=_FailingDescribeDetailConnection,
+    )
+    info = adapter.describe("main.gold.non_delta_table")
+    assert info.is_view is False
     assert info.last_modified is None
 
 

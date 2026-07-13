@@ -214,7 +214,16 @@ class DatabricksAdapter:
         return result[0]["table_type"] == "VIEW"
 
     def _describe_detail_last_modified(self, obj: str) -> datetime | None:
-        result = self.rows(f"DESCRIBE DETAIL {obj}")
+        """``lastModified`` from ``DESCRIBE DETAIL``, called only for a table.
+
+        DESCRIBE DETAIL applies to Delta tables; called against a table in
+        another format it can also fail. Any failure here degrades to
+        ``None`` rather than raising the whole ``describe()`` call.
+        """
+        try:
+            result = self.rows(f"DESCRIBE DETAIL {obj}")
+        except Exception:
+            return None
         if not result:
             return None
         return result[0].get("lastModified")
