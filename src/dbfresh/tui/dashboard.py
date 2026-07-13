@@ -1,6 +1,6 @@
 """Build the Home dashboard tree from config + the observation store.
 
-Structure (spec §10.2): source -> object, with the object's table-level
+Structure: source -> object, with the object's table-level
 checks (no ``column``/``key``) as direct leaves under the object node, and
 column/key-level checks nested under an intermediate node per column/key.
 Each node's own status is the worst of its children (reusing

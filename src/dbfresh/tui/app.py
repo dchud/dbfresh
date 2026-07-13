@@ -1,4 +1,4 @@
-"""The dbfresh ui Textual application (spec §10.2).
+"""The dbfresh ui Textual application.
 
 A presentation layer only: the Home dashboard, Run action, and Configure /
 Report / History destinations all read and write through the same
