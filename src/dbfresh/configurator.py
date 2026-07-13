@@ -138,6 +138,56 @@ def _row_count_baseline(has_calendar: bool) -> str:
     return "last_same_weekday" if has_calendar else "previous"
 
 
+_DEFAULT_NULL_RATE_MAX = 0.05
+
+
+def build_offered_check(
+    source: str,
+    obj: str,
+    column: str,
+    metric: str,
+    has_calendar: bool,
+    *,
+    max_null_rate: float = _DEFAULT_NULL_RATE_MAX,
+    max_lag: str = _DEFAULT_MAX_LAG,
+) -> dict:
+    """Turn one offered-checks pick (:func:`offered_column_checks`) into a
+    YAML-ready block via :func:`build_check`, shared by both front ends so
+    neither duplicates the volume-stability guards or the default max_lag
+    :func:`propose_checks` already uses. ``max_null_rate`` and ``max_lag``
+    only matter for their respective metrics; collecting them (e.g.
+    interactively) is a front-end concern this module never performs
+    itself.
+    """
+    if metric == "null_rate":
+        return build_check(
+            source, obj, "null_rate", column=column, expect={"max": max_null_rate}
+        )
+    if metric in ("sum", "avg", "min", "max"):
+        guards = {
+            "baseline": _row_count_baseline(has_calendar),
+            "min_ratio": _ROW_COUNT_MIN_RATIO,
+            "max_ratio": _ROW_COUNT_MAX_RATIO,
+        }
+        return build_check(
+            source, obj, metric, column=column, expect={"vs_previous": guards}
+        )
+    if metric == "duplicate_count":
+        return build_check(
+            source, obj, "duplicate_count", key=column, expect={"max": 0}
+        )
+    if metric == "freshness":
+        return build_check(
+            source,
+            obj,
+            "freshness",
+            column=column,
+            freshness_source="column",
+            expect={"max_lag": max_lag},
+        )
+    raise ValueError(f"unsupported offered metric: {metric!r}")
+
+
 def propose_checks(
     source: str,
     obj: str,

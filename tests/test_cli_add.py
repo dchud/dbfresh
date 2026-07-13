@@ -179,6 +179,24 @@ def test_add_wizard_closes_adapter_when_declining_missing_object(tmp_path, monke
     assert len(closed) == 2
 
 
+def test_prompt_offered_check_null_rate_uses_entered_value(monkeypatch):
+    from dbfresh.cli import _prompt_offered_check
+
+    answers = iter(["0.2"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    block = _prompt_offered_check("s", "t", "email", "null_rate", False)
+    assert block["expect"] == {"max": 0.2}
+
+
+def test_prompt_offered_check_freshness_uses_entered_max_lag(monkeypatch):
+    from dbfresh.cli import _prompt_offered_check
+
+    answers = iter(["2h"])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers))
+    block = _prompt_offered_check("s", "t", "modified_at", "freshness", False)
+    assert block["expect"] == {"max_lag": "2h"}
+
+
 def test_prompt_number_reprompts_on_non_numeric_input(monkeypatch):
     from dbfresh.cli import _prompt_number
 

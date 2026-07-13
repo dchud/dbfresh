@@ -225,36 +225,28 @@ def _prompt_index(msg: str, default: str, count: int) -> int:
         print(f"    enter a number from 1 to {count}")
 
 
-def _build_offered_check(
+def _prompt_offered_check(
     source: str, obj: str, column: str, metric: str, has_calendar: bool
 ) -> dict:
-    from dbfresh.configurator import build_check
+    """Collect any metric-specific value interactively, then build the block.
+
+    Prompting is a front-end concern :func:`configurator.build_offered_check`
+    never performs itself; only ``null_rate`` and ``freshness`` need extra
+    input here, everything else uses that function's defaults.
+    """
+    from dbfresh.configurator import build_offered_check
 
     if metric == "null_rate":
         value = _prompt_number("    max null rate", "0.05", float)
-        return build_check(
-            source, obj, "null_rate", column=column, expect={"max": value}
-        )
-    if metric in ("sum", "avg", "min", "max"):
-        baseline = "last_same_weekday" if has_calendar else "previous"
-        guards = {"baseline": baseline, "min_ratio": 0.5, "max_ratio": 2.0}
-        return build_check(
-            source, obj, metric, column=column, expect={"vs_previous": guards}
-        )
-    if metric == "duplicate_count":
-        return build_check(
-            source, obj, "duplicate_count", key=column, expect={"max": 0}
+        return build_offered_check(
+            source, obj, column, metric, has_calendar, max_null_rate=value
         )
     if metric == "freshness":
-        return build_check(
-            source,
-            obj,
-            "freshness",
-            column=column,
-            freshness_source="column",
-            expect={"max_lag": "24h"},
+        max_lag = _prompt("    max lag", "24h")
+        return build_offered_check(
+            source, obj, column, metric, has_calendar, max_lag=max_lag
         )
-    raise ValueError(f"unsupported offered metric: {metric!r}")
+    return build_offered_check(source, obj, column, metric, has_calendar)
 
 
 _SECRET_LOOKING_KEY_HINTS = ("token", "password", "pass", "secret", "key")
@@ -407,7 +399,7 @@ def _add_command(args: argparse.Namespace) -> int:
                 choice = _prompt("  add which (comma-separated, blank to skip)", "")
                 for metric in (m.strip() for m in choice.split(",") if m.strip()):
                     proposed.append(
-                        _build_offered_check(
+                        _prompt_offered_check(
                             source_name,
                             object_name,
                             offer["column"],
