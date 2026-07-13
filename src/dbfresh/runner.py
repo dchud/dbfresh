@@ -2,7 +2,7 @@
 
 Both front-ends need the same sequence: build one adapter per source,
 evaluate every check, and persist the results to the store. Factored here
-once so `dbfresh run` and `dbfresh ui` (§9, §10.2) never duplicate it.
+once so `dbfresh run` and `dbfresh ui` never duplicate it.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def run_and_persist(
     Builds one adapter per source from ``config.sources``, evaluates every
     check via :func:`~dbfresh.engine.run_checks`, and always closes the
     adapters afterward. When ``store`` is given, records one observation per
-    result inside a new run (§8); ``store`` itself is left open -- the
+    result inside a new run; ``store`` itself is left open -- the
     caller (CLI or TUI) owns its lifecycle, so it can be reused across
     repeated calls (e.g. the TUI's Run action).
     """

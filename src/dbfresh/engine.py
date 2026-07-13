@@ -53,14 +53,14 @@ def evaluate_check(
 ) -> Result:
     """Compile, execute, and evaluate one check against an adapter.
 
-    Wraps :func:`_evaluate_check` to stamp the stable ``check_id`` (§8.2) on
+    Wraps :func:`_evaluate_check` to stamp the stable ``check_id`` on
     every returned ``Result``, regardless of which branch produced it.
 
     ``store`` is an optional read-only handle onto prior observations (any
     object exposing ``latest_observation(check_id)``, e.g. a
     :class:`~dbfresh.store.Store`) used by history-based expectations —
-    currently the schema check's ``unchanged``, and later ``vs_previous``
-    (§8.3). Persistence of *this* run's results happens after the run
+    currently the schema check's ``unchanged``, and later ``vs_previous``.
+    Persistence of *this* run's results happens after the run
     completes, so the store holds only prior runs during evaluation.
     """
     result = _evaluate_check(check, adapter, now, calendar, store)
@@ -87,7 +87,7 @@ def _effective_expectation(
 def _should_skip(
     check: Check, calendar: BusinessCalendar | None, now: datetime
 ) -> bool:
-    """§7.4: skip a check when off-schedule and skip_off_schedule is set."""
+    """Skip a check when off-schedule and skip_off_schedule is set."""
     if not check.skip_off_schedule or calendar is None:
         return False
     run_date = calendar.local_date(now)
@@ -286,7 +286,7 @@ def _evaluate_schema(
     expect: Expectation | None,
     store: Any | None,
 ) -> Result:
-    """Fingerprint the object's columns and evaluate unchanged/equals (§6.2).
+    """Fingerprint the object's columns and evaluate unchanged/equals.
 
     ``schema`` is table-level and never compiles to SQL: it calls
     ``adapter.describe(object)`` and reduces the columns to a fingerprint
@@ -362,7 +362,7 @@ def _evaluate_vs_previous(
     calendar: BusinessCalendar | None,
     store: Any | None,
 ) -> Result:
-    """Compare the current scalar to a prior observation (§8.3).
+    """Compare the current scalar to a prior observation.
 
     The current value comes from the same SQL path as any other numeric
     metric. The baseline is read from ``store`` per ``expect.operand``:
@@ -442,7 +442,7 @@ def _read_vs_previous_baseline(
 
 def _vs_previous_passed(value: float, baseline: float, spec: dict) -> bool:
     """Ratio guards (when ``baseline`` != 0) and/or delta guards; every
-    configured guard must pass (§8.3)."""
+    configured guard must pass."""
     min_ratio, max_ratio = spec["min_ratio"], spec["max_ratio"]
     min_delta, max_delta = spec["min_delta"], spec["max_delta"]
     passed = True

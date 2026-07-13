@@ -1,11 +1,11 @@
-"""Authoritative metric and operator registries (§14 "single source of truth").
+"""Authoritative metric and operator registries -- the single source of truth.
 
 These are read-only descriptive catalogs, not new runtime behavior: they
 exist so the documentation build (`dbfresh.docsgen`) can render the check,
 expectation, and applicability reference tables from data instead of
 hand-maintained prose. The check x data-type applicability matrix has no
 separate registry here -- it reuses `configurator.category_offers`, which is
-already the single source for that mapping (§11.2).
+already the single source for that mapping.
 
 Parity tests (`tests/test_registry_parity.py`) assert every entry below is
 actually accepted by the engine's compiler (`compile_metric_sql`) and
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class MetricSpec:
-    """One row of the metric reference table (§6.2)."""
+    """One row of the metric reference table."""
 
     name: str
     tier: str  # "table" | "column"
@@ -71,7 +71,7 @@ def metric_by_name(name: str) -> MetricSpec:
 
 @dataclass(frozen=True)
 class OperatorSpec:
-    """One row of the expectation-operator reference table (§6.3)."""
+    """One row of the expectation-operator reference table."""
 
     operator: str
     meaning: str
@@ -91,7 +91,7 @@ OPERATORS: tuple[OperatorSpec, ...] = (
     OperatorSpec(
         "vs_previous",
         "compares to a prior observation via ratio and/or delta guards "
-        "(numeric metrics only; history-based, §8.3)",
+        "(numeric metrics only; history-based)",
     ),
     OperatorSpec(
         "unchanged",

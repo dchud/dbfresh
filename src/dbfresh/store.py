@@ -161,8 +161,8 @@ class Store:
     ) -> None:
         """Persist one observation for a check's result, OK or not.
 
-        ``weekday`` is stored in ``calendar``'s timezone when given, else UTC
-        (§8.1), so ``last_same_weekday_observation`` compares like for like.
+        ``weekday`` is stored in ``calendar``'s timezone when given, else UTC,
+        so ``last_same_weekday_observation`` compares like for like.
         """
         observed_at = _to_utc(observed_at)
         value, value_text = _split_value(result.value)
@@ -209,7 +209,7 @@ class Store:
     def latest_clean_observation(self, check_id: str) -> dict | None:
         """The most recent prior observation excluding ERROR/SKIPPED.
 
-        Used by ``vs_previous: {baseline: previous}`` (§8.3) so a broken or
+        Used by ``vs_previous: {baseline: previous}`` so a broken or
         skipped run's null value never becomes the comparison baseline.
         """
         placeholders = ", ".join("?" * len(_CLEAN_STATUSES))
@@ -224,10 +224,10 @@ class Store:
     def last_same_weekday_observation(
         self, check_id: str, run_date: date
     ) -> dict | None:
-        """The most recent prior same-weekday observation, 6+ days back (§8.3).
+        """The most recent prior same-weekday observation, 6+ days back.
 
         Used by ``vs_previous: {baseline: last_same_weekday}``: matches the
-        stored ``weekday`` (already in the calendar timezone, §8.1) against
+        stored ``weekday`` (already in the calendar timezone) against
         ``run_date``'s weekday, and requires ``observed_at`` to be at least
         6 calendar days before ``run_date`` so a same-week rerun is never
         selected. Excludes ERROR/SKIPPED like :meth:`latest_clean_observation`.
