@@ -76,3 +76,85 @@ def test_run_and_persist_failure_status_reflected_in_run(tmp_path):
     run = run_and_persist(config, store=None)
 
     assert run.status == Status.FAIL
+
+
+def test_run_and_persist_only_builds_adapters_for_referenced_sources(tmp_path):
+    # "unused" is never referenced by a check and would fail to build --
+    # run_and_persist must never even try, so it does not affect the run.
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "  unused: { type: does_not_exist }\n"
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    config = load_config(cfg)
+
+    run = run_and_persist(config, store=None)
+
+    assert run.status == Status.OK
+
+
+def test_run_and_persist_unreachable_source_is_error_others_still_run(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
+        "  down: { type: does_not_exist }\n"
+        "checks:\n"
+        "  - source: ok\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: down\n"
+        "    object: whatever\n"
+        "    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    config = load_config(cfg)
+
+    run = run_and_persist(config, store=None)
+
+    assert run.status == Status.ERROR
+    by_source = {r.source: r for r in run.results}
+    assert by_source["ok"].status == Status.OK
+    assert by_source["down"].status == Status.ERROR
+    assert by_source["down"].error is not None
+
+
+def test_run_and_persist_unreachable_source_still_persists_healthy_results(tmp_path):
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  ok: {{ type: sqlite, database: "{db}" }}\n'
+        "  down: { type: does_not_exist }\n"
+        "checks:\n"
+        "  - source: ok\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: down\n"
+        "    object: whatever\n"
+        "    metric: row_count\n"
+        "    expect: { max: 5 }\n"
+    )
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+
+    run_and_persist(config, store=store)
+
+    rows = store._conn.execute(
+        "SELECT source, status FROM observation ORDER BY source"
+    ).fetchall()
+    by_source = {row["source"]: row["status"] for row in rows}
+    assert by_source == {"down": "ERROR", "ok": "OK"}
+    run_row = store._conn.execute("SELECT status FROM run").fetchone()
+    assert run_row["status"] == "ERROR"
+    store.close()

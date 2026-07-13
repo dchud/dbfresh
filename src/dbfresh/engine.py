@@ -512,12 +512,32 @@ class RunResult:
     status: Status
 
 
+def _connect_error_result(check: Check, exc: BaseException) -> Result:
+    """An ERROR Result for a check whose source's adapter failed to build.
+
+    Used for a source listed in ``failed_sources`` -- never indexes
+    ``adapters`` for it, since no adapter exists.
+    """
+    label = f"assert {check.assert_}" if check.assert_ is not None else None
+    result = Result(
+        object=check.object,
+        metric=check.metric,
+        status=Status.ERROR,
+        source=check.source,
+        label=label,
+        error=str(exc),
+    )
+    result.check_id = check_id(check)
+    return result
+
+
 def run_checks(
     adapters: dict[str, Any],
     checks: list[Check],
     calendar: BusinessCalendar | None = None,
     now: datetime | None = None,
     store: Any | None = None,
+    failed_sources: dict[str, BaseException] | None = None,
 ) -> RunResult:
     """Evaluate checks per source and aggregate the worst status.
 
@@ -527,15 +547,27 @@ def run_checks(
     ``store`` is threaded straight through to :func:`evaluate_check` for
     history-based expectations; omit it and every run is otherwise identical
     to a run with no store (schema ``unchanged`` always passes).
+
+    ``failed_sources`` maps a source name to the exception raised while
+    building its adapter (see ``dbfresh.runner.run_and_persist``). Every
+    check on such a source becomes a ``Status.ERROR`` Result carrying that
+    exception's text, without ever indexing ``adapters`` for it -- other
+    sources evaluate normally, so one unreachable source never blocks the
+    rest of the run.
     """
     now = now or datetime.now(UTC)
+    failed_sources = failed_sources or {}
     by_source: dict[str, list[Check]] = {}
     for check in checks:
         by_source.setdefault(check.source, []).append(check)
 
     def run_source(source_checks: list[Check]) -> list[Result]:
+        source = source_checks[0].source
+        if source in failed_sources:
+            exc = failed_sources[source]
+            return [_connect_error_result(check, exc) for check in source_checks]
         return [
-            evaluate_check(check, adapters[check.source], now, calendar, store)
+            evaluate_check(check, adapters[source], now, calendar, store)
             for check in source_checks
         ]
 
