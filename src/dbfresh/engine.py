@@ -54,7 +54,13 @@ def evaluate_check(
     """Compile, execute, and evaluate one check against an adapter.
 
     Wraps :func:`_evaluate_check` to stamp the stable ``check_id`` on
-    every returned ``Result``, regardless of which branch produced it.
+    every returned ``Result``, regardless of which branch produced it, and
+    to catch any exception that escapes it -- e.g. ``compile_metric_sql``
+    raising on an unvalidated metric name, which happens outside every
+    per-metric try/except below. This is the outer safety net: each check
+    runs on a ``ThreadPoolExecutor`` worker (see ``run_checks``), and an
+    uncaught exception there would abort that worker and discard every
+    other source's completed results, not just this one check's.
 
     ``store`` is an optional read-only handle onto prior observations (any
     object exposing ``latest_observation(check_id)``, e.g. a
@@ -63,7 +69,16 @@ def evaluate_check(
     Persistence of *this* run's results happens after the run
     completes, so the store holds only prior runs during evaluation.
     """
-    result = _evaluate_check(check, adapter, now, calendar, store)
+    try:
+        result = _evaluate_check(check, adapter, now, calendar, store)
+    except Exception as exc:
+        result = Result(
+            object=check.object,
+            metric=check.metric,
+            status=Status.ERROR,
+            source=check.source,
+            error=str(exc),
+        )
     result.check_id = check_id(check)
     return result
 

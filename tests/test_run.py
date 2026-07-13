@@ -53,6 +53,26 @@ def test_run_checks_across_multiple_sources():
     b.close()
 
 
+def test_run_checks_bad_metric_does_not_abort_other_checks_same_source():
+    a = SqliteAdapter()
+    a.rows("CREATE TABLE t (id INTEGER)")
+    a.rows("INSERT INTO t (id) VALUES (1), (2)")
+    good = Check(
+        source="s",
+        object="t",
+        metric="row_count",
+        expect=parse_expectation({"between": [1, 10]}),
+    )
+    bad = Check(source="s", object="t", metric="not_a_real_metric")
+    run = run_checks({"s": a}, [good, bad])
+    assert len(run.results) == 2
+    by_metric = {r.metric: r.status for r in run.results}
+    assert by_metric["row_count"] == Status.OK
+    assert by_metric["not_a_real_metric"] == Status.ERROR
+    assert run.status == Status.ERROR  # ERROR outranks OK
+    a.close()
+
+
 def test_run_checks_aggregates_worst_status():
     a = SqliteAdapter()
     a.rows("CREATE TABLE t (id INTEGER)")

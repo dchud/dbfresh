@@ -245,3 +245,32 @@ def test_run_vs_previous_no_store_always_on_missing_pass(tmp_path):
     cfg = _config(tmp_path / "config.yaml", db, _VS_PREVIOUS_EXPECT)
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
     assert main(["run", "-c", str(cfg), "--no-store"]) == 0
+
+
+def test_run_unsupported_metric_exits_error_other_checks_still_run(tmp_path, capsys):
+    # metric: not validated at config-load time, only when compiled to SQL
+    # at run time -- this must land as an ERROR result, not a crash, and
+    # must not stop the healthy check on the same source from evaluating.
+    db = tmp_path / "data.db"
+    _seed_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: not_a_real_metric\n"
+    )
+
+    code = main(["run", "-c", str(cfg), "--json"])
+
+    assert code == 3
+    data = json.loads(capsys.readouterr().out)
+    assert data["status"] == "ERROR"
+    by_metric = {r["metric"]: r["status"] for r in data["results"]}
+    assert by_metric["row_count"] == "OK"
+    assert by_metric["not_a_real_metric"] == "ERROR"
