@@ -14,12 +14,11 @@ from datetime import datetime
 
 import pytest
 
-from dbfresh.adapters.base import Category
+from dbfresh.adapters.base import Category, validate_freshness_source
 from dbfresh.adapters.databricks import (
     DatabricksAdapter,
     DatabricksDialect,
     category_for_databricks,
-    validate_freshness_source,
 )
 from dbfresh.adapters.sqlserver import TSqlDialect
 

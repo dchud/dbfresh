@@ -8,8 +8,11 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from dbfresh.adapters.base import Adapter, HistoryAwareAdapter
-from dbfresh.adapters.databricks import validate_freshness_source
+from dbfresh.adapters.base import (
+    Adapter,
+    HistoryAwareAdapter,
+    validate_freshness_source,
+)
 from dbfresh.calendar import BusinessCalendar, weekday_key
 from dbfresh.checks import (
     Check,

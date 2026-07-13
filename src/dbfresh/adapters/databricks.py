@@ -57,32 +57,6 @@ def category_for_databricks(type_name: str) -> Category:
     return Category.OTHER
 
 
-_DESCRIBE_FRESHNESS_SOURCES = frozenset({"describe_history", "describe_detail"})
-
-
-def validate_freshness_source(
-    freshness_source: str, dialect: Dialect, is_view: bool = False
-) -> None:
-    """Validate a ``freshness_source`` against dialect capability and object kind.
-
-    Raises ``ValueError`` when the dialect doesn't declare the source as a
-    freshness capability, or when a metadata-based source
-    (``describe_history``/``describe_detail``) is used against a view --
-    those DESCRIBE forms describe table storage, which a view has none of;
-    a view must use a timestamp ``column`` instead.
-    """
-    if freshness_source not in dialect.freshness_sources:
-        raise ValueError(
-            f"{dialect.name!r} dialect does not support "
-            f"freshness_source {freshness_source!r}"
-        )
-    if freshness_source in _DESCRIBE_FRESHNESS_SOURCES and is_view:
-        raise ValueError(
-            f"freshness_source {freshness_source!r} is not valid for a view; "
-            "views must use a timestamp column"
-        )
-
-
 class DatabricksDialect(Dialect):
     name = "databricks"
     # Delta tables expose freshness via DESCRIBE metadata as well as a column.

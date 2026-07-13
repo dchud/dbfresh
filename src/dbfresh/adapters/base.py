@@ -70,6 +70,37 @@ def _split_object(obj: str) -> tuple[str | None, str]:
     return None, obj
 
 
+# freshness_source values that read Delta table metadata via DESCRIBE
+# instead of querying a timestamp column -- Databricks-only, table-only
+# (a view has no Delta storage for DESCRIBE to describe).
+_DESCRIBE_FRESHNESS_SOURCES = frozenset({"describe_history", "describe_detail"})
+
+
+def validate_freshness_source(
+    freshness_source: str, dialect: Dialect, is_view: bool = False
+) -> None:
+    """Validate a ``freshness_source`` against dialect capability and object kind.
+
+    Raises ``ValueError`` when the dialect doesn't declare the source as a
+    freshness capability, or when a metadata-based source
+    (``describe_history``/``describe_detail``) is used against a view --
+    those DESCRIBE forms describe table storage, which a view has none of;
+    a view must use a timestamp ``column`` instead. Generic across every
+    engine: the DESCRIBE forms happen to be Databricks-only today only
+    because no other dialect declares them in ``freshness_sources``.
+    """
+    if freshness_source not in dialect.freshness_sources:
+        raise ValueError(
+            f"{dialect.name!r} dialect does not support "
+            f"freshness_source {freshness_source!r}"
+        )
+    if freshness_source in _DESCRIBE_FRESHNESS_SOURCES and is_view:
+        raise ValueError(
+            f"freshness_source {freshness_source!r} is not valid for a view; "
+            "views must use a timestamp column"
+        )
+
+
 class Dialect:
     """SQL variances and capabilities for one engine family.
 
