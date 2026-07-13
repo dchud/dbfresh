@@ -1,6 +1,6 @@
-"""Tests for the registry-derived reference-page generator (§14, §15).
+"""Tests for the registry-derived reference-page generator.
 
-Covers the "docs lockstep" testing requirement (§15): every registered
+Covers the "docs lockstep" testing requirement: every registered
 metric and operator appears in the generated pages, and regenerating after a
 registry change actually changes the output -- proving the pages are
 rendered live from the registries, not hand-copied, so forgetting to run

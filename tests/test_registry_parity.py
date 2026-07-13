@@ -1,4 +1,4 @@
-"""Parity tests keeping `registry.py` honest against the engine (§14, §15).
+"""Parity tests keeping `registry.py` honest against the engine.
 
 These never change engine or check-compiler behavior; they read the same
 sets `checks.py` already defines (`_ALL_OPERATORS`) and probe
@@ -73,7 +73,7 @@ def test_operator_registry_matches_all_operators_exactly():
 
 
 # A valid (expect-dict, metric) fixture per operator, satisfying
-# parse_expectation's per-metric compatibility rules (§6.3): `unchanged`
+# parse_expectation's per-metric compatibility rules: `unchanged`
 # requires metric="schema"; `vs_previous` is rejected on "freshness"/"schema".
 _OPERATOR_FIXTURES: dict[str, tuple[dict, str | None]] = {
     "between": ({"between": [0, 10]}, None),
