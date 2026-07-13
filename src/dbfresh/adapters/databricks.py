@@ -93,6 +93,10 @@ class DatabricksDialect(Dialect):
 
 
 _HISTORY_DATA_OPERATIONS = frozenset({"WRITE", "MERGE", "DELETE", "UPDATE"})
+# DESCRIBE HISTORY returns rows newest-first; recent operations are all
+# that matter for a max-timestamp scan, so the fetch is bounded rather
+# than pulling the table's full retained history.
+_HISTORY_FETCH_LIMIT = 20
 
 
 def _split_qualified_name(obj: str) -> tuple[str | None, str | None, str]:
@@ -234,9 +238,11 @@ class DatabricksAdapter:
         Filtered to ``WRITE``/``MERGE``/``DELETE``/``UPDATE`` so
         ``OPTIMIZE``/``VACUUM`` maintenance noise never masks staleness.
         ``None`` when the table has no matching history entry (or none at
-        all -- history retention is finite).
+        all -- history retention is finite). The fetch is bounded to the
+        most recent entries -- history retention can span the table's
+        whole lifetime, and only recent operations matter for staleness.
         """
-        history = self.rows(f"DESCRIBE HISTORY {obj}")
+        history = self.rows(f"DESCRIBE HISTORY {obj} LIMIT {_HISTORY_FETCH_LIMIT}")
         timestamps = [
             row["timestamp"]
             for row in history

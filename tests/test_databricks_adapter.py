@@ -412,6 +412,17 @@ def test_describe_history_last_modified_filters_to_data_operations_and_takes_max
     assert adapter.describe_history_last_modified("main.gold.customer_360") == merge
 
 
+def test_describe_history_query_is_bounded_by_a_limit():
+    # History retention can be long; bound the fetch since only the most
+    # recent data operations matter for a max-timestamp scan.
+    adapter = _make_bare_adapter(
+        [("DESCRIBE HISTORY", _desc("timestamp", "operation"), [])]
+    )
+    adapter.describe_history_last_modified("main.gold.customer_360")
+    query = next(q for q in adapter._conn.queries if "DESCRIBE HISTORY" in q)
+    assert "LIMIT" in query
+
+
 def test_describe_history_last_modified_none_when_no_data_operations():
     adapter = _make_bare_adapter(
         [
