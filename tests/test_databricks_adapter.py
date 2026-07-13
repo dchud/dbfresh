@@ -1,0 +1,332 @@
+"""Contract-level tests for the native databricks-sql-connector adapter.
+
+No live Databricks SQL warehouse is required: ``scalar``/``rows``/``describe``
+are exercised against a fake DB-API connection returning recorded rows,
+including ``DESCRIBE DETAIL``/``DESCRIBE HISTORY`` output. A live round-trip
+sits behind ``DBFRESH_DATABRICKS_HOST`` (plus ``_HTTP_PATH``/``_TOKEN``) and
+is skipped unless those env vars are set.
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime
+
+import pytest
+
+from dbfresh.adapters.base import Category
+from dbfresh.adapters.databricks import (
+    DatabricksAdapter,
+    DatabricksDialect,
+    category_for_databricks,
+    validate_freshness_source,
+)
+from dbfresh.adapters.sqlserver import TSqlDialect
+
+DATABRICKS_HOST = os.environ.get("DBFRESH_DATABRICKS_HOST")
+DATABRICKS_HTTP_PATH = os.environ.get("DBFRESH_DATABRICKS_HTTP_PATH")
+DATABRICKS_TOKEN = os.environ.get("DBFRESH_DATABRICKS_TOKEN")
+
+
+def test_module_imports_without_databricks_sql_connector_installed():
+    # databricks-sql-connector is an optional extra, not a core dependency;
+    # this test environment doesn't install it, so a bare import proves the
+    # module has no module-level `import databricks.sql`. Constructing an
+    # adapter still needs the driver -- see the test below.
+    import dbfresh.adapters.databricks as _  # noqa: F401
+
+
+def test_constructing_adapter_needs_databricks_sql_connector_only_at_connect_time():
+    with pytest.raises(ModuleNotFoundError):
+        DatabricksAdapter(host="x", http_path="/sql/1.0/warehouses/abc", token="t")
+
+
+def test_dialect_freshness_capabilities():
+    caps = DatabricksDialect().freshness_sources
+    assert caps == frozenset({"column", "describe_history", "describe_detail"})
+
+
+def test_dialect_introspection_capability_is_stats_only():
+    # describe() never populates keys (Unity Catalog exposes no constraints
+    # here) or approx_row_count; only last_modified (a "stats" field).
+    assert DatabricksDialect().introspection_capabilities == frozenset({"stats"})
+
+
+def test_dialect_uses_inherited_limit_n():
+    sql = DatabricksDialect().limit("SELECT * FROM t", 20)
+    assert sql == "SELECT * FROM t LIMIT 20"
+
+
+@pytest.mark.parametrize(
+    ("type_name", "expected"),
+    [
+        ("int", Category.NUMERIC),
+        ("bigint", Category.NUMERIC),
+        ("double", Category.NUMERIC),
+        ("decimal(18,2)", Category.NUMERIC),
+        ("date", Category.TEMPORAL),
+        ("timestamp", Category.TEMPORAL),
+        ("timestamp_ntz", Category.TEMPORAL),
+        ("string", Category.STRING),
+        ("varchar(50)", Category.STRING),
+        ("boolean", Category.BOOLEAN),
+        ("binary", Category.OTHER),
+        ("array<string>", Category.OTHER),
+        ("map<string,int>", Category.OTHER),
+        ("variant", Category.OTHER),
+        ("geography", Category.OTHER),
+    ],
+)
+def test_category_for_databricks(type_name, expected):
+    assert category_for_databricks(type_name) == expected
+
+
+class _FakeCursor:
+    def __init__(self, connection):
+        self._connection = connection
+        self.description = None
+        self._rows = []
+
+    def execute(self, sql):
+        self._connection.queries.append(sql)
+        self.description, self._rows = self._connection.resolve(sql)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def close(self):
+        pass
+
+
+class _FakeConnection:
+    """Maps a SQL substring to a canned ``(description, rows)`` response.
+
+    ``description`` follows PEP 249 shape: a sequence of tuples whose first
+    element is the column name; only that first element is used here.
+    """
+
+    def __init__(self, responses):
+        self._responses = responses
+        self.queries: list[str] = []
+        self.closed = False
+
+    def resolve(self, sql):
+        for substring, description, rows in self._responses:
+            if substring in sql:
+                return description, rows
+        raise AssertionError(f"no fake response configured for SQL: {sql!r}")
+
+    def cursor(self):
+        return _FakeCursor(self)
+
+    def close(self):
+        self.closed = True
+
+
+def _make_bare_adapter(responses) -> DatabricksAdapter:
+    """A DatabricksAdapter over a fake connection, no live driver needed."""
+    adapter = DatabricksAdapter.__new__(DatabricksAdapter)
+    adapter._conn = _FakeConnection(responses)
+    adapter.dialect = DatabricksDialect()
+    return adapter
+
+
+def _desc(*names):
+    return [(name,) for name in names]
+
+
+def test_scalar_returns_first_column_of_first_row():
+    adapter = _make_bare_adapter([("SELECT COUNT(*)", _desc("count"), [(42,)])])
+    assert adapter.scalar("SELECT COUNT(*) FROM t") == 42
+
+
+def test_scalar_returns_none_when_no_rows():
+    adapter = _make_bare_adapter([("SELECT MAX", _desc("max"), [])])
+    assert adapter.scalar("SELECT MAX(x) FROM t") is None
+
+
+def test_rows_returns_list_of_dicts_using_cursor_description():
+    adapter = _make_bare_adapter(
+        [("SELECT * FROM t", _desc("a", "b"), [(1, "x"), (2, "y")])]
+    )
+    assert adapter.rows("SELECT * FROM t") == [
+        {"a": 1, "b": "x"},
+        {"a": 2, "b": "y"},
+    ]
+
+
+def test_rows_returns_empty_list_when_no_rows():
+    adapter = _make_bare_adapter([("SELECT * FROM t", _desc("a"), [])])
+    assert adapter.rows("SELECT * FROM t") == []
+
+
+def test_close_closes_the_underlying_connection():
+    adapter = _make_bare_adapter([])
+    adapter.close()
+    assert adapter._conn.closed is True
+
+
+_COLUMNS_DESC = _desc("column_name", "data_type", "is_nullable")
+
+
+def test_describe_populates_columns_from_information_schema():
+    adapter = _make_bare_adapter(
+        [
+            (
+                "information_schema.columns",
+                _COLUMNS_DESC,
+                [
+                    ("id", "int", "NO"),
+                    ("amount", "decimal(18,2)", "YES"),
+                    ("seen_at", "timestamp", "YES"),
+                ],
+            ),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    by_name = {c.name: c for c in info.columns}
+    assert by_name["id"].category == Category.NUMERIC
+    assert by_name["id"].nullable is False
+    assert by_name["amount"].category == Category.NUMERIC
+    assert by_name["amount"].type == "decimal(18,2)"
+    assert by_name["seen_at"].category == Category.TEMPORAL
+    assert by_name["seen_at"].nullable is True
+
+
+def test_describe_queries_the_catalog_qualified_information_schema():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    adapter.describe("main.gold.customer_360")
+    query = next(q for q in adapter._conn.queries if "information_schema.columns" in q)
+    assert "main.information_schema.columns" in query
+    assert "table_schema = 'gold'" in query
+    assert "table_name = 'customer_360'" in query
+
+
+def test_describe_keys_is_always_none():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    assert info.keys is None
+
+
+def test_describe_approx_row_count_is_always_none():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    assert info.approx_row_count is None
+
+
+def test_describe_last_modified_from_describe_detail():
+    when = datetime(2026, 1, 5, 8, 30)
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), [(when,)]),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    assert info.last_modified == when
+
+
+def test_describe_last_modified_none_when_describe_detail_returns_no_rows():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    assert info.last_modified is None
+
+
+def test_describe_history_last_modified_filters_to_data_operations_and_takes_max():
+    old_optimize = datetime(2026, 1, 1)
+    write = datetime(2026, 1, 3)
+    merge = datetime(2026, 1, 4)
+    adapter = _make_bare_adapter(
+        [
+            (
+                "DESCRIBE HISTORY",
+                _desc("timestamp", "operation"),
+                [
+                    (merge, "MERGE"),
+                    (old_optimize, "OPTIMIZE"),
+                    (write, "WRITE"),
+                ],
+            )
+        ]
+    )
+    assert adapter.describe_history_last_modified("main.gold.customer_360") == merge
+
+
+def test_describe_history_last_modified_none_when_no_data_operations():
+    adapter = _make_bare_adapter(
+        [
+            (
+                "DESCRIBE HISTORY",
+                _desc("timestamp", "operation"),
+                [(datetime(2026, 1, 1), "OPTIMIZE"), (datetime(2026, 1, 2), "VACUUM")],
+            )
+        ]
+    )
+    assert adapter.describe_history_last_modified("main.gold.customer_360") is None
+
+
+def test_validate_freshness_source_accepts_describe_forms_on_a_table():
+    validate_freshness_source("describe_history", DatabricksDialect(), is_view=False)
+    validate_freshness_source("describe_detail", DatabricksDialect(), is_view=False)
+
+
+def test_validate_freshness_source_accepts_column_always():
+    validate_freshness_source("column", DatabricksDialect(), is_view=True)
+    validate_freshness_source("column", TSqlDialect(), is_view=False)
+
+
+@pytest.mark.parametrize("source", ["describe_history", "describe_detail"])
+def test_validate_freshness_source_rejects_describe_forms_on_a_view(source):
+    with pytest.raises(ValueError, match="view"):
+        validate_freshness_source(source, DatabricksDialect(), is_view=True)
+
+
+@pytest.mark.parametrize("source", ["describe_history", "describe_detail"])
+def test_validate_freshness_source_rejects_capability_lacking_engine(source):
+    with pytest.raises(ValueError, match="tsql"):
+        validate_freshness_source(source, TSqlDialect(), is_view=False)
+
+
+@pytest.mark.skipif(
+    not (DATABRICKS_HOST and DATABRICKS_HTTP_PATH and DATABRICKS_TOKEN),
+    reason=(
+        "set DBFRESH_DATABRICKS_HOST/_HTTP_PATH/_TOKEN to run against a "
+        "live Databricks SQL warehouse"
+    ),
+)
+def test_live_describe_reflects_columns_and_last_modified():
+    adapter = DatabricksAdapter(
+        host=DATABRICKS_HOST,
+        http_path=DATABRICKS_HTTP_PATH,
+        token=DATABRICKS_TOKEN,
+    )
+    try:
+        info = adapter.describe("main.default.dbfresh_probe")
+        assert info.columns
+        assert info.keys is None
+    finally:
+        adapter.close()

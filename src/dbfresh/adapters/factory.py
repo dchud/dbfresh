@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from dbfresh.adapters.databricks import DatabricksAdapter
 from dbfresh.adapters.postgres import PostgresAdapter
 from dbfresh.adapters.sqlite import SqliteAdapter
+from dbfresh.adapters.sqlserver import SqlServerAdapter
 
-_ADAPTERS = {"sqlite": SqliteAdapter, "postgres": PostgresAdapter}
+_ADAPTERS = {
+    "sqlite": SqliteAdapter,
+    "postgres": PostgresAdapter,
+    "sqlserver": SqlServerAdapter,
+    "databricks": DatabricksAdapter,
+}
 
 
 def create_adapter(type_: str, params: dict[str, Any]):
