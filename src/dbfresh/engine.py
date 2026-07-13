@@ -211,7 +211,7 @@ def _evaluate_assert_sql(check: Check, adapter: Any) -> Result:
     Unlike ``assert:`` (a predicate compiled into a ``COUNT(*)`` query plus
     a separately capped evidence query), ``assert_sql:`` is arbitrary SQL
     the author wrote themselves, selecting the violating rows; it is run
-    once, capped via the dialect's row-limiting form (§5.3), and the row
+    once, capped via the dialect's row-limiting form, and the row
     count from that single capped fetch is the persisted violation count.
     """
     label = _assertion_label(check)
@@ -418,7 +418,7 @@ def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
     """Coerce a DB timestamp to a tz-aware UTC datetime.
 
     A naive value is interpreted in ``source_timezone`` (the check's
-    source's declared ``timezone:``, default UTC per §13) before being
+    source's declared ``timezone:``, default UTC) before being
     converted; an already-aware value is unaffected.
     """
     if isinstance(value, str):

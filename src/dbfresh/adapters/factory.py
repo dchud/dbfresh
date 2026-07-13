@@ -42,7 +42,7 @@ def adapter_class_for(type_: str) -> type:
 def create_adapter(type_: str, params: dict[str, Any], timeout: int | None = None):
     """Construct the adapter for a source ``type`` from its config params.
 
-    ``timeout`` (a source's connection timeout, §12.1) is forwarded to the
+    ``timeout`` (a source's connection timeout) is forwarded to the
     adapter's constructor only when it declares a ``timeout`` parameter --
     engines that don't support one simply never receive it, with no
     engine-name test here.

@@ -327,7 +327,7 @@ def _validate_freshness_source(
     check: Check, sources: dict[str, SourceConfig], label: str
 ) -> list[ValueError]:
     """Validate ``freshness_source``: the ``column`` origin needs a column;
-    the two DESCRIBE origins need dialect capability (§5.3)."""
+    the two DESCRIBE origins need dialect capability."""
     if check.metric != "freshness":
         return []
     if check.freshness_source == "column":

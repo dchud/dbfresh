@@ -1,4 +1,4 @@
-"""The repo-root config.example.yaml (dbfresh.md §3, §12.1) is a copyable
+"""The repo-root config.example.yaml is a copyable
 starting point -- it must parse and load cleanly with its ${VAR} secrets
 supplied, exercising both source types, a store block, a calendar block,
 and a representative spread of checks.
