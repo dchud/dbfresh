@@ -239,6 +239,28 @@ def probe_connection(type_: str, params: dict) -> ConnectionProbe:
     return ConnectionProbe(ok=True)
 
 
+def probe_new_source(type_: str, raw_params: dict) -> tuple[ConnectionProbe, dict]:
+    """Probe a brand-new source's params after resolving ``${VAR}`` tokens.
+
+    ``raw_params`` is exactly what will be written to the YAML -- it may
+    hold ``${VAR}`` secrets. The connection test itself must run against
+    the resolved value (never a literal ``${VAR}`` string), so this
+    returns ``(probe, resolved_params)``: use ``resolved_params`` to build
+    a live adapter for further use (e.g. ``describe()``) when
+    ``probe.ok``, but never write it -- the caller writes ``raw_params``
+    verbatim via :func:`add_source` so the tracked config keeps ``${VAR}``
+    rather than a literal secret. An undefined variable fails the probe
+    cleanly rather than raising.
+    """
+    from dbfresh.config import interpolate_env
+
+    try:
+        resolved = interpolate_env(raw_params)
+    except ValueError as exc:
+        return ConnectionProbe(ok=False, error=str(exc)), raw_params
+    return probe_connection(type_, resolved), resolved
+
+
 @dataclass(frozen=True)
 class ExistenceCheck:
     """Result of existence-checking a named object via ``describe()``.
@@ -308,21 +330,93 @@ def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> 
     config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
 
 
-def append_checks(target_path: str | Path, new_checks: list[dict]) -> None:
-    """Append proposed check blocks to ``target_path``.
+def _raw_checks_in(path: Path) -> list[dict]:
+    """The raw check blocks in one config or included-checks file."""
+    if not path.exists():
+        return []
+    raw = yaml.safe_load(path.read_text())
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    return list(raw.get("checks") or [])
+
+
+def _check_id_of(raw: dict) -> str:
+    """The :func:`dbfresh.checks.check_id` a raw YAML check block derives to.
+
+    Built from only the identity-bearing fields ``check_id`` hashes --
+    never ``expect``, so this never has to parse (and possibly reject) an
+    expectation just to compute an identity for dedup purposes.
+    """
+    from dbfresh.checks import Check, check_id
+
+    check = Check(
+        source=raw.get("source", ""),
+        object=raw.get("object", ""),
+        metric=raw.get("metric"),
+        column=raw.get("column"),
+        key=raw.get("key"),
+        assert_=raw.get("assert"),
+        id=raw.get("id"),
+    )
+    return check_id(check)
+
+
+def append_checks(
+    target_path: str | Path,
+    new_checks: list[dict],
+    *,
+    config_path: str | Path | None = None,
+) -> tuple[int, list[dict]]:
+    """Append proposed check blocks to ``target_path``, skipping duplicates.
 
     ``target_path`` is either the root config (a mapping with ``sources:``,
     ``checks:``, etc. -- every other top-level key is preserved) or an
     included checks file (a bare list, or a ``{checks: [...]}`` mapping).
     Never writes to the observation store -- definitions stay in git.
+
+    A proposed block whose derived ``check_id`` already exists is skipped
+    rather than written -- two ``check_id``-colliding blocks in the
+    composed config make the next :func:`dbfresh.config.load_config` raise,
+    so this dedup runs before anything touches disk. ``config_path`` is the
+    root config; when given, existing ids are gathered across every file
+    :func:`target_files` resolves (the whole composed config), not just
+    ``target_path`` -- a duplicate anywhere is caught, not only one already
+    in the same file. Without ``config_path``, only ``target_path``'s own
+    current contents are considered.
+
+    Returns ``(written, skipped)``: how many blocks were appended, and the
+    list of proposed blocks skipped as duplicates (for the caller to warn
+    about).
     """
     target_path = Path(target_path)
-    raw = yaml.safe_load(target_path.read_text()) if target_path.exists() else None
-    if raw is None:
-        raw = {"checks": []}
-    if isinstance(raw, list):
-        raw = raw + new_checks
-    else:
-        raw = dict(raw)
-        raw["checks"] = list(raw.get("checks") or []) + new_checks
-    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    existing_files = (
+        target_files(config_path) if config_path is not None else [target_path]
+    )
+    existing_ids = {
+        _check_id_of(raw) for f in existing_files for raw in _raw_checks_in(f)
+    }
+
+    to_write: list[dict] = []
+    skipped: list[dict] = []
+    for block in new_checks:
+        cid = _check_id_of(block)
+        if cid in existing_ids:
+            skipped.append(block)
+            continue
+        existing_ids.add(cid)
+        to_write.append(block)
+
+    if to_write:
+        raw = yaml.safe_load(target_path.read_text()) if target_path.exists() else None
+        if raw is None:
+            raw = {"checks": []}
+        if isinstance(raw, list):
+            raw = raw + to_write
+        else:
+            raw = dict(raw)
+            raw["checks"] = list(raw.get("checks") or []) + to_write
+        target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+    return len(to_write), skipped

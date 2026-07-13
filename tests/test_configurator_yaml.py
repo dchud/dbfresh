@@ -127,6 +127,56 @@ def test_add_source_preserves_existing_sources_and_checks(tmp_path):
     assert len(data["checks"]) == 1
 
 
+def test_append_checks_skips_duplicate_check_id_and_reports_it(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+    guards = {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2.0}
+    check = build_check("s", "t", "row_count", expect={"vs_previous": guards})
+    written, skipped = append_checks(cfg, [check], config_path=cfg)
+    assert written == 1
+    assert skipped == []
+
+    written, skipped = append_checks(cfg, [check], config_path=cfg)
+    assert written == 0
+    assert skipped == [check]
+
+    data = yaml.safe_load(cfg.read_text())
+    assert len(data["checks"]) == 1
+
+
+def test_append_checks_twice_for_same_object_keeps_config_loadable(tmp_path):
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows("CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL)")
+    info = adapter.describe("fct")
+    proposals = propose_checks("s", "fct", info, adapter.dialect)
+    adapter.close()
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    append_checks(cfg, proposals, config_path=cfg)
+    append_checks(cfg, proposals, config_path=cfg)  # add run twice on the same object
+
+    config = load_config(cfg)  # must not raise a duplicate check_id error
+    assert len(config.checks) == len(proposals)
+
+
+def test_append_checks_dedupes_against_other_included_files(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    (tmp_path / "checks").mkdir()
+    a = tmp_path / "checks" / "a.yaml"
+    b = tmp_path / "checks" / "b.yaml"
+    check = build_check("s", "t", "row_count", expect={"max": 5})
+    a.write_text(yaml.safe_dump({"checks": [check]}))
+    b.write_text("checks: []\n")
+    cfg.write_text("sources: {}\ninclude: [checks/*.yaml]\nchecks: []\n")
+
+    written, skipped = append_checks(b, [check], config_path=cfg)
+    assert written == 0
+    assert skipped == [check]
+    assert yaml.safe_load(b.read_text())["checks"] == []
+
+
 def test_emitted_bundle_reparses_and_runs_under_load_config(tmp_path):
     db = tmp_path / "data.db"
     adapter = SqliteAdapter(str(db))

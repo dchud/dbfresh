@@ -104,7 +104,7 @@ class ConfigureScreen(Screen[bool]):
         if not self._proposed:
             return
         target = target_files(self._config_path)[0]
-        append_checks(target, self._proposed)
+        append_checks(target, self._proposed, config_path=self._config_path)
         self.dismiss(True)
 
     def action_cancel(self) -> None:
