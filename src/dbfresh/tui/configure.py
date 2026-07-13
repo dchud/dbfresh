@@ -134,6 +134,7 @@ class ConfigureScreen(Screen[bool]):
         object_name: str,
         columns: list[Column],
         has_calendar: bool,
+        proposed: list[dict],
     ) -> None:
         """Per-column offered checks (:func:`offered_column_checks`), one
         unchecked checkbox per metric -- checking one adds it to what Accept
@@ -143,9 +144,12 @@ class ConfigureScreen(Screen[bool]):
         pre-filled with the CLI wizard's own prompt default for that metric
         (see :data:`_OFFERED_VALUE_DEFAULTS`) -- Accept rebuilds the check
         from whatever value sits in that Input at that point, see
-        :meth:`_rebuild_offered_check`."""
+        :meth:`_rebuild_offered_check`. ``proposed`` is the bundle this
+        object's Propose click already built, passed through so
+        :func:`offered_column_checks` excludes any ``(metric, column)`` pair
+        already covered there instead of offering it a second time."""
         container = self.query_one("#offered-checks", Vertical)
-        for offer in offered_column_checks(columns):
+        for offer in offered_column_checks(columns, proposed):
             if not offer["checks"]:
                 continue
             container.mount(
@@ -237,7 +241,11 @@ class ConfigureScreen(Screen[bool]):
             key_note = key_introspection_note(adapter.dialect, existence.info)
             self._mount_proposed_checkboxes()
             self._mount_offered_checkboxes(
-                source_name, object_name, existence.info.columns, has_calendar
+                source_name,
+                object_name,
+                existence.info.columns,
+                has_calendar,
+                self._proposed,
             )
         finally:
             adapter.close()

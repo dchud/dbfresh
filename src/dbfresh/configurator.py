@@ -89,18 +89,57 @@ def category_offers(category: Category) -> list[str]:
     return list(_CATEGORY_OFFERS[category])
 
 
-def offered_column_checks(columns: list[Column]) -> list[dict]:
+def _proposed_metric_columns(proposed: list[dict]) -> set[tuple[str, str]]:
+    """The ``(metric, column)`` pairs a proposed bundle already covers.
+
+    Keyed the same way an offer entry names its own column: most metrics
+    carry their column in ``column``, but ``duplicate_count``'s identity
+    lives in ``key`` instead (see :func:`build_check` and
+    :func:`build_offered_check`), so this reads ``key`` for that metric
+    rather than missing the overlap entirely. A block with neither field
+    (``schema``, ``row_count``, or a ``describe_history``-sourced
+    ``freshness``) contributes nothing here.
+    """
+    pairs: set[tuple[str, str]] = set()
+    for block in proposed:
+        metric = block.get("metric")
+        column = (
+            block.get("key") if metric == "duplicate_count" else block.get("column")
+        )
+        if metric is not None and column is not None:
+            pairs.add((metric, column))
+    return pairs
+
+
+def offered_column_checks(
+    columns: list[Column], proposed: list[dict] | None = None
+) -> list[dict]:
     """Per-column offer entries: category-appropriate checks, not preselected.
 
     ``null_rate`` is omitted for ``NOT NULL`` columns -- the engine already
     enforces them.
+
+    ``proposed`` is the bundle :func:`propose_checks` already built for this
+    object, if any. Any ``(metric, column)`` pair it already covers is
+    excluded from the offer list rather than offered a second time: a
+    ``check_id`` hashes source/object/metric/column but deliberately
+    ignores ``expect`` (so tuning a threshold later doesn't fork history),
+    which means an auto-proposed check and an offered one for the same
+    metric and column collide on identity -- selecting both would silently
+    drop one via :func:`append_checks`'s dedup instead of writing two
+    checks. This affects more than ``freshness``: a single-column key that
+    is also a ``numeric`` or ``string`` column gets a proposed
+    ``duplicate_count``, which would otherwise be offered again for the
+    same column too. Without ``proposed``, nothing is excluded.
     """
+    already = _proposed_metric_columns(proposed or [])
     offers = []
     for column in columns:
         checks = [
             metric
             for metric in category_offers(column.category)
-            if metric != "null_rate" or column.nullable
+            if (metric != "null_rate" or column.nullable)
+            and (metric, column.name) not in already
         ]
         offers.append(
             {"column": column.name, "category": column.category.value, "checks": checks}

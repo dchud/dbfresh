@@ -6,7 +6,11 @@ from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter, SqliteDialect
 from dbfresh.adapters.sqlserver import TSqlDialect
-from dbfresh.configurator import key_introspection_note, propose_checks
+from dbfresh.configurator import (
+    key_introspection_note,
+    offered_column_checks,
+    propose_checks,
+)
 
 
 def _col(name, category=Category.NUMERIC, nullable=False, type_="INT"):
@@ -174,3 +178,23 @@ def test_schema_and_row_count_are_always_proposed_even_with_minimal_metadata():
     proposals = propose_checks("s", "t", info, Dialect())
     metrics = {p["metric"] for p in proposals}
     assert {"schema", "row_count"} <= metrics
+
+
+def test_offered_checks_exclude_what_the_propose_flow_already_covers():
+    # ``fct``'s proposal already covers freshness on modified_at (the
+    # auto-detected timestamp column) and duplicate_count keyed on id (a
+    # numeric single-column primary key) -- offered_column_checks, fed that
+    # same bundle, must not offer either metric again for those columns.
+    a = _sqlite_table()
+    info = a.describe("fct")
+    proposals = propose_checks("s", "fct", info, a.dialect)
+
+    offers = {
+        o["column"]: o["checks"] for o in offered_column_checks(info.columns, proposals)
+    }
+    assert "freshness" not in offers["modified_at"]
+    assert "duplicate_count" not in offers["id"]
+    # Neither column's other, non-overlapping offers were affected.
+    assert "null_rate" in offers["modified_at"]
+    assert "sum" in offers["id"]
+    a.close()
