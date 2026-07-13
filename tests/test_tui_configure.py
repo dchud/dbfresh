@@ -1,6 +1,7 @@
 import asyncio
 
 import yaml
+from textual.widgets import Checkbox
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
@@ -102,9 +103,9 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.pause()
 
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "row_count" in proposal_text
-            assert "schema" in proposal_text
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("row_count" in label for label in labels)
+            assert any("schema" in label for label in labels)
             accept_btn = app.screen.query_one("#accept-btn")
             assert not accept_btn.disabled
 
@@ -168,8 +169,8 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
             await pilot.click("#propose-btn")
             await pilot.pause()
 
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "freshness" not in proposal_text
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert not any("freshness" in label for label in labels)
 
     asyncio.run(scenario())
 
@@ -244,8 +245,8 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.pause()
 
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "freshness" in proposal_text
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("freshness" in label for label in labels)
 
             await pilot.click("#accept-btn")
             await pilot.pause()
@@ -450,6 +451,107 @@ def test_configure_screen_escape_cancels_without_writing(tmp_path):
             await pilot.pause()
 
             assert not isinstance(app.screen, ConfigureScreen)
+
+        data = yaml.safe_load(cfg.read_text())
+        assert data["checks"] == []
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            freshness_cb = next(
+                cb for cb in app.screen.query(Checkbox) if "freshness" in str(cb.label)
+            )
+            assert freshness_cb.value is True  # proposed checks start selected
+            freshness_cb.value = False
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+        data = yaml.safe_load(cfg.read_text())
+        metrics = [c["metric"] for c in data["checks"]]
+        assert "freshness" not in metrics
+        assert "schema" in metrics
+        assert "row_count" in metrics
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_offered_check_can_be_selected(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # "sum" over the numeric "amount" column is offered but is not
+            # part of the base proposed bundle, and starts unselected -- the
+            # same default as the CLI wizard's "blank to skip".
+            sum_cb = app.screen.query_one("#offered-amount-sum", Checkbox)
+            assert sum_cb.value is False
+            sum_cb.value = True
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+        data = yaml.safe_load(cfg.read_text())
+        sum_check = next(c for c in data["checks"] if c["metric"] == "sum")
+        assert sum_check["column"] == "amount"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            for cb in app.screen.query(Checkbox):
+                cb.value = False
+
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            # Nothing was selected, so Accept is a no-op: still on Configure.
+            assert isinstance(app.screen, ConfigureScreen)
 
         data = yaml.safe_load(cfg.read_text())
         assert data["checks"] == []
