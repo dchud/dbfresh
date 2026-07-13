@@ -47,6 +47,7 @@ class ObjectInfo:
     keys: list[list[str]] | None = None
     approx_row_count: int | None = None
     last_modified: datetime | None = None
+    is_view: bool = False
 
 
 def category_for(sqla_type: Any) -> Category:
