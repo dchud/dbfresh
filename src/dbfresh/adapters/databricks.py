@@ -148,13 +148,17 @@ class DatabricksAdapter:
         Columns come from ``information_schema.columns``; keys are always
         ``None`` and ``approx_row_count`` is never populated (neither is
         exposed cheaply here); ``last_modified`` comes from
-        ``DESCRIBE DETAIL``.
+        ``DESCRIBE DETAIL``; ``is_view`` comes from
+        ``information_schema.tables`` -- it is what lets the freshness
+        run-time guard reject ``describe_history``/``describe_detail``
+        against a view.
         """
         return ObjectInfo(
             columns=self._columns(obj),
             keys=None,
             approx_row_count=None,
             last_modified=self._describe_detail_last_modified(obj),
+            is_view=self._is_view(obj),
         )
 
     def _columns(self, obj: str) -> list[Column]:
@@ -180,6 +184,29 @@ class DatabricksAdapter:
             )
             for row in self.rows(sql)
         ]
+
+    def _is_view(self, obj: str) -> bool:
+        """Whether ``obj`` is a view, from ``information_schema.tables``.
+
+        ``table_type`` is ``'VIEW'`` for a view and something else (e.g.
+        ``'MANAGED'``, ``'EXTERNAL'``) for a table. No matching catalog row
+        -- the object doesn't exist -- defaults to ``False`` rather than
+        erroring; a genuinely missing object is handled elsewhere.
+        """
+        catalog, schema, table = _split_qualified_name(obj)
+        info_schema = (
+            f"{catalog}.information_schema.tables"
+            if catalog
+            else "information_schema.tables"
+        )
+        where = [f"table_name = '{table}'"]
+        if schema:
+            where.append(f"table_schema = '{schema}'")
+        sql = f"SELECT table_type FROM {info_schema} WHERE {' AND '.join(where)}"
+        result = self.rows(sql)
+        if not result:
+            return False
+        return result[0]["table_type"] == "VIEW"
 
     def _describe_detail_last_modified(self, obj: str) -> datetime | None:
         result = self.rows(f"DESCRIBE DETAIL {obj}")

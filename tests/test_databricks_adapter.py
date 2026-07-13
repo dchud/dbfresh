@@ -170,6 +170,8 @@ def test_close_closes_the_underlying_connection():
 
 
 _COLUMNS_DESC = _desc("column_name", "data_type", "is_nullable")
+_TABLES_DESC = _desc("table_type")
+_NOT_A_VIEW = ("information_schema.tables", _TABLES_DESC, [("MANAGED",)])
 
 
 def test_describe_populates_columns_from_information_schema():
@@ -184,6 +186,7 @@ def test_describe_populates_columns_from_information_schema():
                     ("seen_at", "timestamp", "YES"),
                 ],
             ),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), []),
         ]
     )
@@ -201,6 +204,7 @@ def test_describe_queries_the_catalog_qualified_information_schema():
     adapter = _make_bare_adapter(
         [
             ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), []),
         ]
     )
@@ -215,6 +219,7 @@ def test_describe_keys_is_always_none():
     adapter = _make_bare_adapter(
         [
             ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), []),
         ]
     )
@@ -226,6 +231,7 @@ def test_describe_approx_row_count_is_always_none():
     adapter = _make_bare_adapter(
         [
             ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), []),
         ]
     )
@@ -238,6 +244,7 @@ def test_describe_last_modified_from_describe_detail():
     adapter = _make_bare_adapter(
         [
             ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), [(when,)]),
         ]
     )
@@ -249,11 +256,80 @@ def test_describe_last_modified_none_when_describe_detail_returns_no_rows():
     adapter = _make_bare_adapter(
         [
             ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
             ("DESCRIBE DETAIL", _desc("lastModified"), []),
         ]
     )
     info = adapter.describe("main.gold.customer_360")
     assert info.last_modified is None
+
+
+def test_describe_is_view_true_when_table_type_is_view():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("information_schema.tables", _TABLES_DESC, [("VIEW",)]),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.active_customers")
+    assert info.is_view is True
+
+
+def test_describe_is_view_false_for_a_base_table():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.customer_360")
+    assert info.is_view is False
+
+
+def test_describe_is_view_false_when_catalog_has_no_matching_row():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("information_schema.tables", _TABLES_DESC, []),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.missing_object")
+    assert info.is_view is False
+
+
+def test_describe_queries_the_catalog_qualified_information_schema_tables():
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            _NOT_A_VIEW,
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    adapter.describe("main.gold.customer_360")
+    query = next(q for q in adapter._conn.queries if "information_schema.tables" in q)
+    assert "main.information_schema.tables" in query
+    assert "table_schema = 'gold'" in query
+    assert "table_name = 'customer_360'" in query
+
+
+def test_real_adapter_describe_is_view_true_rejects_describe_history_source():
+    # The run-time guard (validate_freshness_source) reads ObjectInfo.is_view;
+    # this exercises the real DatabricksAdapter.describe() populating it from
+    # a view's catalog entry, not a hand-rolled fake, so it proves the guard
+    # actually fires against what the native adapter reports.
+    adapter = _make_bare_adapter(
+        [
+            ("information_schema.columns", _COLUMNS_DESC, []),
+            ("information_schema.tables", _TABLES_DESC, [("VIEW",)]),
+            ("DESCRIBE DETAIL", _desc("lastModified"), []),
+        ]
+    )
+    info = adapter.describe("main.gold.active_customers")
+    with pytest.raises(ValueError, match="view"):
+        validate_freshness_source("describe_history", adapter.dialect, info.is_view)
 
 
 def test_describe_history_last_modified_filters_to_data_operations_and_takes_max():
