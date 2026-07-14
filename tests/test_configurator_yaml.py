@@ -257,6 +257,32 @@ def test_append_checks_twice_for_same_object_keeps_config_loadable(tmp_path):
     assert len(config.checks) == len(proposals)
 
 
+def test_append_checks_treats_distinct_assert_sql_blocks_as_distinct(tmp_path):
+    # Two different assert_sql checks on the same object must derive
+    # different check_ids -- previously the derived id ignored assert_sql
+    # entirely, so the second block looked like a duplicate of the first
+    # and was silently skipped.
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+    check_a = {
+        "source": "s",
+        "object": "t",
+        "assert_sql": "SELECT * FROM t WHERE amount < 0",
+    }
+    check_b = {
+        "source": "s",
+        "object": "t",
+        "assert_sql": "SELECT * FROM t WHERE amount > 1000000",
+    }
+
+    written, skipped = append_checks(cfg, [check_a, check_b], config_path=cfg)
+
+    assert written == 2
+    assert skipped == []
+    data = yaml.safe_load(cfg.read_text())
+    assert len(data["checks"]) == 2
+
+
 def test_append_checks_dedupes_against_other_included_files(tmp_path):
     cfg = tmp_path / "config.yaml"
     (tmp_path / "checks").mkdir()

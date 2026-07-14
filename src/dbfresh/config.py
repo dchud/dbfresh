@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
@@ -373,7 +374,8 @@ def _validate_checks(
 
     Covers: unknown source references, unknown metrics, missing
     discriminating fields, a metric check with no expectation, a check with
-    none of metric/assert/assert_sql, unknown check-block keys, an invalid
+    none of metric/assert/assert_sql (or more than one of them -- exactly
+    one primitive is required), unknown check-block keys, an invalid
     ``severity``, ``max_lag`` used outside ``freshness``, freshness-source
     problems (missing column, dialect capability), duplicate ``check_id``s,
     and calendar features used without a top-level ``calendar:`` block.
@@ -389,9 +391,25 @@ def _validate_checks(
         if extra_keys:
             errors.append(ValueError(f"{label}: unknown check field(s): {extra_keys}"))
 
-        if check.metric is None and check.assert_ is None and check.assert_sql is None:
+        primitives = [
+            name
+            for name, present in (
+                ("metric", check.metric is not None),
+                ("assert", check.assert_ is not None),
+                ("assert_sql", check.assert_sql is not None),
+            )
+            if present
+        ]
+        if not primitives:
             errors.append(
                 ValueError(f"{label}: check has none of metric, assert, or assert_sql")
+            )
+        elif len(primitives) > 1:
+            errors.append(
+                ValueError(
+                    f"{label}: check has more than one of metric/assert/assert_sql "
+                    f"({', '.join(primitives)}) -- a check must set exactly one"
+                )
             )
 
         if check.severity not in _VALID_SEVERITIES:
@@ -461,9 +479,24 @@ def _validate_sources(sources: dict[str, SourceConfig]) -> list[ValueError]:
     ``ERROR`` result, see ``runner.run_and_persist``), not a config
     validation failure: an unreferenced or intentionally-unreachable
     source must not block a load that never touches it.
+
+    Also probes each source's optional ``timezone:`` via
+    :class:`zoneinfo.ZoneInfo` -- an invalid name would otherwise load
+    cleanly and only surface as a per-check ``ERROR`` at run time, the
+    first time a freshness check on that source converts a naive
+    timestamp.
     """
     errors: list[ValueError] = []
     for name, source in sources.items():
+        if source.timezone is not None:
+            try:
+                ZoneInfo(source.timezone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                errors.append(
+                    ValueError(
+                        f"source {name!r}: invalid timezone {source.timezone!r}: {exc}"
+                    )
+                )
         try:
             cls = adapter_class_for(source.type)
         except ValueError:
@@ -507,6 +540,18 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     raw_checks = list(data.get("checks") or [])
     include_patterns = data.get("include")
     if include_patterns:
+        if isinstance(include_patterns, list):
+            # A pattern still containing an unresolved ${VAR} token (its
+            # variable was undefined, so interpolate_env left it in place
+            # and recorded it in `missing`) is never glob-resolved -- doing
+            # so would only ever match zero files and misreport the
+            # problem as an unmatched glob instead of the undefined
+            # variable it actually is.
+            include_patterns = [
+                pattern
+                for pattern in include_patterns
+                if not (isinstance(pattern, str) and _VAR.search(pattern))
+            ]
         for include_path in resolve_includes(config_dir, include_patterns):
             raw_checks.extend(_read_included_file(include_path, env, missing))
 

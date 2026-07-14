@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from dbfresh.config import load_config
+from dbfresh.config import ConfigError, load_config
 
 
 def _write(path, text):
@@ -148,6 +148,26 @@ checks: []
     )
     with pytest.raises(ValueError):
         load_config(root, env={})
+
+
+def test_undefined_var_in_include_pattern_names_the_variable(tmp_path):
+    # An undefined ${VAR} in an include: pattern must be reported as that
+    # undefined variable, not as "include glob matched no files" (the
+    # literal, unresolved "${CHECKS_DIR}/*.yaml" pattern never matches).
+    root = _write(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+include:
+  - ${CHECKS_DIR}/*.yaml
+checks: []
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config(root, env={})
+    message = str(excinfo.value)
+    assert "undefined environment variable: CHECKS_DIR" in message
+    assert "glob matched no files" not in message
 
 
 @pytest.mark.parametrize("key", ["sources", "calendar", "store", "defaults", "include"])

@@ -123,6 +123,25 @@ checks:
     assert cfg.checks[0].source_timezone == "UTC"
 
 
+def test_invalid_source_timezone_is_a_clean_validation_error_at_load(tmp_path):
+    # A typo'd timezone previously loaded cleanly and only surfaced as a
+    # per-check ERROR at run time, the first time a freshness check on
+    # that source converted a naive timestamp.
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s:
+    type: sqlite
+    database: ":memory:"
+    timezone: "Not/AZone"
+checks: []
+""",
+    )
+    with pytest.raises(ValueError, match="Not/AZone"):
+        load_config(path, env={})
+
+
 def test_unknown_source_type_is_not_flagged_here_only_at_connect_time(tmp_path):
     # A bad `type:` is a connect-time concern (create_adapter already
     # raises there); config validation must not also reject it, since an

@@ -602,6 +602,7 @@ def _check_id_of(raw: dict) -> str:
         column=raw.get("column"),
         key=raw.get("key"),
         assert_=raw.get("assert"),
+        assert_sql=raw.get("assert_sql"),
         id=raw.get("id"),
     )
     return check_id(check)
