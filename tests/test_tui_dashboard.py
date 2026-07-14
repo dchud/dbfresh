@@ -6,7 +6,7 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
-from dbfresh.tui.dashboard import build_dashboard
+from dbfresh.tui.dashboard import build_dashboard, check_label
 
 
 def _checks():
@@ -199,6 +199,34 @@ def test_object_with_all_unknown_checks_renders_unknown():
     t_node = _find_child(tree.root, "t")
     items_node = _find_child(t_node, "items")
     assert "unknown" in str(items_node.label)
+
+
+def test_check_label_for_assert_():
+    check = Check(source="s", object="orders", assert_="count(*) = 0")
+    assert check_label(check) == "assert count(*) = 0"
+
+
+def test_check_label_for_assert_sql():
+    check = Check(source="s", object="orders", assert_sql="select 1 where 1=0")
+    assert check_label(check) == "assert_sql select 1 where 1=0"
+
+
+def test_check_label_falls_back_to_generic_check_only_without_metric_or_assert():
+    check = Check(source="s", object="orders")
+    assert check_label(check) == "check"
+
+
+def test_assert_sql_check_gets_a_distinct_label_in_the_dashboard_tree():
+    checks = [Check(source="s", object="orders", assert_sql="select 1 where 1=0")]
+    store = Store(":memory:")
+    tree = Tree("dbfresh")
+
+    build_dashboard(tree, _config(checks), store)
+
+    s_node = _find_child(tree.root, "s")
+    orders_node = _find_child(s_node, "orders")
+    leaf_names = {str(c.label).split(" ")[0] for c in orders_node.children}
+    assert leaf_names == {"assert_sql"}
 
 
 def test_rebuild_clears_previous_tree_contents():

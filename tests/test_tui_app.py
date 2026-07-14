@@ -226,6 +226,39 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
     asyncio.run(scenario())
 
 
+def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        def raising_run_and_persist(config, store, now=None):
+            raise RuntimeError("store locked")
+
+        monkeypatch.setattr(runner, "run_and_persist", raising_run_and_persist)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The app survived the worker error rather than being torn
+            # down, and the dashboard/last_run are untouched.
+            tree = app.query_one("#dashboard-tree")
+            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
+            assert "unknown" in str(row_count_leaf.label)
+            assert app.last_run is None
+
+            messages = [n.message for n in app._notifications]
+            assert any("store locked" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
 def test_selecting_a_check_node_opens_history_with_its_observations(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
