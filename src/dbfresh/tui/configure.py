@@ -358,7 +358,10 @@ class ConfigureScreen(Screen[bool]):
         if target is None:
             files = target_files(self._config_path)
             target = files[0] if files else self._config_path
-        append_checks(target, selected, config_path=self._config_path)
+        written, skipped = append_checks(
+            target, selected, config_path=self._config_path
+        )
+        self.notify(f"wrote {written} check(s), skipped {len(skipped)} duplicate(s)")
         self.dismiss(True)
 
     def action_cancel(self) -> None:

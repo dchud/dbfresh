@@ -104,7 +104,7 @@ class DbfreshApp(App):
         """Start a check run in a worker thread; the UI stays responsive."""
         self._run_checks_worker()
 
-    @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP)
+    @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP, exit_on_error=False)
     def _run_checks_worker(self) -> RunResult:
         from dbfresh.runner import run_and_persist
 
@@ -113,15 +113,26 @@ class DbfreshApp(App):
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
 
-        A run that errors or gets cancelled (superseded by a later
-        keypress on an exclusive worker group) leaves the dashboard and
-        ``last_run`` untouched rather than raising.
+        A run that gets cancelled (superseded by a later keypress on an
+        exclusive worker group) leaves the dashboard and ``last_run``
+        untouched rather than raising. A run that errors (store locked
+        past its busy timeout, disk full, etc.) is caught the same way --
+        ``exit_on_error=False`` on the worker keeps the exception from
+        tearing down the whole app -- and is instead surfaced as an error
+        toast, again leaving the dashboard and ``last_run`` untouched.
         """
         if event.worker.group != _RUN_WORKER_GROUP:
             return
         if event.state == WorkerState.SUCCESS:
             self.last_run = event.worker.result
             self.refresh_dashboard()
+        elif event.state == WorkerState.ERROR:
+            self.notify(
+                f"check run failed: {event.worker.error}",
+                title="Run failed",
+                severity="error",
+                timeout=10,
+            )
 
     def action_configure(self) -> None:
         from dbfresh.tui.configure import ConfigureScreen

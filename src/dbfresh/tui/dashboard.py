@@ -47,6 +47,8 @@ def check_label(check: Check) -> str:
     """The short label shown on a check's leaf node (and reused by History)."""
     if check.assert_ is not None:
         return f"assert {check.assert_}"
+    if check.assert_sql is not None:
+        return f"assert_sql {check.assert_sql}"
     return check.metric or "check"
 
 

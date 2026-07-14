@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 import yaml
 from textual.widgets import Checkbox
 
@@ -542,10 +543,70 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_offered_null_rate_defaults_to_cli_default(tmp_path):
+@pytest.mark.parametrize(
+    "metric,build_table,column,set_value,default_text,expect_key,expect_value",
+    [
+        pytest.param(
+            "null_rate",
+            _table,
+            "amount",
+            None,
+            "0.05",
+            "max",
+            0.05,
+            id="null_rate-default",
+        ),
+        pytest.param(
+            "null_rate",
+            _table,
+            "amount",
+            "0.2",
+            "0.05",
+            "max",
+            0.2,
+            id="null_rate-custom",
+        ),
+        pytest.param(
+            "freshness",
+            _table_with_offered_temporal,
+            "event_time",
+            None,
+            "24h",
+            "max_lag",
+            "24h",
+            id="freshness-default",
+        ),
+        pytest.param(
+            "freshness",
+            _table_with_offered_temporal,
+            "event_time",
+            "6h",
+            "24h",
+            "max_lag",
+            "6h",
+            id="freshness-custom",
+        ),
+    ],
+)
+def test_configure_screen_offered_check_value_is_written(
+    tmp_path,
+    metric,
+    build_table,
+    column,
+    set_value,
+    default_text,
+    expect_key,
+    expect_value,
+):
+    """The threshold Input beside an offered null_rate/freshness checkbox is
+    pre-filled with the CLI wizard's own default for that metric (asserted
+    before touching it, so the default-value coverage from the un-parametrized
+    version survives), and Accept writes whichever value sits in the Input at
+    that point -- the untouched default, or a value typed over it."""
+
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        build_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -559,63 +620,50 @@ def test_configure_screen_offered_null_rate_defaults_to_cli_default(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.pause()
 
-            # The threshold Input beside the offered null_rate checkbox is
-            # pre-filled with the CLI wizard's own default.
-            value_input = app.screen.query_one("#offered-value-amount-null_rate")
-            assert value_input.value == "0.05"
+            value_input = app.screen.query_one(f"#offered-value-{column}-{metric}")
+            assert value_input.value == default_text
+            if set_value is not None:
+                value_input.value = set_value
 
-            app.screen.query_one("#offered-amount-null_rate").value = True
+            app.screen.query_one(f"#offered-{column}-{metric}").value = True
             await pilot.click("#accept-btn")
             await pilot.pause()
 
         data = yaml.safe_load(cfg.read_text())
-        null_rate = next(
-            c
-            for c in data["checks"]
-            if c["metric"] == "null_rate" and c["column"] == "amount"
+        check = next(
+            c for c in data["checks"] if c["metric"] == metric and c["column"] == column
         )
-        assert null_rate["expect"]["max"] == 0.05
+        assert check["expect"][expect_key] == expect_value
 
     asyncio.run(scenario())
 
 
-def test_configure_screen_offered_null_rate_custom_value_is_written(tmp_path):
+@pytest.mark.parametrize(
+    "metric,build_table,column,invalid_value",
+    [
+        pytest.param(
+            "null_rate", _table, "amount", "not-a-number", id="null_rate-invalid"
+        ),
+        pytest.param(
+            "freshness",
+            _table_with_offered_temporal,
+            "event_time",
+            "not-a-duration",
+            id="freshness-invalid",
+        ),
+    ],
+)
+def test_configure_screen_offered_check_invalid_value_shows_note(
+    tmp_path, metric, build_table, column, invalid_value
+):
+    """An offered null_rate/freshness threshold that doesn't parse for its
+    metric is reported back as a note on the Configure screen -- the same
+    value formats the CLI wizard's prompt accepts -- rather than being
+    written, or crashing the screen."""
+
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-input").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.pause()
-
-            app.screen.query_one("#offered-value-amount-null_rate").value = "0.2"
-            app.screen.query_one("#offered-amount-null_rate").value = True
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-        data = yaml.safe_load(cfg.read_text())
-        null_rate = next(
-            c
-            for c in data["checks"]
-            if c["metric"] == "null_rate" and c["column"] == "amount"
-        )
-        assert null_rate["expect"]["max"] == 0.2
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_offered_null_rate_invalid_value_shows_note(tmp_path):
-    async def scenario():
-        db = tmp_path / "data.db"
-        _table(db)
+        build_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -630,124 +678,16 @@ def test_configure_screen_offered_null_rate_invalid_value_shows_note(tmp_path):
             await pilot.pause()
 
             app.screen.query_one(
-                "#offered-value-amount-null_rate"
-            ).value = "not-a-number"
-            app.screen.query_one("#offered-amount-null_rate").value = True
+                f"#offered-value-{column}-{metric}"
+            ).value = invalid_value
+            app.screen.query_one(f"#offered-{column}-{metric}").value = True
             await pilot.click("#accept-btn")
             await pilot.pause()
 
             # Did not crash: still on the Configure screen, with a note.
             assert isinstance(app.screen, ConfigureScreen)
             proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "not-a-number" in proposal_text
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_offered_freshness_defaults_to_cli_default(tmp_path):
-    async def scenario():
-        db = tmp_path / "data.db"
-        _table_with_offered_temporal(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-input").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.pause()
-
-            # ``event_time`` is temporal but unconventionally named, so it's
-            # only ever offered, never auto-proposed -- unlike ``modified_at``,
-            # its offered freshness checkbox has no proposed counterpart to
-            # collide with. The threshold Input beside it is pre-filled with
-            # the CLI wizard's own default.
-            value_input = app.screen.query_one("#offered-value-event_time-freshness")
-            assert value_input.value == "24h"
-
-            app.screen.query_one("#offered-event_time-freshness").value = True
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-        data = yaml.safe_load(cfg.read_text())
-        freshness = next(
-            c
-            for c in data["checks"]
-            if c["metric"] == "freshness" and c["column"] == "event_time"
-        )
-        assert freshness["expect"]["max_lag"] == "24h"
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_offered_freshness_custom_value_is_written(tmp_path):
-    async def scenario():
-        db = tmp_path / "data.db"
-        _table_with_offered_temporal(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-input").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.pause()
-
-            app.screen.query_one("#offered-value-event_time-freshness").value = "6h"
-            app.screen.query_one("#offered-event_time-freshness").value = True
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-        data = yaml.safe_load(cfg.read_text())
-        freshness = next(
-            c
-            for c in data["checks"]
-            if c["metric"] == "freshness" and c["column"] == "event_time"
-        )
-        assert freshness["expect"]["max_lag"] == "6h"
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_offered_freshness_invalid_value_shows_note(tmp_path):
-    async def scenario():
-        db = tmp_path / "data.db"
-        _table_with_offered_temporal(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-input").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.pause()
-
-            app.screen.query_one(
-                "#offered-value-event_time-freshness"
-            ).value = "not-a-duration"
-            app.screen.query_one("#offered-event_time-freshness").value = True
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-            # Did not crash: still on the Configure screen, with a note.
-            assert isinstance(app.screen, ConfigureScreen)
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "not-a-duration" in proposal_text
+            assert invalid_value in proposal_text
 
         data = yaml.safe_load(cfg.read_text())
         assert data["checks"] == []
@@ -814,6 +754,67 @@ def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
 
         data = yaml.safe_load(cfg.read_text())
         assert data["checks"] == []
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
+    """Every check the table would propose already exists in the config
+    (same source/object/metric/column identity, regardless of threshold),
+    so Accept's dedup skips all of them and nothing new is written. Accept
+    must still tell the user that, rather than dismissing silently as if
+    something had been saved."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "checks:\n"
+            "  - source: s\n"
+            "    object: fct\n"
+            "    metric: schema\n"
+            "    expect: { unchanged: true }\n"
+            "  - source: s\n"
+            "    object: fct\n"
+            "    metric: row_count\n"
+            "    expect: { vs_previous: { baseline: previous, min_ratio: 0.5 } }\n"
+            "  - source: s\n"
+            "    object: fct\n"
+            "    metric: freshness\n"
+            "    column: modified_at\n"
+            "    expect: { max_lag: 24h }\n"
+            "  - source: s\n"
+            "    object: fct\n"
+            "    metric: duplicate_count\n"
+            "    key: id\n"
+            "    expect: { max: 0 }\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Every proposed checkbox starts checked, and every one of
+            # them collides with an existing check -- select everything
+            # as-is and accept it.
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            messages = [n.message for n in app._notifications]
+            assert any("0" in m and "wrote" in m for m in messages)
+            assert any("4" in m and "skipped" in m for m in messages)
+
+        data = yaml.safe_load(cfg.read_text())
+        assert len(data["checks"]) == 4
 
     asyncio.run(scenario())
 
