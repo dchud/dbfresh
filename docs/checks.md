@@ -35,6 +35,18 @@ expectation is `unchanged` (compare to the previous observation) or `equals`
 [Expectations & durations](expectations.md). On drift, the digest shows the
 added, removed, and retyped columns.
 
+`unchanged`'s baseline is the most recent observation that actually recorded
+a fingerprint -- a SKIPPED (`skip_off_schedule`) or ERROR (unreachable
+source) run persists with no fingerprint and is skipped past rather than
+read as "no prior observation," which would otherwise let real drift from
+right before a skip or an outage go undetected. The baseline is the last
+*recorded* fingerprint regardless of that observation's own status, and
+the semantic that follows from it is "detect a change," not "hold a
+permanent alarm": once a change is detected it alarms (FAIL, or WARN under
+`severity: warn`) exactly once, and the new shape becomes the baseline for
+every run after that. Pin a fingerprint with `equals` instead when you want
+an alarm that never self-clears.
+
 ### Assertions
 
 `assert: "<predicate>"` compiles to

@@ -1,6 +1,8 @@
+from datetime import UTC, datetime
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id, fingerprint_columns, parse_expectation
-from dbfresh.engine import Status, evaluate_check, run_checks
+from dbfresh.engine import Result, Status, evaluate_check, run_checks
 from dbfresh.store import Store
 
 
@@ -153,6 +155,109 @@ def test_schema_check_carries_check_id():
     result = evaluate_check(check, a)
     assert result.check_id == check_id(check)
     a.close()
+
+
+def _skipped_schema_observation(check) -> Result:
+    """A schema check's SKIPPED result, as ``_should_skip`` produces it for
+    real: no fingerprint recorded (``value`` is ``None``)."""
+    return Result(
+        object=check.object,
+        metric="schema",
+        status=Status.SKIPPED,
+        source=check.source,
+        value=None,
+        check_id=check_id(check),
+    )
+
+
+def _errored_schema_observation(check) -> Result:
+    """A schema check's ERROR result, as an unreachable source produces it
+    for real: no fingerprint recorded (``value`` is ``None``)."""
+    return Result(
+        object=check.object,
+        metric="schema",
+        status=Status.ERROR,
+        source=check.source,
+        value=None,
+        error="connection refused",
+        check_id=check_id(check),
+    )
+
+
+def test_schema_unchanged_detects_drift_after_a_skipped_observation(tmp_path):
+    # A SKIPPED run (e.g. skip_off_schedule) persists with no fingerprint.
+    # The unchanged baseline must be the last *recorded* fingerprint, not
+    # treat the skip as "no prior observation" and silently rebaseline on
+    # whatever the (possibly drifted) columns look like now.
+    a = _adapter_with_table("CREATE TABLE t (id INTEGER, name TEXT)")
+    store = Store(tmp_path / "obs.db")
+    check = _schema_check()
+    run_id = store.start_run()
+    first = evaluate_check(check, a, store=store)
+    store.record_observation(
+        run_id, first, observed_at=datetime(2026, 7, 1, tzinfo=UTC)
+    )
+    store.record_observation(
+        run_id,
+        _skipped_schema_observation(check),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+
+    a.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    second = evaluate_check(check, a, store=store)
+    assert second.status == Status.FAIL
+    assert second.diff == ["+ email (TEXT)"]
+    a.close()
+    store.close()
+
+
+def test_schema_unchanged_detects_drift_after_an_errored_observation(tmp_path):
+    # Same hole, via an unreachable-source ERROR run instead of a skip.
+    a = _adapter_with_table("CREATE TABLE t (id INTEGER, name TEXT)")
+    store = Store(tmp_path / "obs.db")
+    check = _schema_check()
+    run_id = store.start_run()
+    first = evaluate_check(check, a, store=store)
+    store.record_observation(
+        run_id, first, observed_at=datetime(2026, 7, 1, tzinfo=UTC)
+    )
+    store.record_observation(
+        run_id,
+        _errored_schema_observation(check),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+
+    a.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    second = evaluate_check(check, a, store=store)
+    assert second.status == Status.FAIL
+    assert second.diff == ["+ email (TEXT)"]
+    a.close()
+    store.close()
+
+
+def test_schema_unchanged_rebaselines_after_a_detected_change(tmp_path):
+    # A detected change alarms once; the new shape then becomes the
+    # baseline, so a following run with that same new shape is OK.
+    a = _adapter_with_table("CREATE TABLE t (id INTEGER, name TEXT)")
+    store = Store(tmp_path / "obs.db")
+    check = _schema_check()
+    run_id = store.start_run()
+    first = evaluate_check(check, a, store=store)
+    store.record_observation(
+        run_id, first, observed_at=datetime(2026, 7, 1, tzinfo=UTC)
+    )
+
+    a.rows("ALTER TABLE t ADD COLUMN email TEXT")
+    second = evaluate_check(check, a, store=store)
+    assert second.status == Status.FAIL
+    store.record_observation(
+        run_id, second, observed_at=datetime(2026, 7, 2, tzinfo=UTC)
+    )
+
+    third = evaluate_check(check, a, store=store)
+    assert third.status == Status.OK
+    a.close()
+    store.close()
 
 
 def test_run_checks_threads_store_through_for_schema(tmp_path):

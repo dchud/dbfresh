@@ -257,6 +257,27 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def latest_fingerprint_observation(self, check_id: str) -> dict | None:
+        """The most recent prior observation for ``check_id`` that recorded
+        a fingerprint (``value_text IS NOT NULL``), or ``None``.
+
+        Used by the schema ``unchanged`` baseline. A SKIPPED
+        (``skip_off_schedule``) or ERROR (unreachable source) observation
+        persists with ``value_text`` NULL -- no fingerprint -- and reading
+        it as "the latest observation" would read as "no baseline", which
+        makes ``unchanged`` pass and silently rebaseline on whatever the
+        (possibly drifted) columns look like now. This skips straight past
+        any such value-less row to the most recent one that actually
+        recorded a fingerprint, regardless of that row's status -- an OK,
+        WARN, or FAIL schema observation all carry one.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM observation WHERE check_id = ? AND value_text IS NOT NULL "
+            "ORDER BY observed_at DESC LIMIT 1",
+            (check_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def latest_clean_observation(self, check_id: str) -> dict | None:
         """The most recent prior observation excluding ERROR/SKIPPED.
 

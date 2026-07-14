@@ -292,10 +292,16 @@ def _evaluate_schema(
     ``schema`` is table-level and never compiles to SQL: it calls
     ``adapter.describe(object)`` and reduces the columns to a fingerprint
     (:func:`~dbfresh.checks.fingerprint_columns`). ``unchanged`` compares
-    against the most recent prior observation read from ``store`` (``None``
-    when there is no prior observation or no store — first run passes and
-    establishes the baseline); ``equals`` compares against a pinned
-    fingerprint. On drift, ``diff`` carries the added/removed/retyped columns.
+    against the most recent prior observation that actually recorded a
+    fingerprint (``store.latest_fingerprint_observation`` -- ``None`` when
+    there is no such observation or no store — first run passes and
+    establishes the baseline). A SKIPPED or ERROR observation carries no
+    fingerprint and is skipped past rather than read as "no baseline": once
+    a drift is detected it alarms (FAIL/WARN) exactly once, and the new
+    shape becomes the baseline for the next run -- pin a fingerprint with
+    ``equals`` instead of ``unchanged`` for an alarm that never
+    self-clears. ``equals`` compares against a pinned fingerprint. On
+    drift, ``diff`` carries the added/removed/retyped columns.
     """
     expected = expect.describe() if expect else None
     try:
@@ -310,7 +316,7 @@ def _evaluate_schema(
     if expect.operator == "unchanged":
         prior = None
         if store is not None:
-            observation = store.latest_observation(check_id(check))
+            observation = store.latest_fingerprint_observation(check_id(check))
             if observation is not None:
                 prior = observation.get("value_text")
         passed = prior is None or fingerprint == prior
