@@ -97,6 +97,10 @@ class _FakeCursor:
     def fetchall(self):
         return list(self._rows)
 
+    def fetchmany(self, size):
+        rows, self._rows = self._rows[:size], self._rows[size:]
+        return rows
+
     def close(self):
         pass
 
@@ -194,6 +198,27 @@ def test_rows_returns_list_of_dicts_using_cursor_description():
 def test_rows_returns_empty_list_when_no_rows():
     adapter = _make_bare_adapter([("SELECT * FROM t", _desc("a"), [])])
     assert adapter.rows("SELECT * FROM t") == []
+
+
+def test_rows_limited_caps_the_fetch_via_the_cursor():
+    adapter = _make_bare_adapter(
+        [("SELECT * FROM t", _desc("a"), [(1,), (2,), (3,), (4,), (5,)])]
+    )
+    assert adapter.rows_limited("SELECT * FROM t", 3) == [
+        {"a": 1},
+        {"a": 2},
+        {"a": 3},
+    ]
+
+
+def test_rows_limited_returns_every_row_when_under_the_cap():
+    adapter = _make_bare_adapter([("SELECT * FROM t", _desc("a"), [(1,), (2,)])])
+    assert adapter.rows_limited("SELECT * FROM t", 5) == [{"a": 1}, {"a": 2}]
+
+
+def test_rows_limited_returns_empty_list_when_no_rows():
+    adapter = _make_bare_adapter([("SELECT * FROM t", _desc("a"), [])])
+    assert adapter.rows_limited("SELECT * FROM t", 5) == []
 
 
 def test_close_closes_the_underlying_connection():

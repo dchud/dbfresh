@@ -199,27 +199,39 @@ def _evaluate_assertion(check: Check, adapter: Adapter) -> Result:
     )
 
 
+_ASSERT_SQL_CAP = 20
+
+
 def _evaluate_assert_sql(check: Check, adapter: Adapter) -> Result:
-    """Run a raw, author-supplied violation-selecting query directly.
+    """Run a raw, author-supplied violation-selecting query, unmodified.
 
     Unlike ``assert:`` (a predicate compiled into a ``COUNT(*)`` query plus
     a separately capped evidence query), ``assert_sql:`` is arbitrary SQL
-    the author wrote themselves, selecting the violating rows; it is run
-    once, capped via the dialect's row-limiting form, and the row
-    count from that single capped fetch is the persisted violation count.
+    the author wrote themselves, selecting the violating rows. It is never
+    rewritten to inject a row cap -- that corrupts author SQL (a cap
+    injected inside a CTE truncates the scan instead of the returned rows;
+    ``SELECT DISTINCT`` becomes invalid syntax under some dialects'
+    rewrite) -- so it runs exactly as authored, capped only at fetch time
+    via ``rows_limited``, which fetches at most ``CAP + 1`` rows off the
+    cursor. Below the cap, the fetched length is the exact violation
+    count; a fetch of ``CAP + 1`` means the true count is ``CAP`` or more
+    but is not itself known, so the persisted/displayed value reads
+    ``"CAP+"`` rather than the literal (and meaningless) ``CAP + 1``.
     """
     assert check.assert_sql is not None  # only called from that branch
     label = _assertion_label(check)
     try:
-        rows = adapter.rows(adapter.dialect.limit(check.assert_sql, 20))
+        rows = adapter.rows_limited(check.assert_sql, _ASSERT_SQL_CAP + 1)
     except Exception as exc:  # unreachable source / query error -> ERROR
         return _error_result(check, exc, metric=None, label=label)
     count = len(rows)
     if count == 0:
         return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
+    capped = count > _ASSERT_SQL_CAP
+    value: int | str = f"{_ASSERT_SQL_CAP}+" if capped else count
     status = _verdict(check, False)
     return _result(
-        check, status, metric=None, value=count, label=label, samples=rows[:10]
+        check, status, metric=None, value=value, label=label, samples=rows[:10]
     )
 
 

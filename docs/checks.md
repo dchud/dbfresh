@@ -51,10 +51,19 @@ an alarm that never self-clears.
 
 `assert: "<predicate>"` compiles to
 `SELECT * FROM obj WHERE NOT (<predicate>)`, capped by the dialect's row
-limiting form (20 rows fetched, 10 shown in the digest); `assert_sql:` lets
-you supply the whole violation-selecting query directly for anything the
-predicate form can't express. The persisted value is the violation row
-count.
+limiting form (20 rows fetched, 10 shown in the digest); the persisted
+value is the exact violation row count.
+
+`assert_sql:` lets you supply the whole violation-selecting query directly
+for anything the predicate form can't express. It runs exactly as
+authored -- never rewritten to inject a row cap, which can corrupt the
+query (a cap injected inside a CTE truncates the scan instead of the
+returned rows; `SELECT DISTINCT` can become invalid syntax) -- and is
+capped only at fetch time: at most 21 rows are pulled off the cursor, 10
+shown in the digest. Below 20 violations the persisted value is the exact
+count; at 21 or more fetched rows, the true count isn't known beyond "at
+least 20," so the persisted/displayed value reads `"20+"` instead of a
+literal (and meaningless) 21.
 
 ## Column-level checks
 
