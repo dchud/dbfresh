@@ -1,3 +1,5 @@
+> **Historical document.** This is the original implementation specification and phased build plan for dbfresh, preserved as a record of where the project started. It is not maintained against the shipped code — the current design and usage are documented at the [documentation site](https://dchud.github.io/dbfresh/) and in the source. Details below may differ from what was built.
+
 # dbfresh — Implementation Specification
 
 **Status:** ready for implementation
