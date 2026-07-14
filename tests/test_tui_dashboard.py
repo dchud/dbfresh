@@ -1,12 +1,25 @@
+import asyncio
+from datetime import UTC, date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-from textual.widgets import Tree
+from textual.app import App, ComposeResult
+from textual.widgets import DataTable
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
-from dbfresh.tui.dashboard import build_dashboard, check_label
+from dbfresh.tui.dashboard import (
+    bucket_by_day,
+    check_label,
+    check_rows,
+    object_rows,
+    populate_grid,
+    trailing_dates,
+)
+
+_TODAY = date(2026, 7, 14)
 
 
 def _checks():
@@ -23,7 +36,7 @@ def _config(checks):
     return Config(sources={}, checks=checks, config_dir=Path("."))
 
 
-def _seed_observation(store, check, status, value=None):
+def _seed(store, check, status, observed_date, value=None):
     run_id = store.start_run()
     result = Result(
         object=check.object,
@@ -33,172 +46,166 @@ def _seed_observation(store, check, status, value=None):
         value=value,
         check_id=check_id(check),
     )
-    store.record_observation(run_id, result)
+    observed_at = datetime(
+        observed_date.year, observed_date.month, observed_date.day, 12, tzinfo=UTC
+    )
+    store.record_observation(run_id, result, observed_at=observed_at)
     store.finish_run(run_id, status)
 
 
-def _find_child(node, name):
-    for child in node.children:
-        if str(child.label).split(" ")[0] == name:
-            return child
-    raise AssertionError(f"no child named {name!r} among {list(node.children)}")
+# -- trailing_dates -----------------------------------------------------
 
 
-def test_build_dashboard_groups_by_source_then_object():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    source_names = sorted(str(n.label).split(" ")[0] for n in tree.root.children)
-    assert source_names == ["s", "t"]
+def test_trailing_dates_returns_seven_days_ending_today():
+    dates = trailing_dates(_TODAY)
+    assert len(dates) == 7
+    assert dates[0] == date(2026, 7, 8)
+    assert dates[-1] == _TODAY
 
 
-def test_table_level_checks_are_direct_children_of_object_node():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    leaf_names = {str(c.label).split(" ")[0] for c in orders_node.children}
-    # row_count and schema (table-level, no column/key) are direct leaves;
-    # email and modified_at (column-level) are nested column nodes instead.
-    assert {"row_count", "schema"} <= leaf_names
-    assert "email" in leaf_names
-    assert "modified_at" in leaf_names
-
-
-def test_column_level_checks_nest_under_a_column_node():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    email_node = _find_child(orders_node, "email")
-    metric_names = {str(c.label).split(" ")[0] for c in email_node.children}
-    assert metric_names == {"null_rate"}
-
-
-def test_key_level_checks_also_nest_under_a_column_node():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    t_node = _find_child(tree.root, "t")
-    items_node = _find_child(t_node, "items")
-    sku_node = _find_child(items_node, "sku")
-    metric_names = {str(c.label).split(" ")[0] for c in sku_node.children}
-    assert metric_names == {"duplicate_count"}
-
-
-def test_check_with_no_observation_renders_unknown():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    row_count_leaf = _find_child(orders_node, "row_count")
-    assert "unknown" in str(row_count_leaf.label)
-
-
-def test_check_status_reflects_latest_observation():
-    checks = _checks()
-    store = Store(":memory:")
-    _seed_observation(store, checks[0], Status.OK, value=3)  # row_count
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    row_count_leaf = _find_child(orders_node, "row_count")
-    assert "OK" in str(row_count_leaf.label)
-
-
-def test_column_node_status_is_worst_of_its_checks():
-    checks = _checks()
-    store = Store(":memory:")
-    _seed_observation(store, checks[2], Status.FAIL, value=0.5)  # email null_rate
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    email_node = _find_child(orders_node, "email")
-    assert "FAIL" in str(email_node.label)
-
-
-def test_column_node_rolls_up_to_skipped_when_all_checks_are_skipped():
-    checks = _checks()
-    store = Store(":memory:")
-    _seed_observation(store, checks[2], Status.SKIPPED)  # email null_rate
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    email_node = _find_child(orders_node, "email")
-    assert "SKIPPED" in str(email_node.label)
-    assert "OK" not in str(email_node.label)
-
-
-def test_column_node_rolls_up_to_ok_when_ok_and_skipped_are_mixed():
-    checks = [
-        Check(source="s", object="orders", metric="null_rate", column="email"),
-        Check(source="s", object="orders", metric="sum", column="email"),
+def test_trailing_dates_respects_days_param():
+    assert trailing_dates(_TODAY, days=3) == [
+        date(2026, 7, 12),
+        date(2026, 7, 13),
+        date(2026, 7, 14),
     ]
+
+
+# -- bucket_by_day --------------------------------------------------------
+
+
+def test_bucket_by_day_maps_each_date_to_its_status():
+    rows = [{"observed_at": "2026-07-14T09:00:00+00:00", "status": "OK"}]
+    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
+    assert result[_TODAY] == Status.OK
+
+
+def test_bucket_by_day_date_with_no_observation_is_none():
+    result = bucket_by_day([], trailing_dates(_TODAY), tz=None)
+    assert all(status is None for status in result.values())
+
+
+def test_bucket_by_day_multiple_runs_same_day_take_the_worst():
+    rows = [
+        {"observed_at": "2026-07-14T01:00:00+00:00", "status": "OK"},
+        {"observed_at": "2026-07-14T09:00:00+00:00", "status": "FAIL"},
+    ]
+    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
+    assert result[_TODAY] == Status.FAIL
+
+
+def test_bucket_by_day_skipped_only_rolls_up_to_skipped_not_ok():
+    rows = [{"observed_at": "2026-07-14T09:00:00+00:00", "status": "SKIPPED"}]
+    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
+    assert result[_TODAY] == Status.SKIPPED
+
+
+def test_bucket_by_day_buckets_by_the_given_timezone():
+    # Midnight UTC on the 14th is still the 13th in America/New_York
+    # (-04:00 in July) -- bucketing must use the display timezone, not UTC.
+    rows = [{"observed_at": "2026-07-14T00:30:00+00:00", "status": "OK"}]
+    dates = trailing_dates(_TODAY)
+    result_utc = bucket_by_day(rows, dates, tz=None)
+    result_ny = bucket_by_day(rows, dates, tz=ZoneInfo("America/New_York"))
+    assert result_utc[date(2026, 7, 14)] == Status.OK
+    assert result_ny[date(2026, 7, 13)] == Status.OK
+    assert result_ny[date(2026, 7, 14)] is None
+
+
+# -- object_rows ------------------------------------------------------------
+
+
+def test_object_rows_groups_by_source_then_object_sorted():
     store = Store(":memory:")
-    _seed_observation(store, checks[0], Status.OK, value=0.01)
-    _seed_observation(store, checks[1], Status.SKIPPED)
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    email_node = _find_child(orders_node, "email")
-    assert "OK" in str(email_node.label)
+    rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+    assert [(r.source, r.object) for r in rows] == [("s", "orders"), ("t", "items")]
 
 
-def test_object_and_source_node_status_is_worst_of_their_checks():
+def test_object_rows_label_is_source_dot_object():
+    store = Store(":memory:")
+    rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+    assert rows[0].label == "s.orders"
+
+
+def test_object_rows_with_no_observations_has_no_overall_or_days():
+    store = Store(":memory:")
+    rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+    orders = rows[0]
+    assert orders.overall is None
+    assert all(status is None for status in orders.days)
+
+
+def test_object_rows_overall_is_worst_of_the_objects_latest_checks():
     checks = _checks()
     store = Store(":memory:")
-    _seed_observation(store, checks[0], Status.OK, value=3)
-    _seed_observation(store, checks[2], Status.FAIL, value=0.9)  # email null_rate
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    assert "FAIL" in str(orders_node.label)
-    assert "FAIL" in str(s_node.label)
+    _seed(store, checks[0], Status.OK, date(2026, 7, 14))  # row_count
+    _seed(store, checks[2], Status.FAIL, date(2026, 7, 14))  # null_rate/email
+    rows = object_rows(_config(checks), store, _TODAY, tz=None)
+    orders = next(r for r in rows if r.object == "orders")
+    assert orders.overall == Status.FAIL
 
 
-def test_object_with_all_unknown_checks_renders_unknown():
+def test_object_rows_day_column_rolls_up_across_the_objects_checks():
     checks = _checks()
     store = Store(":memory:")
-    tree = Tree("dbfresh")
+    _seed(store, checks[0], Status.OK, date(2026, 7, 10))
+    _seed(store, checks[2], Status.WARN, date(2026, 7, 10))
+    rows = object_rows(_config(checks), store, _TODAY, tz=None)
+    orders = next(r for r in rows if r.object == "orders")
+    day_index = trailing_dates(_TODAY).index(date(2026, 7, 10))
+    assert orders.days[day_index] == Status.WARN
 
-    build_dashboard(tree, _config(checks), store)
 
-    t_node = _find_child(tree.root, "t")
-    items_node = _find_child(t_node, "items")
-    assert "unknown" in str(items_node.label)
+def test_object_rows_carries_source_and_object_for_drill_in():
+    store = Store(":memory:")
+    rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+    orders = next(r for r in rows if r.object == "orders")
+    assert orders.source == "s"
+    assert orders.object == "orders"
+    assert orders.check is None
+
+
+# -- check_rows ---------------------------------------------------------
+
+
+def test_check_rows_returns_one_row_per_check_in_that_object():
+    checks = _checks()
+    store = Store(":memory:")
+    rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
+    assert len(rows) == 4  # row_count, schema, null_rate, freshness -- not items/sku
+
+
+def test_check_rows_label_disambiguates_column_or_key():
+    checks = _checks()
+    store = Store(":memory:")
+    rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
+    labels = {r.label for r in rows}
+    assert "null_rate (email)" in labels
+    assert "freshness (modified_at)" in labels
+    assert "row_count" in labels  # table-level: no parenthetical
+
+
+def test_check_rows_row_carries_its_check_for_history_drill_in():
+    checks = _checks()
+    store = Store(":memory:")
+    rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
+    row_count_row = next(r for r in rows if r.label == "row_count")
+    assert row_count_row.check == checks[0]
+    assert row_count_row.key == check_id(checks[0])
+
+
+def test_check_rows_overall_reflects_that_checks_own_latest_status():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed(store, checks[0], Status.OK, date(2026, 7, 14))
+    rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
+    row_count_row = next(r for r in rows if r.label == "row_count")
+    schema_row = next(r for r in rows if r.label == "schema")
+    assert row_count_row.overall == Status.OK
+    assert schema_row.overall is None
+
+
+# -- check_label ----------------------------------------------------------
 
 
 def test_check_label_for_assert_():
@@ -216,26 +223,93 @@ def test_check_label_falls_back_to_generic_check_only_without_metric_or_assert()
     assert check_label(check) == "check"
 
 
-def test_assert_sql_check_gets_a_distinct_label_in_the_dashboard_tree():
-    checks = [Check(source="s", object="orders", assert_sql="select 1 where 1=0")]
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
-
-    build_dashboard(tree, _config(checks), store)
-
-    s_node = _find_child(tree.root, "s")
-    orders_node = _find_child(s_node, "orders")
-    leaf_names = {str(c.label).split(" ")[0] for c in orders_node.children}
-    assert leaf_names == {"assert_sql"}
+def test_check_label_table_level_metric_has_no_parenthetical():
+    check = Check(source="s", object="orders", metric="row_count")
+    assert check_label(check) == "row_count"
 
 
-def test_rebuild_clears_previous_tree_contents():
-    checks = _checks()
-    store = Store(":memory:")
-    tree = Tree("dbfresh")
+def test_check_label_column_level_metric_includes_column():
+    check = Check(source="s", object="orders", metric="null_rate", column="email")
+    assert check_label(check) == "null_rate (email)"
 
-    build_dashboard(tree, _config(checks), store)
-    build_dashboard(tree, _config(checks), store)
 
-    source_names = [str(n.label).split(" ")[0] for n in tree.root.children]
-    assert sorted(source_names) == ["s", "t"]
+def test_check_label_key_level_metric_includes_key():
+    check = Check(source="s", object="orders", metric="duplicate_count", key="sku")
+    assert check_label(check) == "duplicate_count (sku)"
+
+
+# -- populate_grid --------------------------------------------------------
+#
+# DataTable.add_column measures column width against self.app.console, so
+# populate_grid can only run inside a mounted app -- these run through a
+# bare test App via run_test(), same pattern test_tui_app.py uses for the
+# full DbfreshApp.
+
+
+class _GridTestApp(App):
+    def compose(self) -> ComposeResult:
+        yield DataTable(id="grid")
+
+
+def test_populate_grid_builds_label_overall_and_seven_day_columns():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY)
+            assert [str(c.label) for c in table.columns.values()] == [
+                "",
+                "overall",
+                "Wed",
+                "Thu",
+                "Fri",
+                "Sat",
+                "Sun",
+                "Mon",
+                "Tue",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_one_row_per_grid_row():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY)
+            assert table.row_count == len(rows)
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_rebuild_clears_previous_contents():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY)
+            populate_grid(table, rows, _TODAY)
+            assert table.row_count == len(rows)
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_row_key_matches_grid_row_key():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY)
+            row_keys = {key.value for key in table.rows}
+            assert row_keys == {row.key for row in rows}
+
+    asyncio.run(scenario())

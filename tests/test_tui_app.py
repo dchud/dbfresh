@@ -2,13 +2,17 @@ import asyncio
 import re
 import threading
 
+from textual.widgets import DataTable
+
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp
-from dbfresh.tui.screens import HistoryScreen, ReportScreen
+from dbfresh.tui.screens import HistoryScreen, ObjectDetailScreen, ReportScreen
+
+_OBJECT_ROW_KEY = "s\x1ft"  # source "s", object "t" -- matches GridRow.key's shape
 
 
 def _seed_db(path):
@@ -45,18 +49,8 @@ def _null_rate_check():
     return Check(source="s", object="t", metric="null_rate", column="email")
 
 
-def _find_child(node, name):
-    for child in node.children:
-        if str(child.label).split(" ")[0] == name:
-            return child
-    raise AssertionError(f"no child named {name!r} among {list(node.children)}")
-
-
-def _find_leaf(tree, path):
-    node = tree.root
-    for name in path:
-        node = _find_child(node, name)
-    return node
+def _overall_glyph(table, row_key):
+    return table.get_cell(row_key, "overall").plain
 
 
 def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
@@ -95,21 +89,19 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
             await pilot.pause()
-            tree = app.query_one("#dashboard-tree")
+            table = app.query_one("#dashboard-grid", DataTable)
+            # One row for s.t (object-scope), rolled up to the worst of its
+            # two checks.
+            assert table.row_count == 1
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # FAIL
 
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "OK" in str(row_count_leaf.label)
-
-            email_node = _find_leaf(tree, ["s", "t", "email"])
-            assert "FAIL" in str(email_node.label)
-            null_rate_leaf = _find_child(email_node, "null_rate")
-            assert "FAIL" in str(null_rate_leaf.label)
-
-            # object and source nodes roll up to the worst child status.
-            t_node = _find_leaf(tree, ["s", "t"])
-            s_node = _find_leaf(tree, ["s"])
-            assert "FAIL" in str(t_node.label)
-            assert "FAIL" in str(s_node.label)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ObjectDetailScreen)
+            detail_table = app.screen.query_one(DataTable)
+            assert detail_table.row_count == 2
+            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
+            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
 
     asyncio.run(scenario())
 
@@ -150,11 +142,10 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
             await pilot.pause()
-            tree = app.query_one("#dashboard-tree")
+            table = app.query_one("#dashboard-grid", DataTable)
 
-            # Nothing observed yet: both checks render as unknown.
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "unknown" in str(row_count_leaf.label)
+            # Nothing observed yet: the object row's overall is unknown.
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
 
             await pilot.press("r")
             # The Run action starts the check run on a background worker;
@@ -162,12 +153,14 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-            tree = app.query_one("#dashboard-tree")
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "OK" in str(row_count_leaf.label)  # 3 rows, between 1 and 10
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # null_rate fails
 
-            email_node = _find_leaf(tree, ["s", "t", "email"])
-            assert "FAIL" in str(email_node.label)  # 2/3 null > max 0.1
+            await pilot.press("enter")
+            await pilot.pause()
+            detail_table = app.screen.query_one(DataTable)
+            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
+            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
 
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
@@ -209,9 +202,8 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             # still responsive to further queries.
             assert started.wait(timeout=2)
             assert app.last_run is None
-            tree = app.query_one("#dashboard-tree")
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "unknown" in str(row_count_leaf.label)
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
 
             release.set()
             await app.workers.wait_for_complete()
@@ -219,9 +211,8 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
 
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
-            tree = app.query_one("#dashboard-tree")
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "OK" in str(row_count_leaf.label)
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
 
     asyncio.run(scenario())
 
@@ -248,9 +239,8 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
 
             # The app survived the worker error rather than being torn
             # down, and the dashboard/last_run are untouched.
-            tree = app.query_one("#dashboard-tree")
-            row_count_leaf = _find_leaf(tree, ["s", "t", "row_count"])
-            assert "unknown" in str(row_count_leaf.label)
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
             assert app.last_run is None
 
             messages = [n.message for n in app._notifications]
@@ -259,7 +249,7 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_selecting_a_check_node_opens_history_with_its_observations(tmp_path):
+def test_selecting_a_check_row_opens_history_with_its_observations(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -286,12 +276,13 @@ def test_selecting_a_check_node_opens_history_with_its_observations(tmp_path):
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
             await pilot.pause()
-            # dbfresh (root) -> s -> t -> row_count: three downs lands on it.
-            await pilot.press("down", "down", "down")
-            tree = app.query_one("#dashboard-tree")
-            assert tree.cursor_node is not None
-            assert str(tree.cursor_node.label).startswith("row_count")
+            # Home grid: one row (s.t) -- enter drills into its checks.
+            await pilot.press("enter")
+            await pilot.pause()
+            assert isinstance(app.screen, ObjectDetailScreen)
 
+            # ObjectDetailScreen: row_count is first (config order) --
+            # enter on the default cursor position opens its History.
             await pilot.press("enter")
             await pilot.pause()
 
@@ -347,8 +338,9 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
             await pilot.pause()
-            await pilot.press("down", "down", "down")
-            await pilot.press("enter")
+            await pilot.press("enter")  # Home -> ObjectDetailScreen
+            await pilot.pause()
+            await pilot.press("enter")  # ObjectDetailScreen -> HistoryScreen
             await pilot.pause()
 
             assert isinstance(app.screen, HistoryScreen)

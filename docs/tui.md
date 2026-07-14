@@ -6,28 +6,27 @@ batch CLI uses. It adds no check semantics of its own -- it's a second front
 end, not a second source of truth. `run` (not `ui`) is what a scheduler
 should invoke; the TUI is for a human looking around.
 
-## Home -- the status dashboard
+## Home -- the status grid
 
-A tree grouped by the check tiers: source → object, with the object's
-table-level checks (`row_count`, `schema`, assertions) as direct leaves
-under the object node, and column/key-level checks nested under an
-intermediate node per column or key. Every node's own status is the worst
-of its children, colored from the *latest stored observation* per check --
-`green` (`OK`), `yellow` (`WARN`), `red` (`FAIL`/`ERROR`), dim (`SKIPPED`).
-A node with no stored observation yet renders as "unknown" rather than
-winning or losing against a real status, until the next run.
+A grid: one row per `source.object`, columns `overall` (the latest stored
+observation, rolled up across that object's checks) plus the last 7
+calendar days, each colored from the worst status observed that day --
+`green` (`OK`), `yellow` (`WARN`), `red` (`FAIL`/`ERROR`), dim (`SKIPPED`
+or no run that day). Selecting a row drills into that object's individual
+checks at the same `[overall, last 7 days]` shape, one row per check.
 
 ## Keybindings
 
 | key | action |
 | --- | --- |
-| `r` | Run every configured check now, refresh the dashboard. |
+| `r` | Run every configured check now, refresh the grid. |
 | `c` | Open **Configure**. |
 | `p` | Open **Report** -- the digest from the latest in-session run. |
 | `q` | Quit. |
 
-Selecting a check's leaf node in the dashboard tree opens that check's
-**History** drill-down directly (no separate keybinding).
+Selecting an object row on Home drills into that object's checks; selecting
+a check row there opens that check's **History** drill-down (no separate
+keybinding at either level).
 
 ## Configure
 
@@ -39,8 +38,8 @@ Enter a source and object name, press **Propose** to introspect the object
 and see the proposed check bundle, then **Accept** to append it to the
 config (the root config, or the first included checks file when `include:`
 is configured) exactly as `dbfresh add` would. Accepting reloads the config
-and refreshes the Home dashboard so the new checks show up (as "unknown"
-until the next run).
+and refreshes the Home grid so the new checks show up (dim, no observation
+yet, until the next run).
 
 ## Report
 
@@ -61,5 +60,5 @@ uses.
 ## Testing
 
 The TUI is exercised with Textual's `App.run_test()` / `Pilot` harness:
-simulated key presses and widget queries, asserting on the rendered tree
-labels, screen contents, and navigation -- no real terminal required.
+simulated key presses and widget queries, asserting on rendered grid
+cells, screen contents, and navigation -- no real terminal required.

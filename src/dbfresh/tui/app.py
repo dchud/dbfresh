@@ -9,20 +9,21 @@ live here.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Tree
+from textual.widgets import DataTable, Footer, Header
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, load_config
 from dbfresh.models import RunResult
 from dbfresh.store import Store, resolve_store_path
-from dbfresh.tui.dashboard import NodeInfo, build_dashboard
+from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid
 
-_TREE_ID = "dashboard-tree"
+_GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
 
 
@@ -60,10 +61,11 @@ class DbfreshApp(App):
         self.config: Config | None = initial_config
         self.store: Store | None = None
         self.last_run: RunResult | None = None
+        self._rows_by_key: dict[str, GridRow] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Tree("dbfresh", id=_TREE_ID)
+        yield DataTable(id=_GRID_ID, cursor_type="row")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -96,9 +98,16 @@ class DbfreshApp(App):
         self.store = Store(store_path)
 
     def refresh_dashboard(self) -> None:
-        """Rebuild the dashboard tree from the current config and store."""
-        tree = self.query_one(f"#{_TREE_ID}", Tree)
-        build_dashboard(tree, self._require_config(), self._require_store())
+        """Rebuild the dashboard grid from the current config and store."""
+        from dbfresh.report import display_timezone
+
+        table = self.query_one(f"#{_GRID_ID}", DataTable)
+        config = self._require_config()
+        tz = display_timezone(config.calendar)
+        today = datetime.now(tz).date()
+        rows = object_rows(config, self._require_store(), today, tz)
+        populate_grid(table, rows, today)
+        self._rows_by_key = {row.key: row for row in rows}
 
     def action_run_checks(self) -> None:
         """Start a check run in a worker thread; the UI stays responsive."""
@@ -164,15 +173,31 @@ class DbfreshApp(App):
         tz = display_timezone(self._require_config().calendar)
         self.push_screen(ReportScreen(self.last_run, tz=tz))
 
-    def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
-        """Selecting a check leaf opens its History drill-down."""
-        info = event.node.data
-        if isinstance(info, NodeInfo) and info.kind == "check" and info.check:
-            from dbfresh.report import display_timezone
-            from dbfresh.tui.screens import HistoryScreen
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Selecting an object row opens its checks (ObjectDetailScreen).
 
-            tz = display_timezone(self._require_config().calendar)
-            self.push_screen(HistoryScreen(self._require_store(), info.check, tz=tz))
+        Guarded to the Home grid specifically (``event.data_table.id``):
+        ObjectDetailScreen's own grid also emits ``RowSelected``, but stops
+        that event itself before it would otherwise bubble up here.
+        """
+        if event.data_table.id != _GRID_ID or event.row_key.value is None:
+            return
+        row = self._rows_by_key.get(event.row_key.value)
+        if row is None or row.source is None or row.object is None:
+            return
+        from dbfresh.report import display_timezone
+        from dbfresh.tui.screens import ObjectDetailScreen
+
+        tz = display_timezone(self._require_config().calendar)
+        self.push_screen(
+            ObjectDetailScreen(
+                self._require_store(),
+                self._require_config(),
+                row.source,
+                row.object,
+                tz=tz,
+            )
+        )
 
     def on_unmount(self) -> None:
         if self.store is not None:
