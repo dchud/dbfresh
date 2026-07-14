@@ -1111,3 +1111,157 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path
         assert row_count_checks[0]["expect"]["max"] == 500.0
 
     asyncio.run(scenario())
+
+
+# -- proposed-check threshold input (df-cpj) -------------------------------
+#
+# _table's schema (id PK, amount REAL, modified_at TIMESTAMP) always
+# proposes in the same order: schema(0), row_count(1), freshness(2),
+# duplicate_count(3) -- so "proposed-value-2" is freshness's Input across
+# these tests, matching the fixture's fixed shape.
+
+
+def test_configure_screen_proposed_freshness_has_a_value_input_prefilled_with_default(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            assert app.screen._proposed[2]["metric"] == "freshness"
+            value_input = app.screen.query_one("#proposed-value-2")
+            assert value_input.value == "24h"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_non_freshness_proposed_checks_have_no_value_input(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            for i, block in enumerate(app.screen._proposed):
+                if block["metric"] == "freshness":
+                    continue
+                with pytest.raises(NoMatches):
+                    app.screen.query_one(f"#proposed-value-{i}")
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_accept_uses_edited_proposed_freshness_value(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#proposed-value-2").value = "48h"
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfigureScreen)
+
+        data = yaml.safe_load(cfg.read_text())
+        freshness_checks = [c for c in data["checks"] if c["metric"] == "freshness"]
+        assert len(freshness_checks) == 1
+        assert freshness_checks[0]["expect"]["max_lag"] == "48h"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        original_text = cfg.read_text()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#proposed-value-2").value = "not-a-duration"
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            # Errors keep the screen open rather than dismissing with a
+            # partially-accepted bundle.
+            assert isinstance(app.screen, ConfigureScreen)
+            text = str(app.screen.query_one("#proposal-text").content)
+            assert "invalid max lag" in text
+
+        assert cfg.read_text() == original_text
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#proposed-value-2").value = "not-a-duration"
+            app.screen.query_one("#proposed-2-freshness", Checkbox).value = False
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfigureScreen)
+
+        data = yaml.safe_load(cfg.read_text())
+        assert not any(c["metric"] == "freshness" for c in data["checks"])
+
+    asyncio.run(scenario())

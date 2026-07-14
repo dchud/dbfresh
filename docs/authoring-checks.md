@@ -72,11 +72,15 @@ The offered list also excludes any metric already auto-proposed for that
 same column (for example, `freshness` on the auto-detected timestamp
 column, or `duplicate_count` on a single-column key) -- offering it a
 second time would collide on check identity and be silently dropped when
-written. To change an already-proposed check's threshold, use the TUI
-Configure screen's existing-checks list (single-value operators --
-`max`, `min`, `max_lag`, and similar -- get an editable field and a Save
-button) or edit the value directly in the config; the CLI `dbfresh add`
-wizard itself still only ever appends new checks.
+written. The proposed `freshness` check itself gets an editable max_lag
+field right beside its checkbox in the TUI Configure screen, pre-filled
+with the "24h" default -- change it there before Accept, no round trip
+needed. To tune an already-*written* check's threshold afterward, use
+the TUI Configure screen's existing-checks list instead (single-value
+operators -- `max`, `min`, `max_lag`, and similar -- get an editable
+field and a Save button there too) or edit the value directly in the
+config; the CLI `dbfresh add` wizard itself still only ever appends new
+checks, with no threshold editing at either point.
 
 ## Safety and degradation
 
