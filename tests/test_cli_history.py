@@ -39,8 +39,8 @@ def test_history_prints_recent_observations(tmp_path, capsys, seed_observations)
     out = capsys.readouterr().out
     assert code == 0
     assert "dbo.fct_sales" in out
-    assert "100.0" in out
-    assert "120.0" in out
+    assert "100" in out
+    assert "120" in out
 
 
 def test_history_no_observations_returns_one(tmp_path, capsys):
@@ -99,7 +99,12 @@ def test_history_source_and_metric_disambiguate(tmp_path, capsys, seed_observati
 
 
 def test_history_limit_flag(tmp_path, capsys, seed_observations):
-    cfg = _config(tmp_path / "config.yaml")
+    # Pinned to a UTC calendar (rather than the plain _config() fixture) so
+    # the observed_at dates asserted below are deterministic regardless of
+    # the host machine's local timezone -- display_timezone() defaults to
+    # local time absent a configured calendar.
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ncalendar:\n  timezone: UTC\nchecks: []\n")
     store_path = tmp_path / "obs.db"
     seed_observations(
         store_path,
@@ -122,9 +127,9 @@ def test_history_limit_flag(tmp_path, capsys, seed_observations):
     )
     assert code == 0
     out = capsys.readouterr().out
-    assert "4.0" in out
-    assert "5.0" in out
-    assert "1.0" not in out
+    assert "2026-07-04" in out
+    assert "2026-07-05" in out
+    assert "2026-07-01" not in out
 
 
 def test_history_uses_calendar_timezone(tmp_path, capsys, seed_observations):

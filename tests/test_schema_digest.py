@@ -40,7 +40,8 @@ def test_digest_schema_fail_without_diff_falls_back_to_expected_observed():
         status=Status.FAIL,
     )
     text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
-    assert "expected equals id:BIGINT   observed id:INTEGER" in text
+    assert "✗ s.t · schema — expected equals id:BIGINT" in text
+    assert "observed: id:INTEGER" in text
 
 
 def test_digest_schema_error_shows_message_not_diff():
