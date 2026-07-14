@@ -33,6 +33,14 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
     to ``tz`` (default UTC) and written with a trailing ``Z`` when that
     offset is zero, otherwise a numeric ``+HH:MM``/``-HH:MM`` offset. No
     microseconds.
+
+    This default is a low-level formatting fallback for a direct call (e.g.
+    a test exercising this function in isolation) -- it is deliberately
+    independent of :func:`display_timezone`, the app's actual display-
+    timezone *policy* (local by default), which every real caller (the CLI,
+    the TUI) resolves first and passes in explicitly as ``tz``. That means
+    this UTC default is never actually exercised in production; it only
+    ever fires for a caller that skips :func:`display_timezone`.
     """
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
@@ -42,8 +50,16 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
 
 
 def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:
-    """The report display timezone: a configured calendar's zone, else the
-    local system timezone.
+    """The app's actual display-timezone policy: a configured calendar's
+    zone, else the local system timezone -- never UTC as a bare default.
+
+    This is the one place that policy is decided; every real caller (the
+    CLI, the TUI) calls this first and passes the result into
+    :func:`format_timestamp` (via ``render_digest``/``render_history``) as
+    an explicit ``tz``, which is why that function's own separate UTC
+    default is never reached outside of a direct/test call -- the two
+    defaults look inconsistent side by side, but they are intentionally
+    different layers, not a bug.
 
     Local, not UTC, so the report header, history rows, and freshness's
     reconstructed last-update time are all local by default and consistent
