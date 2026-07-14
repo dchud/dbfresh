@@ -193,6 +193,10 @@ class _FrozenDateTime(datetime):
 
 def test_report_screen_shows_failures_and_warnings(snap_compare, tmp_path, monkeypatch):
     monkeypatch.setattr("dbfresh.report.datetime", _FrozenDateTime)
+    # display_timezone() defaults to the local system zone absent a
+    # configured calendar (this fixture has none) -- pin it to UTC so the
+    # snapshot is deterministic across machines, not just across runs.
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
@@ -204,7 +208,10 @@ def test_report_screen_shows_failures_and_warnings(snap_compare, tmp_path, monke
     )
 
 
-def test_history_screen_shows_trend(snap_compare, tmp_path):
+def test_history_screen_shows_trend(snap_compare, tmp_path, monkeypatch):
+    # See the comment in test_report_screen_shows_failures_and_warnings --
+    # same reason for pinning display_timezone to UTC here.
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 

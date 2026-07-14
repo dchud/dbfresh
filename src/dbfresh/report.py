@@ -7,8 +7,8 @@ import sys
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime, tzinfo
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.progress import (
@@ -41,9 +41,77 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
     return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
 
 
-def display_timezone(calendar: BusinessCalendar | None) -> tzinfo | None:
-    """The report display timezone: a configured calendar's zone, else UTC."""
-    return calendar.zone if calendar is not None else None
+def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:
+    """The report display timezone: a configured calendar's zone, else the
+    local system timezone.
+
+    Local, not UTC, so the report header, history rows, and freshness's
+    reconstructed last-update time are all local by default and consistent
+    with each other -- still ISO 8601 throughout, since format_timestamp
+    renders a numeric offset for any non-UTC zone, not just a trailing Z.
+    A machine already running in UTC (most servers/CI) sees no change.
+    """
+    if calendar is not None:
+        return calendar.zone
+    local = datetime.now().astimezone().tzinfo
+    assert local is not None  # astimezone() on an aware datetime always sets it
+    return local
+
+
+_DURATION_UNITS = (("d", 86400), ("h", 3600), ("m", 60), ("s", 1))
+
+
+def _format_duration(seconds: float) -> str:
+    """A human duration using its two most significant units, e.g. '5d 9h'."""
+    remaining = int(abs(seconds))
+    parts: list[str] = []
+    for suffix, unit_seconds in _DURATION_UNITS:
+        if remaining >= unit_seconds:
+            count, remaining = divmod(remaining, unit_seconds)
+            parts.append(f"{count}{suffix}")
+            if len(parts) == 2:
+                break
+    return " ".join(parts) if parts else "0s"
+
+
+_INTEGER_METRICS = frozenset({"duplicate_count", "row_count"})
+_ROUNDED_METRICS = frozenset({"sum", "avg", "min", "max"})
+
+
+def _format_observed(metric: str | None, value: Any) -> str:
+    """A metric-aware human display of an observed scalar.
+
+    Freshness is handled separately (:func:`_format_freshness_observed`) --
+    its value is a lag in seconds needing a duration, not a plain number.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return str(value)
+    if metric in _INTEGER_METRICS:
+        return str(int(round(value)))
+    if metric == "null_rate":
+        return f"{value * 100:.1f}%"
+    if metric in _ROUNDED_METRICS:
+        return f"{value:.2f}"
+    return str(value)
+
+
+def _format_freshness_observed(
+    lag_seconds: float, reference: datetime | None, tz: tzinfo | None
+) -> str:
+    """'<duration> stale', plus the reconstructed absolute last-update time
+    when a reference instant is available.
+
+    ``reference`` is the exact ``now`` that produced ``lag_seconds`` --
+    ``run.started_at`` for a live digest -- so ``reference - lag`` recovers
+    the source's last-update timestamp exactly, not approximately: runner.py
+    resolves ``now`` once per run and reuses that same value both for the
+    lag computation and (elsewhere) as the persisted ``observed_at``.
+    """
+    duration = _format_duration(lag_seconds)
+    if reference is None:
+        return f"{duration} stale"
+    last_update = reference - timedelta(seconds=lag_seconds)
+    return f"{duration} stale (last update: {format_timestamp(last_update, tz)})"
 
 
 def render_digest(
@@ -62,17 +130,21 @@ def render_digest(
         f" · {counts[Status.SKIPPED]} skipped · {counts[Status.ERROR]} unreachable",
     ]
 
+    reference = run.started_at or when
     for result in run.results:
         if result.status in (Status.OK, Status.SKIPPED):
             continue
         obj = f"{result.source}.{result.object}" if result.source else result.object
         label = result.label or result.metric or "assert"
+        header = f"✗ {obj} · {label}"
+        if result.expected:
+            header += f" — expected {result.expected}"
         lines.append("")
-        lines.append(f"✗ {obj} · {label}")
+        lines.append(header)
         if result.error:
             lines.append(f"    {result.error}")
         elif result.diff:
-            lines.append(f"    schema drift (expected {result.expected})")
+            lines.append("    schema drift:")
             for change in result.diff:
                 lines.append(f"      {change}")
         elif result.samples is not None:
@@ -80,8 +152,12 @@ def render_digest(
             for row in result.samples[:10]:
                 cells = "  ".join(f"{key}={value}" for key, value in row.items())
                 lines.append(f"      {cells}")
+        elif result.metric == "freshness" and isinstance(result.value, (int, float)):
+            observed = _format_freshness_observed(result.value, reference, tz)
+            lines.append(f"    observed: {observed}")
         else:
-            lines.append(f"    expected {result.expected}   observed {result.value}")
+            observed = _format_observed(result.metric, result.value)
+            lines.append(f"    observed: {observed}")
 
     return "\n".join(lines)
 
@@ -129,6 +205,7 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
         lines.append("no observations recorded")
         return "\n".join(lines)
 
+    metric = candidate.get("metric")
     lines.append("")
     lines.append(f"{'observed_at':<28} {'status':<8} {'value':<16} trend")
     previous: float | None = None
@@ -143,7 +220,14 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
             else:
                 trend = "="
         observed = format_timestamp(datetime.fromisoformat(row["observed_at"]), tz)
-        lines.append(f"{observed:<28} {row['status']:<8} {str(value):<16} {trend}")
+        if metric == "freshness" and isinstance(value, (int, float)):
+            # Duration only, no reconstructed absolute timestamp here: that
+            # parenthetical is digest-only, where a full line is available
+            # instead of this table's fixed-width value column.
+            display = f"{_format_duration(value)} stale"
+        else:
+            display = _format_observed(metric, value)
+        lines.append(f"{observed:<28} {row['status']:<8} {display:<16} {trend}")
         if isinstance(value, (int, float)):
             previous = value
     return "\n".join(lines)

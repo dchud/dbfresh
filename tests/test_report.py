@@ -5,8 +5,10 @@ from zoneinfo import ZoneInfo
 
 from rich.console import Console
 
+from dbfresh.calendar import build_calendar
 from dbfresh.engine import Result, RunResult, Status
 from dbfresh.report import (
+    display_timezone,
     progress_reporter,
     render_digest,
     render_json,
@@ -36,9 +38,118 @@ def test_digest_header_and_failure_block():
 
     assert "DATA CHECK REPORT — 2026-07-10T06:03:00Z" in text
     assert "2 checks · 1 passed · 1 failed" in text
-    assert "✗ s.b · null_rate" in text
-    assert "expected max 0.01   observed 0.2" in text
+    assert "✗ s.b · null_rate — expected max 0.01" in text
+    assert "observed: 20.0%" in text
     assert "s.a" not in text  # OK checks are not listed
+
+
+def test_digest_duplicate_count_observed_as_plain_integer():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="orders",
+                metric="duplicate_count",
+                status=Status.FAIL,
+                value=1.0,
+                expected="max 0",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "observed: 1" in text
+    assert "observed: 1.0" not in text
+
+
+def test_digest_row_count_observed_as_plain_integer():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="orders",
+                metric="row_count",
+                status=Status.FAIL,
+                value=60.0,
+                expected="between 1 and 10",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "observed: 60" in text
+    assert "observed: 60.0" not in text
+
+
+def test_digest_avg_observed_rounded_to_two_decimals():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="orders",
+                metric="avg",
+                status=Status.FAIL,
+                value=123.456789,
+                expected="vs_previous(previous) ratio [0.5, 2.0]",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "observed: 123.46" in text
+
+
+def test_digest_freshness_observed_as_duration_with_reconstructed_timestamp():
+    now = datetime(2026, 7, 14, 12, 44, 27, tzinfo=UTC)
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="orders",
+                metric="freshness",
+                status=Status.FAIL,
+                value=464533.484447,  # ~5d 9h
+                expected="max_lag 24h",
+            ),
+        ],
+        status=Status.FAIL,
+        started_at=now,
+    )
+    text = render_digest(run, now=now)
+    assert "✗ s.orders · freshness — expected max_lag 24h" in text
+    assert "observed: 5d 9h stale (last update: 2026-07-09T03:42:13Z)" in text
+
+
+def test_digest_freshness_without_run_started_at_still_shows_duration():
+    now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=UTC)
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="orders",
+                metric="freshness",
+                status=Status.FAIL,
+                value=90.0,
+                expected="max_lag 24h",
+            ),
+        ],
+        status=Status.FAIL,
+        started_at=None,
+    )
+    text = render_digest(run, now=now)
+    assert "observed: 1m 30s stale (last update: 2026-07-14T11:58:30Z)" in text
+
+
+def test_display_timezone_prefers_configured_calendar_zone():
+    calendar = build_calendar({"timezone": "America/New_York"})
+    assert display_timezone(calendar) == ZoneInfo("America/New_York")
+
+
+def test_display_timezone_defaults_to_local_system_time_without_calendar():
+    local_offset = datetime.now().astimezone().tzinfo.utcoffset(None)
+    result = display_timezone(None)
+    assert result is not None
+    assert result.utcoffset(None) == local_offset
 
 
 def test_digest_header_uses_configured_display_timezone():
