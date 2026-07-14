@@ -8,7 +8,7 @@ External, value-level freshness and constraint checks for SQL Server and Databri
 | ------------------ | ------------------------------------------------------------------------------------ |
 | `src/dbfresh/`     | Core package (src-layout): CLI, engine, adapters, checks, store, calendar            |
 | `src/dbfresh/cli.py` | CLI entrypoint; installed as the `dbfresh` console script                          |
-| `dbfresh.md`       | Implementation specification — source of truth for the design, check model, and phased build plan |
+| `docs/original-specification.md` | Original implementation specification — kept as a historical record, no longer the living source of truth |
 | `tests/`           | pytest suite                                                                         |
 | `pyproject.toml`   | Dependencies, `dbfresh` entry point, ruff and pytest configuration                   |
 
@@ -29,7 +29,7 @@ just check              # lint + format check + tests
 
 Python 3.14 CLI, packaged with `uv` in a src-layout (`src/dbfresh/`). Runtime deps are `rich` (progress + digest rendering) and `structlog` (logging); source drivers (`pymssql` for SQL Server, `databricks-sql-connector` for Databricks Unity Catalog) are added as their adapters land. Check definitions live in version-controlled YAML; per run, `dbfresh` opens one connection per source (sources in parallel, one connection per worker thread), compiles each check to a single dialect-adjusted SQL query, evaluates the scalar/rows against an expectation or a prior observation, persists the observation, and exits with the worst status.
 
-Two abstractions carry the design. Every check reduces to one of **two primitives**: a metric compared to an expectation, or an assertion query that must return zero rows — builtins are sugar over these. Every source sits behind a small **adapter protocol** (`scalar`, `rows`, `describe`, `close`); adding a source type is one adapter plus one factory line. Definitions are config (git-tracked YAML); observations are data (local SQLite at `dbfresh.db`) — the two never mix. `dbfresh.md` is the source of truth for the full target design and the phased build plan; keep it and the code in sync when a feature spans both.
+Two abstractions carry the design. Every check reduces to one of **two primitives**: a metric compared to an expectation, or an assertion query that must return zero rows — builtins are sugar over these. Every source sits behind a small **adapter protocol** (`scalar`, `rows`, `describe`, `close`); adding a source type is one adapter plus one factory line. Definitions are config (git-tracked YAML); observations are data (local SQLite at `dbfresh.db`) — the two never mix. `docs/original-specification.md` preserves the original design and phased build plan as a historical record; the shipped code plus the [documentation site](https://dchud.github.io/dbfresh/) are current.
 
 ## Working Agreement
 

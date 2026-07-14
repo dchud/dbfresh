@@ -65,8 +65,8 @@ def refine_category(type_name: str, base_category: Category) -> Category:
 class SqlServerAdapter(SqlAlchemyAdapter):
     """Adapter over ``mssql+pymssql://user:pass@host:port/database``.
 
-    Takes a single usql-style connection URL (dbfresh.md 4.2): SQL
-    authentication only, credentials inline, no Kerberos/ODBC setup needed.
+    Takes a single usql-style connection URL: SQL authentication only,
+    credentials inline, no Kerberos/ODBC setup needed.
     """
 
     def __init__(self, url: str, timeout: int | None = None) -> None:

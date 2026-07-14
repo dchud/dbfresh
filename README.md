@@ -103,7 +103,7 @@ alert:
 - Documentation site (quickstart, concepts, check reference, calendar and
   scheduling, CLI reference, TUI guide, and more):
   <https://dchud.github.io/dbfresh/>
-- Full specification: [`dbfresh.md`](dbfresh.md)
+- Original specification (historical): [`docs/original-specification.md`](docs/original-specification.md)
 - Scope and tooling: [`AGENTS.md`](AGENTS.md)
 - Build/test commands and working agreement: [`CLAUDE.md`](CLAUDE.md)
 

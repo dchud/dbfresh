@@ -7,7 +7,7 @@ constraints on several different data sources. It is intended as an external
 monitoring check, which its operator can run to get a quick report on whether
 several data engineering tasks have been operating as expected.
 
-The original ideas for this app are in a spec at @dbfresh.md.
+The original ideas for this app are in a spec at @docs/original-specification.md.
 
 ## Your role
 
@@ -36,4 +36,4 @@ environment with `uv sync` and run the local CI equivalent with `just check`.
 Build/test commands, architecture, key files, and the full working agreement
 (git/PR workflow, `br` issue tracking, tone, and documentation rules) are in
 @CLAUDE.md. The complete target design, check model, and phased build plan are in
-@dbfresh.md.
+@docs/original-specification.md.
