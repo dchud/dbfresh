@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 import yaml
-from textual.widgets import Checkbox
+from textual.widgets import Checkbox, DataTable
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
@@ -157,9 +157,9 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
             await pilot.click("#accept-btn")
             await pilot.pause()
 
-            tree = app.query_one("#dashboard-tree")
-            source_names = [str(n.label).split(" ")[0] for n in tree.root.children]
-            assert "s" in source_names
+            table = app.query_one("#dashboard-grid", DataTable)
+            row_keys = {key.value for key in table.rows}
+            assert "s\x1ffct" in row_keys
 
     asyncio.run(scenario())
 

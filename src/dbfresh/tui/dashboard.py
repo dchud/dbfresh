@@ -1,24 +1,30 @@
-"""Build the Home dashboard tree from config + the observation store.
+"""Build the Home status grid and object drill-in grid from config + store.
 
-Structure: source -> object, with the object's table-level
-checks (no ``column``/``key``) as direct leaves under the object node, and
-column/key-level checks nested under an intermediate node per column/key.
-Each node's own status is the worst of its children (reusing
-:func:`~dbfresh.engine.worst_status`); a leaf with no stored observation
-renders as "unknown" rather than winning or losing against a real status.
+Two scopes share one row shape (:class:`GridRow`) and one renderer
+(:func:`populate_grid`): the Home screen's rows are one per source.object;
+the drill-in (``ObjectDetailScreen``) rows are one per check within a
+single object. Each row carries an "overall" (latest observation) status
+plus a trailing 7-day trend, bucketed to the worst status observed each
+calendar day.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, tzinfo
 
 from rich.text import Text
-from textual.widgets import Tree
+from textual.widgets import DataTable
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.models import Status, worst_status
 from dbfresh.store import Store
+
+_TRAILING_DAYS = 7
+# Comfortably covers 7 calendar days even at a few runs/day; a sparser
+# history (one run/day) needs far fewer observations than this.
+_HISTORY_FETCH_LIMIT = 50
 
 _STATUS_STYLE: dict[Status | None, str] = {
     Status.OK: "bold green",
@@ -29,55 +35,45 @@ _STATUS_STYLE: dict[Status | None, str] = {
     None: "dim",
 }
 
-
-@dataclass(frozen=True)
-class NodeInfo:
-    """Data attached to each dashboard tree node.
-
-    ``kind`` is one of ``source``, ``object``, ``column``, or ``check``;
-    only ``check`` nodes carry the ``check`` itself (used by History
-    drill-down and by the Run action's status refresh).
-    """
-
-    kind: str
-    check: Check | None = None
+# A day/overall cell is one glyph, not a word -- the grid's whole point is
+# fitting many rows/columns in limited width. Color (_STATUS_STYLE) already
+# distinguishes FAIL from ERROR, so they share a glyph.
+_STATUS_GLYPH: dict[Status | None, str] = {
+    Status.OK: "✓",
+    Status.WARN: "!",
+    Status.FAIL: "✗",
+    Status.ERROR: "✗",
+    Status.SKIPPED: "–",
+    None: "·",
+}
 
 
 def check_label(check: Check) -> str:
-    """The short label shown on a check's leaf node (and reused by History)."""
+    """The label shown for one check's row.
+
+    Unlike the old nested tree (where a column/key node already grouped
+    same-column checks), this grid is flat, so a bare metric name like
+    'null_rate' would be ambiguous with more than one null_rate check on
+    the same object -- the column/key is appended in parens to disambiguate
+    whenever the check has one; a table-level check (row_count, schema, an
+    assertion) has none and stays bare.
+    """
     if check.assert_ is not None:
         return f"assert {check.assert_}"
     if check.assert_sql is not None:
         return f"assert_sql {check.assert_sql}"
-    return check.metric or "check"
-
-
-def _group_key(check: Check) -> str | None:
-    """The column/key name a check nests under, or ``None`` for table-level."""
-    return check.column or check.key
-
-
-def _latest_status(store: Store, check: Check) -> Status | None:
-    observation = store.latest_observation(check_id(check))
-    if observation is None:
-        return None
-    return Status(observation["status"])
-
-
-def _status_label(name: str, status: Status | None) -> Text:
-    word = status.value if status is not None else "unknown"
-    text = Text(name)
-    text.append(f" [{word}]", style=_STATUS_STYLE[status])
-    return text
+    label = check.metric or "check"
+    context = check.column or check.key
+    return f"{label} ({context})" if context else label
 
 
 def _worst_or_unknown(statuses: list[Status]) -> Status | None:
-    """The worst known status, or ``None`` when none of the children are known.
+    """The worst known status, or ``None`` when there are no known statuses.
 
-    A node whose only known children are ``SKIPPED`` rolls up to ``SKIPPED``
-    rather than ``OK``, even though the two share severity rank 0 in
-    :func:`~dbfresh.engine.worst_status` (which exit-code aggregation
-    depends on). A mix of ``OK`` and ``SKIPPED`` still rolls up to ``OK``.
+    A row whose only known statuses are SKIPPED rolls up to SKIPPED rather
+    than OK, even though the two share severity rank 0 in
+    :func:`~dbfresh.models.worst_status` (which exit-code aggregation
+    depends on). A mix of OK and SKIPPED still rolls up to OK.
     """
     if not statuses:
         return None
@@ -86,75 +82,150 @@ def _worst_or_unknown(statuses: list[Status]) -> Status | None:
     return worst_status(statuses)
 
 
-def build_dashboard(tree: Tree, config: Config, store: Store) -> None:
-    """(Re)build ``tree`` from ``config.checks``, colored by ``store``.
+def trailing_dates(today: date, days: int = _TRAILING_DAYS) -> list[date]:
+    """The last ``days`` calendar dates ending on (and including) ``today``,
+    oldest first -- so the grid reads left (past) to right (present)."""
+    return [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
 
-    Safe to call repeatedly (e.g. after the Run action): clears any prior
-    contents under the root before rebuilding.
+
+def bucket_by_day(
+    rows: list[dict], dates: list[date], tz: tzinfo | None
+) -> dict[date, Status | None]:
+    """The worst status observed on each of ``dates``, from
+    :meth:`~dbfresh.store.Store.history` rows. A date among ``dates`` with
+    no matching observation maps to ``None``. ``rows`` outside ``dates``
+    (older than the trailing window) are ignored, not an error -- callers
+    fetch a generous history limit to comfortably cover the window even at
+    several runs/day, which routinely includes older rows too.
     """
-    tree.reset(tree.root.label)
+    by_date: dict[date, list[Status]] = {d: [] for d in dates}
+    for row in rows:
+        when = datetime.fromisoformat(row["observed_at"])
+        observed_date = when.astimezone(tz).date() if tz else when.date()
+        if observed_date in by_date:
+            by_date[observed_date].append(Status(row["status"]))
+    return {d: _worst_or_unknown(statuses) for d, statuses in by_date.items()}
 
+
+@dataclass(frozen=True)
+class GridRow:
+    """One row of a status grid, at either scope (object or check).
+
+    ``source``/``object`` are set for an object-scope row (Home screen) --
+    what :class:`~dbfresh.tui.screens.ObjectDetailScreen` drills into on
+    selection. ``check`` is set for a check-scope row (the drill-in) --
+    what ``HistoryScreen`` opens on selection. A row never has both.
+    """
+
+    key: str
+    label: str
+    overall: Status | None
+    days: list[Status | None]
+    source: str | None = None
+    object: str | None = None
+    check: Check | None = None
+
+
+def _rollup(
+    checks: list[Check], store: Store, dates: list[date], tz: tzinfo | None
+) -> tuple[Status | None, list[Status | None]]:
+    """Overall (latest) and per-day (trailing history) rollup across
+    ``checks`` -- a single-check list (the drill-in scope) rolls up to
+    exactly that check's own statuses; a multi-check list (the Home scope)
+    rolls up across all of an object's checks."""
+    overall_statuses: list[Status] = []
+    day_buckets: list[list[Status]] = [[] for _ in dates]
+    for check in checks:
+        cid = check_id(check)
+        latest = store.latest_observation(cid)
+        if latest is not None:
+            overall_statuses.append(Status(latest["status"]))
+        history = store.history(cid, limit=_HISTORY_FETCH_LIMIT)
+        per_day = bucket_by_day(history, dates, tz)
+        for i, day in enumerate(dates):
+            status = per_day[day]
+            if status is not None:
+                day_buckets[i].append(status)
+    overall = _worst_or_unknown(overall_statuses)
+    days = [_worst_or_unknown(bucket) for bucket in day_buckets]
+    return overall, days
+
+
+def object_rows(
+    config: Config, store: Store, today: date, tz: tzinfo | None
+) -> list[GridRow]:
+    """The Home screen's rows: one per source.object, sorted by (source,
+    object) -- reuses the existing worst-status rollup regardless of how
+    many checks the object has."""
     by_source: dict[str, dict[str, list[Check]]] = {}
     for check in config.checks:
         by_source.setdefault(check.source, {}).setdefault(check.object, []).append(
             check
         )
 
+    dates = trailing_dates(today)
+    rows: list[GridRow] = []
     for source_name in sorted(by_source):
-        objects = by_source[source_name]
-        source_node = tree.root.add(
-            source_name, data=NodeInfo(kind="source"), expand=True
-        )
-        source_statuses: list[Status] = []
-
-        for object_name in sorted(objects):
-            checks = objects[object_name]
-            object_node = source_node.add(
-                object_name, data=NodeInfo(kind="object"), expand=True
+        for object_name in sorted(by_source[source_name]):
+            checks = by_source[source_name][object_name]
+            overall, days = _rollup(checks, store, dates, tz)
+            rows.append(
+                GridRow(
+                    key=f"{source_name}\x1f{object_name}",
+                    label=f"{source_name}.{object_name}",
+                    overall=overall,
+                    days=days,
+                    source=source_name,
+                    object=object_name,
+                )
             )
-            object_statuses: list[Status] = []
+    return rows
 
-            table_checks = [c for c in checks if _group_key(c) is None]
-            for check in table_checks:
-                status = _latest_status(store, check)
-                if status is not None:
-                    object_statuses.append(status)
-                object_node.add_leaf(
-                    _status_label(check_label(check), status),
-                    data=NodeInfo(kind="check", check=check),
-                )
 
-            grouped: dict[str, list[Check]] = {}
-            for check in checks:
-                key = _group_key(check)
-                if key is not None:
-                    grouped.setdefault(key, []).append(check)
+def check_rows(
+    source: str,
+    object_: str,
+    config: Config,
+    store: Store,
+    today: date,
+    tz: tzinfo | None,
+) -> list[GridRow]:
+    """The drill-in rows for one source.object: one per check, in config
+    order -- the same [overall, trailing days] shape as :func:`object_rows`,
+    scoped to a single check per row instead of rolled up across many."""
+    checks = [c for c in config.checks if c.source == source and c.object == object_]
+    dates = trailing_dates(today)
+    rows: list[GridRow] = []
+    for check in checks:
+        overall, days = _rollup([check], store, dates, tz)
+        rows.append(
+            GridRow(
+                key=check_id(check),
+                label=check_label(check),
+                overall=overall,
+                days=days,
+                check=check,
+            )
+        )
+    return rows
 
-            for column_name in sorted(grouped):
-                column_node = object_node.add(
-                    column_name, data=NodeInfo(kind="column"), expand=True
-                )
-                column_statuses: list[Status] = []
-                for check in grouped[column_name]:
-                    status = _latest_status(store, check)
-                    if status is not None:
-                        column_statuses.append(status)
-                    column_node.add_leaf(
-                        _status_label(check_label(check), status),
-                        data=NodeInfo(kind="check", check=check),
-                    )
-                column_status = _worst_or_unknown(column_statuses)
-                column_node.set_label(_status_label(column_name, column_status))
-                object_statuses.extend(column_statuses)
 
-            object_status = _worst_or_unknown(object_statuses)
-            object_node.set_label(_status_label(object_name, object_status))
-            source_statuses.extend(object_statuses)
+def _status_cell(status: Status | None) -> Text:
+    text = Text(_STATUS_GLYPH[status], style=_STATUS_STYLE[status])
+    text.justify = "center"
+    return text
 
-        source_status = _worst_or_unknown(source_statuses)
-        source_node.set_label(_status_label(source_name, source_status))
 
-    # The root itself carries no status (it is the tree's title, not a
-    # check tier); expand it so sources are visible without an extra
-    # keypress. Kept expanded across rebuilds since reset() preserves it.
-    tree.root.expand()
+def populate_grid(table: DataTable, rows: list[GridRow], today: date) -> None:
+    """(Re)populate ``table`` from ``rows``. Safe to call repeatedly: clears
+    both rows and columns first, since the trailing-day column headers
+    themselves shift by one day if two calls straddle midnight."""
+    table.clear(columns=True)
+    table.add_column("", key="label")
+    table.add_column("overall", key="overall")
+    for day in trailing_dates(today):
+        table.add_column(day.strftime("%a"), key=day.isoformat())
+    for row in rows:
+        cells = [row.label, _status_cell(row.overall)]
+        cells.extend(_status_cell(status) for status in row.days)
+        table.add_row(*cells, key=row.key)

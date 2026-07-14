@@ -122,7 +122,33 @@ def _build_fixture(tmp_path: Path) -> tuple[Path, Path]:
     return cfg_path, store_path
 
 
-def test_home_dashboard_shows_mixed_statuses(snap_compare, tmp_path):
+_FROZEN_NOW = datetime(2026, 7, 10, 12, 0, 0, tzinfo=UTC)
+
+
+class _FrozenDateTime(datetime):
+    """A ``datetime`` whose ``now()`` always returns a fixed instant.
+
+    Monkeypatched over a module's own ``datetime`` name so a snapshot stays
+    stable regardless of the real wall-clock date: ``dbfresh.report`` for
+    the digest header timestamp, and ``dbfresh.tui.app`` /
+    ``dbfresh.tui.screens`` for the status grid's trailing-7-day window --
+    without this, which of _T1/_T2/_T3 fall inside that window (and the
+    day-column headers themselves) would drift with whatever day the test
+    actually runs on. Every other datetime method (``fromisoformat``,
+    ``astimezone``, ...) is inherited unchanged.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        return _FROZEN_NOW.astimezone(tz) if tz is not None else _FROZEN_NOW
+
+
+def test_home_dashboard_shows_mixed_statuses(snap_compare, tmp_path, monkeypatch):
+    monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
+    # display_timezone() defaults to the local system zone absent a
+    # configured calendar (this fixture has none) -- pin it to UTC so the
+    # snapshot is deterministic across machines, not just across runs.
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
@@ -175,22 +201,6 @@ def _crafted_run_result() -> RunResult:
     return RunResult(results=results, status=worst_status(r.status for r in results))
 
 
-_FROZEN_NOW = datetime(2026, 7, 10, 12, 0, 0, tzinfo=UTC)
-
-
-class _FrozenDateTime(datetime):
-    """A ``datetime`` whose ``now()`` always returns a fixed instant.
-
-    Monkeypatched over ``dbfresh.report.datetime`` so the report digest's
-    header timestamp is stable across runs; every other datetime method
-    (``fromisoformat``, ``astimezone``, ...) is inherited unchanged.
-    """
-
-    @classmethod
-    def now(cls, tz=None):
-        return _FROZEN_NOW.astimezone(tz) if tz is not None else _FROZEN_NOW
-
-
 def test_report_screen_shows_failures_and_warnings(snap_compare, tmp_path, monkeypatch):
     monkeypatch.setattr("dbfresh.report.datetime", _FrozenDateTime)
     # display_timezone() defaults to the local system zone absent a
@@ -212,15 +222,22 @@ def test_history_screen_shows_trend(snap_compare, tmp_path, monkeypatch):
     # See the comment in test_report_screen_shows_failures_and_warnings --
     # same reason for pinning display_timezone to UTC here.
     monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
+    # See _FrozenDateTime's docstring -- both the Home grid (app.py) and its
+    # drill-in (screens.py) compute "today" independently, so both need the
+    # trailing-7-day window pinned for the snapshot to be deterministic.
+    monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
+    monkeypatch.setattr("dbfresh.tui.screens.datetime", _FrozenDateTime)
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
-    # dbfresh (root) -> orders_db -> orders -> row_count: three downs lands
-    # on it, since row_count is the first table-level check on the first
-    # object of the first (alphabetically sorted) source.
+    # Home grid: orders_db.orders is the first row (alphabetically first
+    # source) -- enter drills into its checks. row_count is the first
+    # check in config order, so the default cursor position on the
+    # drill-in grid is already row_count -- a second enter opens its
+    # History screen.
     assert snap_compare(
         app,
-        press=("down", "down", "down", "enter"),
+        press=("enter", "enter"),
         terminal_size=_TERMINAL_SIZE,
     )
 
