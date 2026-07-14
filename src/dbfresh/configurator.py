@@ -686,3 +686,174 @@ def _write_new_checks(target_path: Path, blocks: list[dict]) -> None:
         target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
         return
     target_path.write_text(spliced)
+
+
+def find_check_file(config_path: str | Path, check_id_: str) -> Path | None:
+    """Which of :func:`target_files` for ``config_path`` contains the check
+    with this id, or ``None`` if it isn't found in any of them. The
+    counterpart lookup to :func:`append_checks`'s own dedup scan -- for
+    locating a check to edit rather than confirming one doesn't already
+    exist.
+    """
+    for path in target_files(config_path):
+        for block in _raw_checks_in(path):
+            if _check_id_of(block) == check_id_:
+                return path
+    return None
+
+
+def _sequence_item_bounds(
+    lines: list[str], top_level_key: str | None
+) -> list[tuple[int, int]]:
+    """(start, end) line ranges for each block-style sequence item under a
+    top-level ``key:`` (``top_level_key`` given), or for the whole file
+    when it's a bare sequence (``top_level_key`` is ``None``). Empty when
+    the key is missing or the shape isn't a recognizable block sequence
+    (e.g. flow-style ``checks: [...]``) -- the caller falls back to a full
+    round trip rather than guess at an unrecognized shape.
+    """
+    if top_level_key is not None:
+        idx = _find_top_level_key(lines, top_level_key)
+        if idx is None:
+            return []
+        search_start = idx + 1
+    else:
+        search_start = 0
+    file_end = len(lines)
+
+    # _block_end assumes indented content; a block sequence's items start
+    # at column 0 relative to their own dash (e.g. "checks:\n- source:
+    # ..."), which it would misread as the next top-level key -- so the
+    # sequence's true end is found separately below, not via _block_end.
+    item_indent: int | None = None
+    for i in range(search_start, file_end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        candidate = len(lines[i]) - len(lines[i].lstrip())
+        if lines[i][candidate:].startswith("- "):
+            item_indent = candidate
+        break
+    if item_indent is None:
+        return []
+
+    marker = " " * item_indent + "- "
+    block_end = file_end
+    for i in range(search_start, file_end):
+        stripped = lines[i].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        this_indent = len(lines[i]) - len(lines[i].lstrip())
+        starts_item = lines[i][: len(marker)] == marker
+        dedented = this_indent < item_indent
+        same_indent_non_item = this_indent == item_indent and not starts_item
+        if dedented or same_indent_non_item:
+            block_end = i
+            break
+
+    starts = [
+        i for i in range(search_start, block_end) if lines[i][: len(marker)] == marker
+    ]
+    return [
+        (start, starts[j + 1] if j + 1 < len(starts) else block_end)
+        for j, start in enumerate(starts)
+    ]
+
+
+def _replace_nested_key_value(
+    lines: list[str], start: int, end: int, key: str, new_value: Any
+) -> list[str] | None:
+    """Within ``lines[start:end]`` (one sequence item's own lines), rewrite
+    a ``  key:`` line's block-style value to ``new_value``, freshly
+    rendered. Returns the modified full line list, or ``None`` when
+    ``key`` isn't found in this item, or its value is inline (e.g.
+    ``expect: {max: 0}``) rather than block-style -- either way, the
+    caller falls back to a full round trip instead of guessing at an
+    unhandled shape.
+    """
+    key_idx = None
+    key_indent = 0
+    prefix = f"{key}:"
+    for i in range(start, end):
+        stripped = lines[i].lstrip()
+        if stripped.startswith(prefix):
+            key_indent = len(lines[i]) - len(stripped)
+            key_idx = i
+            break
+    if key_idx is None:
+        return None
+
+    inline = lines[key_idx].split(":", 1)[1].strip()
+    if inline:
+        return None  # inline/flow value -- not this function's shape to handle
+
+    value_end = key_idx + 1
+    while value_end < end:
+        line = lines[value_end]
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            value_end += 1
+            continue
+        if len(line) - len(line.lstrip()) <= key_indent:
+            break
+        value_end += 1
+
+    # yaml.safe_dump renders {key: new_value} 0-indented, with its nested
+    # content already correctly indented *relative to* the "key:" line --
+    # shifting every rendered line by key_indent (not just the nested
+    # ones) reproduces that same relative shape at the position "key:"
+    # actually sits at in the file, without double-counting the nesting
+    # yaml.safe_dump already applied.
+    rendered = yaml.safe_dump({key: new_value}, sort_keys=False)
+    pad = " " * key_indent
+    new_block = [pad + line for line in rendered.splitlines(keepends=True)]
+    return lines[:key_idx] + new_block + lines[value_end:]
+
+
+def rewrite_check_expectation(
+    target_path: str | Path, check_id_: str, new_expect: dict
+) -> bool:
+    """Find the check matching ``check_id_`` in ``target_path`` and rewrite
+    just its ``expect:`` value in place -- the edit-existing-check
+    counterpart to :func:`append_checks`. Safe with respect to history:
+    :func:`~dbfresh.checks.check_id` deliberately excludes ``expect`` from
+    its hash, so editing a threshold here never forks a check's identity
+    or its stored observation history.
+
+    Attempts a text splice that touches only the matched item's ``expect:``
+    block, preserving comments and formatting everywhere else in the file
+    (mirroring :func:`_append_into_block`'s approach for appends); falls
+    back to a full YAML round trip -- which loses comments -- only for a
+    shape the splice can't safely handle (inline/flow-style ``expect:``,
+    or a sequence shape it doesn't recognize).
+
+    Returns ``True`` when a matching check was found and rewritten,
+    ``False`` when no check with that id exists in this file.
+    """
+    target_path = Path(target_path)
+    text = target_path.read_text()
+    raw = yaml.safe_load(text)
+    is_bare_list = isinstance(raw, list)
+    checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
+    index = next(
+        (i for i, block in enumerate(checks_list) if _check_id_of(block) == check_id_),
+        None,
+    )
+    if index is None:
+        return False
+
+    lines = text.splitlines(keepends=True)
+    bounds = _sequence_item_bounds(lines, None if is_bare_list else "checks")
+    if index < len(bounds):
+        start, end = bounds[index]
+        spliced = _replace_nested_key_value(lines, start, end, "expect", new_expect)
+        if spliced is not None:
+            target_path.write_text("".join(spliced))
+            return True
+
+    if is_bare_list:
+        raw[index]["expect"] = new_expect
+    else:
+        raw["checks"][index]["expect"] = new_expect
+    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    return True

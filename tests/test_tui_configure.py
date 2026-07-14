@@ -2,12 +2,14 @@ import asyncio
 
 import pytest
 import yaml
-from textual.widgets import Checkbox, DataTable
+from textual.css.query import NoMatches
+from textual.widgets import Button, Checkbox, DataTable
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
+from dbfresh.config import load_config
 from dbfresh.tui import app as app_module
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
@@ -113,7 +115,7 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path):
             await pilot.pause()
 
             assert isinstance(app.screen, ConfigureScreen)
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
 
             await pilot.click("#propose-btn")
@@ -150,7 +152,7 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -180,7 +182,7 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "v"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -207,7 +209,7 @@ def test_configure_screen_notes_when_engine_cannot_introspect_keys(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "t"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -230,7 +232,7 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -255,7 +257,7 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             app.screen.query_one("#timestamp-input").value = "updated_at"
             await pilot.click("#propose-btn")
@@ -289,7 +291,7 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -330,7 +332,7 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -372,7 +374,7 @@ def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -407,7 +409,7 @@ def test_configure_screen_unknown_object_disables_accept(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "does_not_exist"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -435,7 +437,7 @@ def test_configure_screen_cancel_button_writes_nothing(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -486,7 +488,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -521,7 +523,7 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -615,7 +617,7 @@ def test_configure_screen_offered_check_value_is_written(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -672,7 +674,7 @@ def test_configure_screen_offered_check_invalid_value_shows_note(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -709,7 +711,7 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -738,7 +740,7 @@ def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -798,7 +800,7 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -852,7 +854,7 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
             await pilot.press("c")
             await pilot.pause()
 
-            app.screen.query_one("#source-input").value = "s"
+            app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
             await pilot.pause()
@@ -880,5 +882,232 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
         # survives rather than being duplicated or overwritten.
         assert len(freshness_checks) == 1
         assert freshness_checks[0]["expect"]["max_lag"] == "2h"
+
+    asyncio.run(scenario())
+
+
+def _config_with_existing_checks(cfg_path, db):
+    cfg_path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: fct\n"
+        "    metric: row_count\n"
+        "    expect:\n"
+        "      max: 100\n"
+        "  - source: s\n"
+        "    object: fct\n"
+        "    metric: row_count\n"
+        "    expect:\n"
+        "      between: [1, 1000]\n"
+        "    id: fct_between\n"
+    )
+    return cfg_path
+
+
+def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            existing = app.screen.query_one("#existing-checks")
+            assert "(none yet)" in str(existing.children[0].render())
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_existing_check_input_prefilled_with_current_value(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            value_input = app.screen.query_one("#existing-value-0")
+            assert value_input.value == "100"
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_between_operator_check_is_read_only(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            # Only the row_count/max check (index 0) is editable -- the
+            # row_count/between check has no single-scalar operand to edit.
+            with pytest.raises(NoMatches):
+                app.screen.query_one("#existing-value-1")
+            with pytest.raises(NoMatches):
+                app.screen.query_one("#existing-save-1")
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_save_existing_check_rewrites_expect_on_disk(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#existing-value-0").value = "500"
+            app.screen.query_one("#existing-save-0", Button).press()
+            await pilot.pause()
+
+        data = yaml.safe_load(cfg.read_text())
+        row_count_checks = [
+            c
+            for c in data["checks"]
+            if c["metric"] == "row_count" and "max" in c["expect"]
+        ]
+        assert row_count_checks[0]["expect"]["max"] == 500.0
+        # The other check is untouched.
+        between_checks = [c for c in data["checks"] if "between" in c["expect"]]
+        assert between_checks[0]["expect"]["between"] == [1, 1000]
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_save_existing_check_does_not_change_check_id(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#existing-value-0").value = "500"
+            app.screen.query_one("#existing-save-0", Button).press()
+            await pilot.pause()
+
+        config = load_config(cfg)
+        matches = [
+            c
+            for c in config.checks
+            if c.metric == "row_count" and c.expect.operator == "max"
+        ]
+        assert len(matches) == 1  # still one check, not duplicated or forked
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_disk(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+        original_text = cfg.read_text()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#existing-value-0").value = "not-a-number"
+            app.screen.query_one("#existing-save-0", Button).press()
+            await pilot.pause()
+
+            messages = [n.message for n in app._notifications]
+            assert any("not a number" in m for m in messages)
+
+        assert cfg.read_text() == original_text
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#existing-value-0").value = "500"
+            app.screen.query_one("#existing-save-0", Button).press()
+            await pilot.pause()
+
+            await pilot.click("#cancel-btn")
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfigureScreen)
+
+        data = yaml.safe_load(cfg.read_text())
+        row_count_checks = [
+            c
+            for c in data["checks"]
+            if c["metric"] == "row_count" and "max" in c["expect"]
+        ]
+        assert row_count_checks[0]["expect"]["max"] == 500.0
 
     asyncio.run(scenario())

@@ -15,21 +15,33 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Footer,
+    Header,
+    Input,
+    Label,
+    Select,
+    Static,
+)
 
 from dbfresh.adapters.base import Column
-from dbfresh.checks import parse_duration
+from dbfresh.checks import Check, check_id, parse_duration
 from dbfresh.config import Config
 from dbfresh.configurator import (
     append_checks,
     build_offered_check,
     check_object_exists,
+    find_check_file,
     key_introspection_note,
     offered_column_checks,
     pick_timestamp_column,
     propose_checks,
+    rewrite_check_expectation,
     target_files,
 )
+from dbfresh.tui.dashboard import check_label
 
 _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 
@@ -37,6 +49,13 @@ _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 # pre-filled with the CLI wizard's own prompt default for that metric --
 # every other offered metric (sum, row_count, ...) takes no threshold.
 _OFFERED_VALUE_DEFAULTS: dict[str, str] = {"null_rate": "0.05", "freshness": "24h"}
+
+# An existing check's expect: operand is editable via a single text Input
+# only when it's one scalar value -- between (a [lo, hi] pair), vs_previous
+# (a nested guard mapping), and schema's unchanged (no operand at all) all
+# need more than one Input's worth of UI, so v1 shows those read-only
+# rather than build a bespoke form per shape.
+_NON_EDITABLE_OPERATORS = frozenset({"between", "unchanged", "vs_previous"})
 
 
 def _id_part(value: str) -> str:
@@ -72,11 +91,17 @@ class ConfigureScreen(Screen[bool]):
         self._offered_value_inputs: list[Input | None] = []
         self._has_calendar = False
         self._target_file: Path | None = None
+        self._existing_checks: list[Check] = []
+        self._existing_value_inputs: list[Input | None] = []
+        self._existing_edit_made = False
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Label("Source name")
-        yield Input(id="source-input")
+        yield Select(
+            [(name, name) for name in sorted(self._config.sources)],
+            id="source-select",
+        )
         yield Label("Object name")
         yield Input(id="object-input")
         yield Label("Timestamp column (only if ambiguous -- see proposal)")
@@ -87,6 +112,8 @@ class ConfigureScreen(Screen[bool]):
             yield Button("Cancel", id="cancel-btn")
         yield VerticalScroll(
             Static("", id="proposal-text", markup=False),
+            Static("Existing checks for this object"),
+            Vertical(id="existing-checks"),
             Static("Proposed checks (uncheck any to drop them)"),
             Vertical(id="proposed-checks"),
             Static("Offered checks (check any to add them)"),
@@ -96,12 +123,15 @@ class ConfigureScreen(Screen[bool]):
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "propose-btn":
+        button_id = event.button.id or ""
+        if button_id == "propose-btn":
             self._propose()
-        elif event.button.id == "accept-btn":
+        elif button_id == "accept-btn":
             self._accept()
-        elif event.button.id == "cancel-btn":
-            self.dismiss(False)
+        elif button_id == "cancel-btn":
+            self.dismiss(self._existing_edit_made)
+        elif button_id.startswith("existing-save-"):
+            self._save_existing(int(button_id.removeprefix("existing-save-")))
 
     def _reset_proposal(self) -> None:
         """Clear state and widgets left over from a previous Propose click."""
@@ -111,6 +141,9 @@ class ConfigureScreen(Screen[bool]):
         self._offered_checkboxes = []
         self._offered_value_inputs = []
         self._target_file = None
+        self._existing_checks = []
+        self._existing_value_inputs = []
+        self.query_one("#existing-checks", Vertical).remove_children()
         self.query_one("#proposed-checks", Vertical).remove_children()
         self.query_one("#offered-checks", Vertical).remove_children()
         self.query_one("#accept-btn", Button).disabled = True
@@ -182,13 +215,96 @@ class ConfigureScreen(Screen[bool]):
                     self._offered_value_inputs.append(value_input)
                     container.mount(Horizontal(checkbox, value_input))
 
+    def _mount_existing_checks(self, source_name: str, object_name: str) -> None:
+        """The object's already-written checks: read-only except for a
+        single-scalar ``expect:`` operand, which gets an editable Input +
+        Save button -- the edit-existing-check half of this screen (the
+        propose/accept flow below only ever writes *new* checks). Save
+        writes straight to disk via :func:`rewrite_check_expectation`,
+        unlike Accept, which stages new checks until the button is
+        pressed -- there's no separate bundle to review here, just one
+        value per already-configured check.
+        """
+        container = self.query_one("#existing-checks", Vertical)
+        checks = [
+            c
+            for c in self._config.checks
+            if c.source == source_name and c.object == object_name
+        ]
+        self._existing_checks = checks
+        if not checks:
+            container.mount(Static("(none yet)"))
+            return
+
+        for i, check in enumerate(checks):
+            label = check_label(check)
+            if check.expect is None:
+                container.mount(Static(label))
+                self._existing_value_inputs.append(None)
+                continue
+            if check.expect.operator in _NON_EDITABLE_OPERATORS:
+                container.mount(Static(f"{label}: {check.expect.describe()}"))
+                self._existing_value_inputs.append(None)
+                continue
+            operand = check.expect.operand
+            current = operand if isinstance(operand, str) else str(operand)
+            value_input = Input(value=current, id=f"existing-value-{i}")
+            self._existing_value_inputs.append(value_input)
+            container.mount(
+                Horizontal(
+                    Static(f"{label} ({check.expect.operator}):"),
+                    value_input,
+                    Button("Save", id=f"existing-save-{i}"),
+                )
+            )
+
+    def _save_existing(self, index: int) -> None:
+        """Parse the edited Input for existing check ``index`` and rewrite
+        just that check's ``expect:`` operand on disk, preserving its
+        operator (only the value beside it is editable)."""
+        check = self._existing_checks[index]
+        value_input = self._existing_value_inputs[index]
+        # only a Save-able check (expect set, single-scalar operator) ever
+        # gets a button wired to this index -- see _mount_existing_checks.
+        assert check.expect is not None
+        assert value_input is not None
+        raw_value = value_input.value.strip()
+
+        new_operand: str | float
+        if check.metric == "freshness":
+            try:
+                parse_duration(raw_value)
+            except ValueError as exc:
+                self.notify(f"invalid max lag: {exc}", severity="error")
+                return
+            new_operand = raw_value
+        else:
+            try:
+                new_operand = float(raw_value)
+            except ValueError:
+                self.notify(f"not a number: {raw_value!r}", severity="error")
+                return
+
+        cid = check_id(check)
+        target = find_check_file(self._config_path, cid)
+        if target is None:
+            self.notify(f"could not locate check {cid} on disk", severity="error")
+            return
+        rewrite_check_expectation(target, cid, {check.expect.operator: new_operand})
+        self._existing_edit_made = True
+        self.notify(f"saved {check_label(check)}")
+
     def _propose(self) -> None:
         from dbfresh.adapters.factory import create_adapter
 
         proposal_widget = self.query_one("#proposal-text", Static)
         self._reset_proposal()
 
-        source_name = self.query_one("#source-input", Input).value.strip()
+        select = self.query_one("#source-select", Select)
+        if select.value is Select.BLANK:
+            proposal_widget.update("select a source")
+            return
+        source_name = str(select.value)
         object_name = self.query_one("#object-input", Input).value.strip()
 
         source = self._config.sources.get(source_name)
@@ -212,6 +328,8 @@ class ConfigureScreen(Screen[bool]):
             # existence.exists is only True when describe() succeeded, which
             # is exactly when info is populated (see ExistenceCheck).
             assert existence.info is not None
+
+            self._mount_existing_checks(source_name, object_name)
 
             ambiguity_note = None
             timestamp_override = None
@@ -365,4 +483,4 @@ class ConfigureScreen(Screen[bool]):
         self.dismiss(True)
 
     def action_cancel(self) -> None:
-        self.dismiss(False)
+        self.dismiss(self._existing_edit_made)
