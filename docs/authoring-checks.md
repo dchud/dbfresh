@@ -1,9 +1,12 @@
 # Authoring checks
 
 `configurator.py` is one front-end-agnostic module with two surfaces:
-`dbfresh add` (a CLI wizard) and the TUI's Configure screen --
-only the prompt/rendering layer differs between them. It **emits YAML**
-into the version-controlled config; it never writes a check into the
+`dbfresh add` (a CLI wizard) and the TUI's Configure screen -- the
+proposal flow (introspect, propose, accept/trim) is identical between
+them, only the prompt/rendering layer differs; the TUI additionally lets
+you edit an already-written check's threshold in place, which the CLI
+wizard doesn't (see "What it never does" below). It **emits YAML** into
+the version-controlled config; it never writes a check into the
 observation store. The design goal is minimal required input: name a source
 and an object, and the wizard introspects it and proposes a complete check
 bundle, which you accept, edit, or trim check by check -- metadata
@@ -69,9 +72,11 @@ The offered list also excludes any metric already auto-proposed for that
 same column (for example, `freshness` on the auto-detected timestamp
 column, or `duplicate_count` on a single-column key) -- offering it a
 second time would collide on check identity and be silently dropped when
-written. To change an auto-proposed check's threshold, edit the value
-directly in the written config rather than looking for it among the
-offered checks.
+written. To change an already-proposed check's threshold, use the TUI
+Configure screen's existing-checks list (single-value operators --
+`max`, `min`, `max_lag`, and similar -- get an editable field and a Save
+button) or edit the value directly in the config; the CLI `dbfresh add`
+wizard itself still only ever appends new checks.
 
 ## Safety and degradation
 
@@ -94,8 +99,14 @@ offered checks.
 
 ## What it never does
 
-The configurator only ever appends well-formed YAML check blocks (via
+The configurator appends well-formed YAML check blocks (via
 `append_checks()`) and, for a brand-new source, a `sources:` entry (via
-`add_source()`). It never writes an observation, never mutates an existing
-check block, and never touches the SQLite store -- every check it proposes
-still has to pass the same review as a hand-written one.
+`add_source()`); every check it proposes still has to pass the same
+review as a hand-written one. It never writes an observation and never
+touches the SQLite store. The one exception to "never mutates an existing
+check block" is `rewrite_check_expectation()` -- the TUI Configure
+screen's existing-checks editor -- which rewrites only a single-value
+`expect:` operand in place (preserving comments/formatting via a text
+splice where possible, falling back to a full YAML round trip otherwise);
+it never changes a check's identity fields (`source`, `object`, `metric`,
+`column`/`key`), so `check_id` and observation history are unaffected.

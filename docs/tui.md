@@ -34,12 +34,21 @@ The Configure screen is the TUI surface of the [configurator](
 authoring-checks.md) -- literally the same `configurator` module
 `dbfresh add` uses, so proposals, YAML shape, and safety behavior are
 identical; only the prompts differ (widgets instead of stdin prompts).
-Enter a source and object name, press **Propose** to introspect the object
-and see the proposed check bundle, then **Accept** to append it to the
-config (the root config, or the first included checks file when `include:`
-is configured) exactly as `dbfresh add` would. Accepting reloads the config
-and refreshes the Home grid so the new checks show up (dim, no observation
-yet, until the next run).
+Pick a source from the dropdown and enter an object name, press
+**Propose** to introspect the object and see both its already-written
+checks and the newly proposed bundle, then **Accept** to append the
+proposed bundle to the config (the root config, or the first included
+checks file when `include:` is configured) exactly as `dbfresh add` would.
+Accepting reloads the config and refreshes the Home grid so the new checks
+show up (dim, no observation yet, until the next run).
+
+An already-written check with a single-value threshold (`max`, `min`,
+`max_lag`, ...) gets an editable field and its own **Save** button, which
+writes immediately rather than waiting on Accept -- editing a threshold
+never changes a check's identity (`check_id` excludes `expect:` from its
+hash), so its observation history carries over unaffected. A check whose
+expectation isn't a single value (`between`, `vs_previous`, schema's
+`unchanged`) shows read-only; edit those directly in the YAML.
 
 ## Report
 
