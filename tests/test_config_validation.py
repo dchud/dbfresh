@@ -217,6 +217,43 @@ checks:
         load_config(path, env={})
 
 
+def test_check_with_metric_and_assert_is_a_validation_error(tmp_path):
+    # A check with both a metric and an assert: silently ran only the
+    # assert in dispatch, dropping the metric expectation with no error.
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+    assert: "x >= 0"
+""",
+    )
+    with pytest.raises(ValueError, match="more than one"):
+        load_config(path, env={})
+
+
+def test_check_with_assert_and_assert_sql_is_a_validation_error(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    assert: "x >= 0"
+    assert_sql: "SELECT * FROM t WHERE x < 0"
+""",
+    )
+    with pytest.raises(ValueError, match="more than one"):
+        load_config(path, env={})
+
+
 def test_assert_sql_check_loads_and_needs_no_expectation(tmp_path):
     path = _write(
         tmp_path,
