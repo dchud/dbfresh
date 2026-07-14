@@ -124,6 +124,25 @@ class DatabricksAdapter:
         finally:
             cursor.close()
 
+    def rows_limited(self, sql: str, n: int) -> list[dict]:
+        """Run ``sql`` unmodified, fetching at most ``n`` rows via the cursor.
+
+        Unlike :meth:`rows`, never caps by rewriting ``sql`` -- see
+        :meth:`~dbfresh.adapters.base.SqlAlchemyAdapter.rows_limited` for
+        why. The query runs exactly as authored; ``cursor.fetchmany(n)``
+        applies the cap client-side.
+        """
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(sql)
+            if cursor.description is None:
+                return []
+            columns = [d[0] for d in cursor.description]
+            rows = cursor.fetchmany(n)
+            return [dict(zip(columns, row, strict=True)) for row in rows]
+        finally:
+            cursor.close()
+
     def _rows_with_params(self, sql: str, parameters: dict[str, Any]) -> list[dict]:
         """Like :meth:`rows`, but with server-side bound parameters.
 

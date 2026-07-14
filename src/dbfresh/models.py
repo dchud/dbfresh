@@ -97,6 +97,10 @@ class ObservationReader(Protocol):
 
     def latest_observation(self, check_id: str) -> dict[str, Any] | None: ...
 
+    def latest_fingerprint_observation(
+        self, check_id: str
+    ) -> dict[str, Any] | None: ...
+
     def latest_clean_observation(self, check_id: str) -> dict[str, Any] | None: ...
 
     def last_same_weekday_observation(

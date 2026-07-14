@@ -421,6 +421,72 @@ def test_latest_observation_ignores_other_check_ids(tmp_path):
     store.close()
 
 
+def test_latest_fingerprint_observation_skips_a_value_less_skip_or_error(tmp_path):
+    # A SKIPPED (skip_off_schedule) or ERROR (unreachable source) schema
+    # observation persists with no fingerprint (value_text NULL). The
+    # unchanged baseline must never read one of those as "the latest
+    # observation" -- that would mask real drift recorded just before it.
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-1", status=Status.OK),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value=None, status=Status.SKIPPED),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value=None, status=Status.ERROR, error="boom"),
+        observed_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+    obs = store.latest_fingerprint_observation("x")
+    assert obs["value_text"] == "fp-1"
+    store.close()
+
+
+def test_latest_fingerprint_observation_picks_the_most_recent_fingerprint(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-old", status=Status.OK),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-new", status=Status.FAIL),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    obs = store.latest_fingerprint_observation("x")
+    assert obs["value_text"] == "fp-new"
+    store.close()
+
+
+def test_latest_fingerprint_observation_returns_none_with_no_history(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    assert store.latest_fingerprint_observation("nonexistent") is None
+    store.close()
+
+
+def test_latest_fingerprint_observation_returns_none_when_only_value_less_rows(
+    tmp_path,
+):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id, _result(check_id="x", value=None, status=Status.SKIPPED)
+    )
+    store.record_observation(
+        run_id, _result(check_id="x", value=None, status=Status.ERROR)
+    )
+    assert store.latest_fingerprint_observation("x") is None
+    store.close()
+
+
 def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
     adapter = SqliteAdapter()
     adapter.rows("CREATE TABLE t (created_at TEXT)")

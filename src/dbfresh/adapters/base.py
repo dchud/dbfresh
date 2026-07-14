@@ -156,6 +156,8 @@ class Adapter(Protocol):
 
     def rows(self, sql: str) -> list[dict[str, Any]]: ...
 
+    def rows_limited(self, sql: str, n: int) -> list[dict[str, Any]]: ...
+
     def describe(self, obj: str) -> ObjectInfo: ...
 
     def close(self) -> None: ...
@@ -200,6 +202,23 @@ class SqlAlchemyAdapter:
             self._conn.commit()
             return []
         return [dict(row) for row in result.mappings().all()]
+
+    def rows_limited(self, sql: str, n: int) -> list[dict]:
+        """Run ``sql`` unmodified, fetching at most ``n`` rows via the cursor.
+
+        Unlike :meth:`rows`, never caps via ``dialect.limit`` -- rewriting
+        author-supplied SQL to inject a row cap can corrupt it (a cap
+        injected inside a CTE truncates the scan instead of the returned
+        rows; ``SELECT DISTINCT`` becomes invalid syntax under some
+        dialects' rewrite). The query runs exactly as authored; the cap is
+        applied client-side by fetching at most ``n`` rows off the cursor,
+        leaving any further matching rows unconsumed.
+        """
+        result = self._conn.execute(text(sql))
+        if not result.returns_rows:
+            self._conn.commit()
+            return []
+        return [dict(row) for row in result.mappings().fetchmany(n)]
 
     def describe(self, obj: str) -> ObjectInfo:
         """Reflect columns, nullability, and key constraints into an ObjectInfo."""

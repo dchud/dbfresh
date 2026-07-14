@@ -35,14 +35,35 @@ expectation is `unchanged` (compare to the previous observation) or `equals`
 [Expectations & durations](expectations.md). On drift, the digest shows the
 added, removed, and retyped columns.
 
+`unchanged`'s baseline is the most recent observation that actually recorded
+a fingerprint -- a SKIPPED (`skip_off_schedule`) or ERROR (unreachable
+source) run persists with no fingerprint and is skipped past rather than
+read as "no prior observation," which would otherwise let real drift from
+right before a skip or an outage go undetected. The baseline is the last
+*recorded* fingerprint regardless of that observation's own status, and
+the semantic that follows from it is "detect a change," not "hold a
+permanent alarm": once a change is detected it alarms (FAIL, or WARN under
+`severity: warn`) exactly once, and the new shape becomes the baseline for
+every run after that. Pin a fingerprint with `equals` instead when you want
+an alarm that never self-clears.
+
 ### Assertions
 
 `assert: "<predicate>"` compiles to
 `SELECT * FROM obj WHERE NOT (<predicate>)`, capped by the dialect's row
-limiting form (20 rows fetched, 10 shown in the digest); `assert_sql:` lets
-you supply the whole violation-selecting query directly for anything the
-predicate form can't express. The persisted value is the violation row
-count.
+limiting form (20 rows fetched, 10 shown in the digest); the persisted
+value is the exact violation row count.
+
+`assert_sql:` lets you supply the whole violation-selecting query directly
+for anything the predicate form can't express. It runs exactly as
+authored -- never rewritten to inject a row cap, which can corrupt the
+query (a cap injected inside a CTE truncates the scan instead of the
+returned rows; `SELECT DISTINCT` can become invalid syntax) -- and is
+capped only at fetch time: at most 21 rows are pulled off the cursor, 10
+shown in the digest. Below 20 violations the persisted value is the exact
+count; at 21 or more fetched rows, the true count isn't known beyond "at
+least 20," so the persisted/displayed value reads `"20+"` instead of a
+literal (and meaningless) 21.
 
 ## Column-level checks
 

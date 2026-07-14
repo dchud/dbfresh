@@ -199,27 +199,39 @@ def _evaluate_assertion(check: Check, adapter: Adapter) -> Result:
     )
 
 
+_ASSERT_SQL_CAP = 20
+
+
 def _evaluate_assert_sql(check: Check, adapter: Adapter) -> Result:
-    """Run a raw, author-supplied violation-selecting query directly.
+    """Run a raw, author-supplied violation-selecting query, unmodified.
 
     Unlike ``assert:`` (a predicate compiled into a ``COUNT(*)`` query plus
     a separately capped evidence query), ``assert_sql:`` is arbitrary SQL
-    the author wrote themselves, selecting the violating rows; it is run
-    once, capped via the dialect's row-limiting form, and the row
-    count from that single capped fetch is the persisted violation count.
+    the author wrote themselves, selecting the violating rows. It is never
+    rewritten to inject a row cap -- that corrupts author SQL (a cap
+    injected inside a CTE truncates the scan instead of the returned rows;
+    ``SELECT DISTINCT`` becomes invalid syntax under some dialects'
+    rewrite) -- so it runs exactly as authored, capped only at fetch time
+    via ``rows_limited``, which fetches at most ``CAP + 1`` rows off the
+    cursor. Below the cap, the fetched length is the exact violation
+    count; a fetch of ``CAP + 1`` means the true count is ``CAP`` or more
+    but is not itself known, so the persisted/displayed value reads
+    ``"CAP+"`` rather than the literal (and meaningless) ``CAP + 1``.
     """
     assert check.assert_sql is not None  # only called from that branch
     label = _assertion_label(check)
     try:
-        rows = adapter.rows(adapter.dialect.limit(check.assert_sql, 20))
+        rows = adapter.rows_limited(check.assert_sql, _ASSERT_SQL_CAP + 1)
     except Exception as exc:  # unreachable source / query error -> ERROR
         return _error_result(check, exc, metric=None, label=label)
     count = len(rows)
     if count == 0:
         return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
+    capped = count > _ASSERT_SQL_CAP
+    value: int | str = f"{_ASSERT_SQL_CAP}+" if capped else count
     status = _verdict(check, False)
     return _result(
-        check, status, metric=None, value=count, label=label, samples=rows[:10]
+        check, status, metric=None, value=value, label=label, samples=rows[:10]
     )
 
 
@@ -292,10 +304,16 @@ def _evaluate_schema(
     ``schema`` is table-level and never compiles to SQL: it calls
     ``adapter.describe(object)`` and reduces the columns to a fingerprint
     (:func:`~dbfresh.checks.fingerprint_columns`). ``unchanged`` compares
-    against the most recent prior observation read from ``store`` (``None``
-    when there is no prior observation or no store — first run passes and
-    establishes the baseline); ``equals`` compares against a pinned
-    fingerprint. On drift, ``diff`` carries the added/removed/retyped columns.
+    against the most recent prior observation that actually recorded a
+    fingerprint (``store.latest_fingerprint_observation`` -- ``None`` when
+    there is no such observation or no store — first run passes and
+    establishes the baseline). A SKIPPED or ERROR observation carries no
+    fingerprint and is skipped past rather than read as "no baseline": once
+    a drift is detected it alarms (FAIL/WARN) exactly once, and the new
+    shape becomes the baseline for the next run -- pin a fingerprint with
+    ``equals`` instead of ``unchanged`` for an alarm that never
+    self-clears. ``equals`` compares against a pinned fingerprint. On
+    drift, ``diff`` carries the added/removed/retyped columns.
     """
     expected = expect.describe() if expect else None
     try:
@@ -310,7 +328,7 @@ def _evaluate_schema(
     if expect.operator == "unchanged":
         prior = None
         if store is not None:
-            observation = store.latest_observation(check_id(check))
+            observation = store.latest_fingerprint_observation(check_id(check))
             if observation is not None:
                 prior = observation.get("value_text")
         passed = prior is None or fingerprint == prior
