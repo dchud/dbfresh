@@ -67,3 +67,22 @@ def test_ui_command_defaults_config_path_and_no_store_override(tmp_path, monkeyp
     launched = _FakeApp.instances[0]
     assert str(launched.config_path) == "config.yaml"
     assert launched.store_path is None
+
+
+def test_ui_command_starts_with_a_missing_config_file(tmp_path, monkeypatch):
+    # Unlike a config that exists but fails to load (still a hard error --
+    # see test_cli_config_errors.py), a missing file is a brand-new
+    # project: `ui` starts against an empty in-memory config instead of
+    # refusing to launch, mirroring `dbfresh add`'s own tolerance for a
+    # missing config.
+    _FakeApp.instances.clear()
+    cfg = tmp_path / "does_not_exist.yaml"
+    monkeypatch.setattr("dbfresh.tui.app.DbfreshApp", _FakeApp)
+
+    code = main(["ui", "-c", str(cfg)])
+
+    assert code == 0
+    launched = _FakeApp.instances[0]
+    assert launched.initial_config is not None
+    assert launched.initial_config.sources == {}
+    assert launched.initial_config.checks == []

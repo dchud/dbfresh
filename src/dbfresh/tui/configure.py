@@ -26,6 +26,7 @@ from textual.widgets import (
     Label,
     Select,
     Static,
+    TextArea,
 )
 from textual.worker import Worker, WorkerState
 
@@ -33,6 +34,7 @@ from dbfresh.adapters.base import Column
 from dbfresh.checks import Check, check_id, parse_duration
 from dbfresh.config import Config, SourceConfig
 from dbfresh.configurator import (
+    add_source,
     append_checks,
     build_offered_check,
     check_object_exists,
@@ -40,6 +42,7 @@ from dbfresh.configurator import (
     key_introspection_note,
     offered_column_checks,
     pick_timestamp_column,
+    probe_new_source,
     propose_checks,
     rewrite_check_expectation,
     target_files,
@@ -47,6 +50,7 @@ from dbfresh.configurator import (
 from dbfresh.tui.dashboard import check_label
 
 _PROPOSE_WORKER_GROUP = "propose"
+_NEW_SOURCE_WORKER_GROUP = "new-source"
 
 _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 
@@ -92,6 +96,45 @@ def _id_part(value: str) -> str:
     return _UNSAFE_ID_CHARS.sub("_", value)
 
 
+def _parse_params_text(text: str) -> dict[str, str]:
+    """Parse the new-source form's ``key=value`` lines into a params dict.
+
+    Mirrors the CLI wizard's own key=value prompt loop (``cli._select_source``)
+    line for line -- blank lines are ignored, and a line with no ``=`` yields
+    an empty value rather than raising, matching ``str.partition``'s own
+    behavior there.
+    """
+    params: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        key, _sep, value = line.partition("=")
+        params[key.strip()] = value.strip()
+    return params
+
+
+@dataclass
+class _NewSourceOutcome:
+    """What :meth:`ConfigureScreen._new_source_worker` hands back to the
+    main thread.
+
+    ``error`` set means the probe failed and nothing was written to disk.
+    Otherwise ``name``/``type_`` and ``params`` describe the source
+    :func:`add_source` already wrote. ``params`` here are the
+    ${VAR}-resolved params, not the raw ones written to the YAML: the main
+    thread builds an in-memory ``SourceConfig`` from them so the new source
+    is immediately selectable -- and immediately connectable, with real
+    values rather than a literal "${VAR}", the same values a later config
+    reload would resolve -- without a full config reload.
+    """
+
+    error: str | None = None
+    name: str = ""
+    type_: str = ""
+    params: dict = field(default_factory=dict)
+
+
 def _describe_proposed(block: dict) -> str:
     """One-line label for a proposed check's trim checkbox: metric, its
     column/key context (when it has one), and the expectation.
@@ -111,6 +154,11 @@ def _describe_proposed(block: dict) -> str:
 
 class ConfigureScreen(Screen[bool]):
     """Propose and append a check bundle for a named source + object.
+
+    Also covers adding a brand-new source (see :meth:`_add_new_source`) --
+    reached via the "+ new source" button, or automatically when
+    ``config.sources`` starts out empty, since the propose form has nothing
+    to offer until at least one source exists.
 
     Dismisses with ``True`` when it wrote checks to disk (so Home reloads
     the config and refreshes the dashboard), ``False`` otherwise.
@@ -136,30 +184,68 @@ class ConfigureScreen(Screen[bool]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Label("Source name")
-        yield Select(
-            [(name, name) for name in sorted(self._config.sources)],
-            id="source-select",
-        )
-        yield Label("Object name")
-        yield Input(id="object-input")
-        yield Label("Timestamp column (only if ambiguous -- see proposal)")
-        yield Input(id="timestamp-input")
-        with Horizontal():
-            yield Button("Propose", id="propose-btn")
-            yield Button("Accept", id="accept-btn", disabled=True)
-            yield Button("Cancel", id="cancel-btn")
-        yield VerticalScroll(
-            Static("", id="proposal-text", markup=False),
-            Static("Existing checks for this object"),
-            Vertical(id="existing-checks"),
-            Static("Proposed checks (uncheck any to drop them)"),
-            Vertical(id="proposed-checks"),
-            Static("Offered checks (check any to add them)"),
-            Vertical(id="offered-checks"),
-            id="proposal-scroll",
-        )
+        with Vertical(id="propose-section"):
+            yield Label("Source name")
+            with Horizontal():
+                yield Select(
+                    [(name, name) for name in sorted(self._config.sources)],
+                    id="source-select",
+                )
+                yield Button("+ new source", id="new-source-btn")
+            yield Label("Object name")
+            yield Input(id="object-input")
+            yield Label("Timestamp column (only if ambiguous -- see proposal)")
+            yield Input(id="timestamp-input")
+            with Horizontal():
+                yield Button("Propose", id="propose-btn")
+                yield Button("Accept", id="accept-btn", disabled=True)
+                yield Button("Cancel", id="cancel-btn")
+            yield VerticalScroll(
+                Static("", id="proposal-text", markup=False),
+                Static("Existing checks for this object"),
+                Vertical(id="existing-checks"),
+                Static("Proposed checks (uncheck any to drop them)"),
+                Vertical(id="proposed-checks"),
+                Static("Offered checks (check any to add them)"),
+                Vertical(id="offered-checks"),
+                id="proposal-scroll",
+            )
+        with Vertical(id="new-source-form"):
+            yield Static("Add a new source", id="new-source-heading")
+            yield Label("Source name")
+            yield Input(id="new-source-name-input")
+            yield Label("Source type (e.g. sqlite)")
+            yield Input(id="new-source-type-input")
+            yield Label(
+                "Connection params, one key=value per line (blank lines"
+                " ignored) -- tip: use key=${VAR} for secrets to keep"
+                " them out of the YAML"
+            )
+            yield TextArea(id="new-source-params")
+            with Horizontal():
+                yield Button("Probe & add", id="new-source-add-btn")
+                yield Button("Cancel", id="new-source-cancel-btn")
         yield Footer()
+
+    def on_mount(self) -> None:
+        # A brand-new project has no sources at all -- the propose form
+        # would just be a dead end (an empty Select, nothing to Propose
+        # against), so open straight into the new-source form instead of
+        # making the user notice and click "+ new source" themselves.
+        self._show_new_source_form(not self._config.sources)
+
+    def _show_new_source_form(self, visible: bool) -> None:
+        """Toggle between the new-source form and the propose form -- only
+        one is ever shown at a time. See :meth:`on_mount` for why zero
+        sources opens here automatically; otherwise it's reached any time
+        via the "+ new source" button beside the source Select.
+        """
+        self.query_one("#new-source-form", Vertical).display = visible
+        self.query_one("#propose-section", Vertical).display = not visible
+        if visible:
+            self.query_one("#new-source-name-input", Input).value = ""
+            self.query_one("#new-source-type-input", Input).value = ""
+            self.query_one("#new-source-params", TextArea).text = ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -169,6 +255,12 @@ class ConfigureScreen(Screen[bool]):
             self._accept()
         elif button_id == "cancel-btn":
             self.dismiss(self._existing_edit_made)
+        elif button_id == "new-source-btn":
+            self._show_new_source_form(True)
+        elif button_id == "new-source-add-btn":
+            self._add_new_source()
+        elif button_id == "new-source-cancel-btn":
+            self._show_new_source_form(False)
         elif button_id.startswith("existing-save-"):
             self._save_existing(int(button_id.removeprefix("existing-save-")))
 
@@ -350,6 +442,66 @@ class ConfigureScreen(Screen[bool]):
         self._existing_edit_made = True
         self.notify(f"saved {check_label(check)}")
 
+    def _add_new_source(self) -> None:
+        """Validate the new-source form, then hand the connection probe
+        (and, on success, the disk write) off to a worker thread.
+
+        Mirrors :meth:`_propose`: everything here touches only cheap,
+        already-in-memory state (widget values, ``self._config``); the
+        network I/O (``probe_new_source``) and the config write
+        (``add_source``) both happen in :meth:`_new_source_worker` instead,
+        so neither ever blocks the UI thread.
+        """
+        name = self.query_one("#new-source-name-input", Input).value.strip()
+        type_ = self.query_one("#new-source-type-input", Input).value.strip()
+        params_text = self.query_one("#new-source-params", TextArea).text
+
+        if not name:
+            self.notify("enter a source name", severity="error")
+            return
+        if name in self._config.sources:
+            self.notify(f"source already exists: {name!r}", severity="error")
+            return
+        if not type_:
+            self.notify("enter a source type", severity="error")
+            return
+
+        params = _parse_params_text(params_text)
+        self.query_one("#new-source-add-btn", Button).disabled = True
+        self._new_source_worker(name, type_, params)
+
+    @work(
+        thread=True, exclusive=True, group=_NEW_SOURCE_WORKER_GROUP, exit_on_error=False
+    )
+    def _new_source_worker(
+        self, name: str, type_: str, params: dict
+    ) -> _NewSourceOutcome:
+        """Probe the new source's connection and, only once it succeeds,
+        write it to disk.
+
+        Runs on a worker thread (mirrors :meth:`_propose_worker`):
+        ``probe_new_source`` blocks on network I/O and ``add_source``
+        blocks on disk I/O, neither of which may run on the UI thread. This
+        method touches no widget and never mutates ``self._config`` -- it
+        returns a plain-data :class:`_NewSourceOutcome`;
+        :meth:`on_worker_state_changed` reflects the new source into
+        ``self._config`` and the Select back on the main thread.
+        """
+        probe, resolved_params = probe_new_source(type_, params)
+        if not probe.ok:
+            return _NewSourceOutcome(
+                error=f"could not connect to {name!r}: {probe.error}"
+            )
+        # add_source writes the raw params -- ${VAR} secrets stay ${VAR} in
+        # the YAML -- but the in-memory SourceConfig the main thread builds
+        # from this outcome must carry the resolved params, so an immediate
+        # Propose against the new source connects with real values rather
+        # than a literal "${VAR}". That matches what a later config reload
+        # produces: load_config resolves ${VAR} at load time, so an existing
+        # source's params are already resolved in memory.
+        add_source(self._config_path, name, type_, params)
+        return _NewSourceOutcome(name=name, type_=type_, params=resolved_params)
+
     def _propose(self) -> None:
         """Validate the form, then hand introspection off to a worker thread.
 
@@ -470,6 +622,15 @@ class ConfigureScreen(Screen[bool]):
         )
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Route a worker's state change to its own handler by group --
+        this screen runs two independent exclusive worker groups (Propose,
+        new-source), each with its own busy state and outcome shape."""
+        if event.worker.group == _PROPOSE_WORKER_GROUP:
+            self._on_propose_worker_state_changed(event)
+        elif event.worker.group == _NEW_SOURCE_WORKER_GROUP:
+            self._on_new_source_worker_state_changed(event)
+
+    def _on_propose_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up ``_propose_worker``'s outcome and mount widgets from it.
 
         Mirrors ``DbfreshApp.on_worker_state_changed``: the introspection
@@ -480,8 +641,6 @@ class ConfigureScreen(Screen[bool]):
         unexpected exception, ``event.worker.error``) rather than from
         inside the worker itself.
         """
-        if event.worker.group != _PROPOSE_WORKER_GROUP:
-            return
         if event.state == WorkerState.RUNNING:
             self.sub_title = "proposing checks…"
             return
@@ -524,6 +683,52 @@ class ConfigureScreen(Screen[bool]):
         self._target_file = outcome.target_file
         self.query_one("#proposal-text", Static).update("\n".join(outcome.notes))
         self.query_one("#accept-btn", Button).disabled = not self._proposed
+
+    def _on_new_source_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Pick up ``_new_source_worker``'s outcome: reflect a successful
+        probe+write into ``self._config`` and the source Select, or surface
+        a failed probe as an error toast with the form left open to retry.
+
+        Mirrors :meth:`_on_propose_worker_state_changed`: the probe (and,
+        on success, the disk write) already ran off-thread in
+        ``_new_source_worker``; every widget/``self._config`` touch below
+        runs here, back on the main thread, off of ``event.worker.result``.
+        """
+        if event.state == WorkerState.RUNNING:
+            self.sub_title = "adding source…"
+            return
+        if event.state not in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            return
+
+        self.sub_title = None
+        self.query_one("#new-source-add-btn", Button).disabled = False
+
+        if event.state == WorkerState.CANCELLED:
+            # Superseded by a later Probe & add click on this exclusive
+            # worker group -- the newer click already reset the form.
+            return
+        if event.state == WorkerState.ERROR:
+            self.notify(f"could not add source: {event.worker.error}", severity="error")
+            return
+
+        outcome = event.worker.result
+        assert outcome is not None
+        if outcome.error is not None:
+            self.notify(outcome.error, severity="error")
+            return
+
+        self._config.sources[outcome.name] = SourceConfig(
+            name=outcome.name, type=outcome.type_, params=outcome.params
+        )
+        select = self.query_one("#source-select", Select)
+        select.set_options((name, name) for name in sorted(self._config.sources))
+        select.value = outcome.name
+        self._show_new_source_form(False)
+        self.notify(f"added source {outcome.name!r}")
 
     def _rebuild_offered_check(
         self, block: dict, raw_value: str

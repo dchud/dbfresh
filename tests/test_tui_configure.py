@@ -169,6 +169,50 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
     asyncio.run(scenario())
 
 
+def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(tmp_path):
+    """Nothing connects "just configured a check" to "see it run" other
+    than the user finding the 'r' key on their own -- Accept must wire the
+    two together itself, firing the existing Run action once Home has
+    reloaded the config that Accept just wrote."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.click("#accept-btn")
+            await pilot.pause()
+
+            # Accept dismissed Configure; Home reloaded the config and, on
+            # its own, started a run -- wait for that background worker
+            # (never pressed 'r' in this scenario) before asserting on it.
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.last_run is not None
+            table = app.query_one("#dashboard-grid", DataTable)
+            row_keys = {key.value for key in table.rows}
+            assert "s\x1ffct" in row_keys
+            # row_count is one of the checks Accept just wrote for s.fct;
+            # a fresh run gives it a real status rather than "never
+            # observed" ('·').
+            cell = table.get_cell("s\x1ffct", "overall")
+            assert cell.plain != "·"
+
+    asyncio.run(scenario())
+
+
 def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
     tmp_path, monkeypatch
 ):
@@ -313,6 +357,267 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
             assert any("could not connect" in m for m in messages)
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
+
+    asyncio.run(scenario())
+
+
+# -- new-source form (df-ymt) ----------------------------------------------
+
+
+def test_configure_screen_opens_straight_into_new_source_form_at_zero_sources(
+    tmp_path,
+):
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            # No sources to propose against -- the propose form (an empty
+            # Select and nothing else) would be a dead end, so the screen
+            # opens straight into the new-source form instead.
+            assert app.screen.query_one("#new-source-form").display
+            assert not app.screen.query_one("#propose-section").display
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_new_source_button_reveals_form_when_sources_exist(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            # A source already exists -- the propose form opens by
+            # default, with the new-source form reachable on demand.
+            assert app.screen.query_one("#propose-section").display
+            assert not app.screen.query_one("#new-source-form").display
+
+            await pilot.click("#new-source-btn")
+            await pilot.pause()
+
+            assert app.screen.query_one("#new-source-form").display
+            assert not app.screen.query_one("#propose-section").display
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_path):
+    """A probe that succeeds writes the source to disk (via
+    ``configurator.add_source``, reused verbatim), reflects it into the
+    Select, and returns to the propose form with it selected and already
+    usable for Propose in the same session -- no reopen or reload needed.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-params").text = f"database={db}"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert not app.screen.query_one("#new-source-form").display
+            assert app.screen.query_one("#propose-section").display
+            select = app.screen.query_one("#source-select")
+            assert select.value == "s"
+
+            data = yaml.safe_load(cfg.read_text())
+            assert data["sources"]["s"]["type"] == "sqlite"
+            assert data["sources"]["s"]["database"] == str(db)
+
+            # Usable for Propose right away, in this same screen instance.
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("row_count" in label for label in labels)
+
+    asyncio.run(scenario())
+
+
+def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
+    tmp_path, monkeypatch
+):
+    """A new source added with a ${VAR} param keeps ${VAR} in the YAML but
+    resolves it in memory, so an immediate Propose in the same session
+    connects with the real value -- not a literal "${VAR}". The form itself
+    recommends key=${VAR} for secrets, so this is the path a secret-using
+    user actually takes.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            params = app.screen.query_one("#new-source-params")
+            params.text = "database=${DBFRESH_TEST_DB}"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Disk keeps the raw ${VAR} -- no resolved secret written to YAML.
+            data = yaml.safe_load(cfg.read_text())
+            assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB}"
+            # In memory it is resolved, so the source is immediately usable.
+            assert app.screen._config.sources["s"].params["database"] == str(db)
+
+            # Propose against the just-added source connects with the real
+            # path; a literal "${DBFRESH_TEST_DB}" would find no fct table.
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("row_count" in label for label in labels)
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_open(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            app.screen.query_one("#new-source-type-input").value = "unreachable"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Did not crash: still on Configure, in the new-source form
+            # (not silently dropped back to the propose form), with an
+            # error toast -- the same notify() channel Propose's own
+            # connect failure uses.
+            assert isinstance(app.screen, ConfigureScreen)
+            assert app.screen.query_one("#new-source-form").display
+            messages = [n.message for n in app._notifications]
+            assert any("could not connect" in m for m in messages)
+
+        data = yaml.safe_load(cfg.read_text())
+        assert data["sources"] == {}
+
+    asyncio.run(scenario())
+
+
+def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            await pilot.click("#new-source-btn")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"  # already exists
+            app.screen.query_one("#new-source-type-input").value = "sqlite"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.pause()
+
+            # Rejected synchronously, before any worker (and therefore any
+            # network probe) ever started.
+            assert not app.workers
+            messages = [n.message for n in app._notifications]
+            assert any("already exists" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
+def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path):
+    """The full first-run path: ``dbfresh ui`` against a config path that
+    doesn't exist yet starts ``DbfreshApp`` against an empty in-memory
+    ``Config`` (see ``cli._ui_command`` / test_cli_ui.py's missing-config
+    test for the CLI side of this) -- Configure's new-source form must
+    still work end to end from there, creating ``config.yaml`` for the
+    first time via :func:`~dbfresh.configurator.add_source`.
+    """
+
+    async def scenario():
+        from dbfresh.config import Config
+
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = tmp_path / "config.yaml"
+        assert not cfg.exists()
+
+        initial_config = Config(sources={}, checks=[], config_dir=tmp_path)
+        app = DbfreshApp(
+            config_path=cfg,
+            store_path=str(tmp_path / "obs.db"),
+            initial_config=initial_config,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-params").text = f"database={db}"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert cfg.exists()  # written for the first time by add_source
+            select = app.screen.query_one("#source-select")
+            assert select.value == "s"
 
     asyncio.run(scenario())
 

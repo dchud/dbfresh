@@ -531,14 +531,24 @@ def _add_command(args: argparse.Namespace) -> int:
 
 
 def _ui_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError, load_config
+    from dbfresh.config import Config, ConfigError, load_config
     from dbfresh.tui.app import DbfreshApp
 
     config_path = Path(args.config)
-    try:
-        config = load_config(config_path)
-    except (ConfigError, OSError, yaml.YAMLError) as exc:
-        return _report_config_error(exc)
+    if config_path.exists():
+        try:
+            config = load_config(config_path)
+        except (ConfigError, OSError, yaml.YAMLError) as exc:
+            return _report_config_error(exc)
+    else:
+        # Unlike a config that exists but fails to parse/validate (still a
+        # hard error above), a missing file just means a brand-new project:
+        # start against an empty in-memory config rather than refusing to
+        # launch, so a first-time user can reach Configure and add a source
+        # (which writes config_path for the first time) without first
+        # hand-writing YAML. Mirrors `dbfresh add`, which already tolerates
+        # a missing config the same way.
+        config = Config(sources={}, checks=[], config_dir=config_path.resolve().parent)
 
     app = DbfreshApp(
         config_path=args.config, store_path=args.store, initial_config=config

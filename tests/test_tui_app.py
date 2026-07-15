@@ -2,7 +2,7 @@ import asyncio
 import re
 import threading
 
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static
 
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -102,6 +102,48 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
             assert detail_table.row_count == 2
             assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
             assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_home_shows_empty_state_when_no_checks_are_configured(tmp_path):
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # A blank grid (just the header row) reads as broken to a
+            # first-time user -- guidance is shown instead, and the grid
+            # and legend (which would otherwise be an empty wall) are
+            # hidden rather than shown alongside it.
+            empty_state = app.query_one("#empty-state", Static)
+            assert empty_state.display
+            assert "press 'c'" in str(empty_state.render())
+
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert not table.display
+            assert not app.query_one("#status-legend", Static).display
+
+    asyncio.run(scenario())
+
+
+def test_home_hides_empty_state_once_checks_exist(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            assert not app.query_one("#empty-state", Static).display
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert table.display
+            assert app.query_one("#status-legend", Static).display
 
     asyncio.run(scenario())
 

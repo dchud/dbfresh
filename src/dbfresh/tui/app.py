@@ -47,6 +47,13 @@ _RUN_TOAST_SEVERITY: dict[Status, SeverityLevel] = {
     Status.SKIPPED: "information",
 }
 
+# Shown instead of the grid when there's nothing to show -- a zero-check
+# config renders as just the grid's own header row otherwise, which reads
+# as broken rather than as "nothing configured yet".
+_EMPTY_STATE_MESSAGE = (
+    "no checks configured yet -- press 'c' to configure a source and its checks"
+)
+
 
 def _run_summary(run: RunResult) -> str:
     """A short "N ok, N failed, ..." toast summary of ``run``'s counts."""
@@ -119,6 +126,7 @@ class DbfreshApp(App):
         yield Header()
         yield DataTable(id=_GRID_ID, cursor_type="row")
         yield Static(status_legend(), id="status-legend")
+        yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -151,7 +159,12 @@ class DbfreshApp(App):
         self.store = Store(store_path)
 
     def refresh_dashboard(self) -> None:
-        """Rebuild the dashboard grid from the current config and store."""
+        """Rebuild the dashboard grid from the current config and store.
+
+        A config with no checks (or no sources to hang any on) has no rows
+        at all -- rather than showing the grid's bare header row, swap in
+        an empty-state hint pointing at Configure.
+        """
         from dbfresh.report import display_timezone
 
         table = self.query_one(f"#{_GRID_ID}", DataTable)
@@ -161,6 +174,11 @@ class DbfreshApp(App):
         rows = object_rows(config, self._require_store(), today, tz)
         populate_grid(table, rows, today, label_header="object")
         self._rows_by_key = {row.key: row for row in rows}
+
+        empty = not rows
+        table.display = not empty
+        self.query_one("#status-legend", Static).display = not empty
+        self.query_one("#empty-state", Static).display = empty
 
     def action_run_checks(self) -> None:
         """Start a check run in a worker thread; the UI stays responsive."""
@@ -282,6 +300,13 @@ class DbfreshApp(App):
             )
             return
         self.refresh_dashboard()
+
+        # Connect the two steps a first-time user would otherwise have to
+        # discover separately: a just-written check renders as unknown
+        # ("never observed") until something runs it, so run immediately
+        # rather than leaving that connection for the user to find via 'r'.
+        self.notify("running the checks you just configured…")
+        self.action_run_checks()
 
     def action_report(self) -> None:
         from dbfresh.report import display_timezone
