@@ -185,7 +185,9 @@ class ObjectDetailScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
-        yield DataTable(id=_DETAIL_GRID_ID, cursor_type="row")
+        yield DataTable(
+            id=_DETAIL_GRID_ID, cursor_type="row", zebra_stripes=True, cell_padding=2
+        )
         yield Static(status_legend(), id="status-legend")
         yield Footer()
 

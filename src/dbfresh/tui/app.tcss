@@ -1,0 +1,112 @@
+/* Catppuccin Macchiato, wired in via DbfreshApp.theme = "catppuccin-macchiato"
+ * (Textual bundles this theme, so $primary/$secondary/$success/$warning/
+ * $error/$background/$surface/$panel/$foreground already resolve to
+ * mauve/peach/green/yellow/red/base/surface0/surface1/text -- see
+ * dbfresh.tui.dashboard._STATUS_STYLE for the Rich-side status colors,
+ * which read from the same palette).
+ *
+ * The variables below fill in the rest of the named Macchiato palette that
+ * the bundled theme doesn't expose as $-variables, so any rule in this file
+ * (or a future one) can reach the full set by name.
+ */
+$mantle: #1e2030;
+$crust: #181926;
+$surface2: #5b6078;
+$overlay0: #6e738d;
+$overlay1: #8087a2;
+$overlay2: #939ab7;
+$subtext0: #a5adcb;
+$subtext1: #b8c0e0;
+$blue: #8aadf4;
+$teal: #8bd5ca;
+$sky: #91d7e3;
+
+Screen {
+    background: $background;
+}
+
+Header {
+    background: $mantle;
+}
+
+Footer {
+    background: $mantle;
+}
+
+/* Home dashboard */
+
+#dashboard-grid {
+    margin: 1 1 0 1;
+}
+
+#status-legend {
+    color: $subtext0;
+    margin: 1 1 0 1;
+}
+
+#empty-state {
+    width: 100%;
+    height: 100%;
+    color: $subtext0;
+    text-style: italic;
+    content-align: center middle;
+}
+
+/* Object detail drill-in */
+
+#object-detail-heading {
+    color: $foreground;
+    text-style: bold;
+    padding: 1 1 0 1;
+}
+
+#object-detail-grid {
+    margin: 1;
+}
+
+/* Report / History */
+
+#report-text,
+#history-text {
+    padding: 1 2;
+}
+
+/* Configure screen */
+
+ConfigureScreen #propose-section,
+ConfigureScreen #new-source-form {
+    padding: 1 2;
+}
+
+ConfigureScreen Label {
+    color: $subtext1;
+    margin-top: 1;
+}
+
+ConfigureScreen Horizontal {
+    height: auto;
+    margin-bottom: 1;
+}
+
+ConfigureScreen Button {
+    margin-right: 1;
+}
+
+.section-title {
+    color: $subtext1;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.panel {
+    background: $mantle;
+    border: round $surface2;
+    padding: 1 2;
+    margin-top: 1;
+}
+
+#new-source-heading {
+    color: $foreground;
+    text-style: bold;
+    margin-bottom: 1;
+}
