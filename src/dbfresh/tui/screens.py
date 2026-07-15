@@ -30,6 +30,13 @@ _NO_RUN_MESSAGE = (
     "no run recorded in this session yet -- press 'r' on the dashboard to run checks"
 )
 
+# render_history's own fixed-width columns (see dbfresh.report.render_history:
+# f"{observed:<28} {row['status']:<8} {display:<16} {trend}") -- used below to
+# locate the status field within each already-rendered row line rather than
+# recomputing it, so the CLI's formatting stays the single source of truth.
+_HISTORY_OBSERVED_WIDTH = 28
+_HISTORY_STATUS_WIDTH = 8
+
 
 def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
     """:func:`render_digest`'s plain text, recolored by status severity for
@@ -67,6 +74,61 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
                 continue
         lines.append(Text(line))
     return Text("\n").join(lines)
+
+
+def _colorized_history(candidate: dict, rows: list[dict], tz: tzinfo | None) -> Text:
+    """:func:`render_history`'s plain text, recolored for the History
+    screen the same way :func:`_colorized_digest` recolors the Report
+    digest -- ``render_history`` itself (also the CLI's ``dbfresh
+    history`` output) is left untouched; only this presentation layer
+    reads and restyles its text.
+
+    Two changes: each row's bare status word becomes a glyph+color pair
+    via :func:`~dbfresh.tui.dashboard.status_glyph` /
+    :func:`~dbfresh.tui.dashboard.status_style` -- the same encoding the
+    grid and the Report digest already use, so History is no longer the
+    one surface where a status escapes it -- and the heading drops the
+    trailing ``(check_id)`` hash, which is noise on a screen already
+    reached by selecting that exact check.
+
+    ``render_history`` appends exactly one line per row, in ``rows``
+    order, after its header lines, so the last ``len(rows)`` lines line up
+    with ``rows`` positionally without needing to locate the header by
+    content.
+    """
+    plain = render_history(candidate, rows, tz=tz)
+    lines = plain.split("\n")
+    lines[0] = lines[0].removesuffix(f" ({candidate['check_id']})")
+
+    if rows:
+        header_lines, data_lines = lines[: -len(rows)], lines[-len(rows) :]
+    else:
+        header_lines, data_lines = lines, []
+
+    status_start = _HISTORY_OBSERVED_WIDTH + 1
+    status_end = status_start + _HISTORY_STATUS_WIDTH
+    # "glyph status" runs up to two chars wider than the bare status word --
+    # "– SKIPPED" is 9, one past render_history's 8-char status field -- so
+    # give the styled cells one extra column and widen the column header's
+    # status slot to match, keeping the value column aligned on every row,
+    # SKIPPED included.
+    field = _HISTORY_STATUS_WIDTH + 1
+    styled = [Text(line) for line in header_lines]
+    if rows:
+        header = header_lines[-1]
+        styled[-1] = Text(
+            header[:status_start]
+            + header[status_start:status_end].ljust(field)
+            + header[status_end:]
+        )
+    for row, line in zip(rows, data_lines, strict=True):
+        status = Status(row["status"])
+        entry = Text(line[:status_start])
+        label = f"{status_glyph(status)} {status}".ljust(field)
+        entry.append(label, style=status_style(status))
+        entry.append(line[status_end:])
+        styled.append(entry)
+    return Text("\n").join(styled)
 
 
 class ReportScreen(Screen):
@@ -137,7 +199,7 @@ class HistoryScreen(Screen):
             "metric": self._check.metric,
         }
         rows = self._store.history(cid)
-        text = render_history(candidate, rows, tz=self._tz)
+        text = _colorized_history(candidate, rows, tz=self._tz)
         yield Header()
         yield VerticalScroll(Static(text, id="history-text", markup=False))
         yield Footer()
@@ -186,7 +248,13 @@ class ObjectDetailScreen(Screen):
         yield Header()
         yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
         yield DataTable(
-            id=_DETAIL_GRID_ID, cursor_type="row", zebra_stripes=True, cell_padding=2
+            id=_DETAIL_GRID_ID,
+            cursor_type="row",
+            zebra_stripes=True,
+            cell_padding=2,
+            # See DbfreshApp.compose's dashboard-grid DataTable -- same
+            # reason: keep each cell's own status color on the cursor row.
+            cursor_foreground_priority="renderable",
         )
         yield Static(status_legend(), id="status-legend")
         yield Footer()

@@ -33,6 +33,26 @@ Footer {
     background: $mantle;
 }
 
+/* Both status grids share one cursor treatment: the default block cursor
+ * (Textual's DataTable) floods the whole row with $primary (mauve) and
+ * forces every cell's foreground to match it, which erases the
+ * OK/WARN/FAIL/ERROR/SKIPPED encoding on exactly the row under focus.
+ * cursor_foreground_priority="renderable" (set on both DataTable widgets
+ * in app.py / screens.py) keeps a status cell's own color, so this rule
+ * softens the background from mauve to a neutral surface tone. The label
+ * column carries no color of its own, so on the cursor row it falls back
+ * to this rule's foreground -- set to $foreground rather than the theme's
+ * near-black block-cursor foreground so the object/check name stays
+ * legible on the surface tint. ID selectors (not a shared class) so this
+ * beats the default CSS's own :focus-scoped rule regardless of focus
+ * state.
+ */
+#dashboard-grid > .datatable--cursor,
+#object-detail-grid > .datatable--cursor {
+    background: $surface2 50%;
+    color: $foreground;
+}
+
 /* Home dashboard */
 
 #dashboard-grid {
@@ -83,6 +103,10 @@ ConfigureScreen Label {
     margin-top: 1;
 }
 
+.hint {
+    color: $subtext0;
+}
+
 ConfigureScreen Horizontal {
     height: auto;
     margin-bottom: 1;
@@ -108,5 +132,33 @@ ConfigureScreen Button {
 #new-source-heading {
     color: $foreground;
     text-style: bold;
-    margin-bottom: 1;
+}
+
+/* Sibling of #propose-section, not nested inside its own padded
+ * container, so the panel border is otherwise flush with the terminal's
+ * own edges -- unlike every other panel here -- and the Vertical's
+ * default height: 1fr stretches the (mostly empty) border to fill the
+ * screen instead of hugging its content. Selector prefixed with
+ * ConfigureScreen (matching this ID's other padding rule above) so this
+ * one wins on specificity, not just source order. Padding/margin trimmed
+ * (vs. the standard .panel + Horizontal spacing) to keep the whole form,
+ * button row included, fitting an 80x24 terminal without scrolling. */
+ConfigureScreen #new-source-form {
+    height: auto;
+    padding: 0 2;
+    margin: 1 2 0 2;
+}
+
+#new-source-form Horizontal {
+    margin-bottom: 0;
+}
+
+/* TextArea defaults to height: 1fr too -- inside an auto-height parent
+ * that has nothing definite to divide, that still expands to fill the
+ * screen, so the params field needs its own fixed height for the panel
+ * around it to actually close at the bottom -- kept small (a couple of
+ * key=value lines is the common case) so the form still fits an 80x24
+ * terminal alongside its other fields. */
+#new-source-params {
+    height: 3;
 }

@@ -237,11 +237,13 @@ class ConfigureScreen(Screen[bool]):
             yield Label("Source type (e.g. sqlite)")
             yield Input(id="new-source-type-input")
             yield Label(
-                "Connection params, one key=value per line (blank lines"
-                " ignored) -- tip: use key=${VAR} for secrets to keep"
-                " them out of the YAML"
+                "Connection params, one key=value per line (blank lines ignored)"
             )
-            yield TextArea(id="new-source-params")
+            yield Static(
+                "tip: use key=${VAR} for secrets to keep them out of the YAML",
+                classes="hint",
+            )
+            yield TextArea(id="new-source-params", placeholder="database=/path/to.db")
             with Horizontal():
                 yield Button("Probe & add", id="new-source-add-btn", variant="primary")
                 yield Button("Cancel", id="new-source-cancel-btn")

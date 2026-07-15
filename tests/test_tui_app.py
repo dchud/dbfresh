@@ -504,7 +504,10 @@ def test_selecting_a_check_row_opens_history_with_its_observations(tmp_path):
             assert f"{'5':<16}" in text
             assert "3.0" not in text
             assert "5.0" not in text
-            assert cid in text
+            # the check_id hash is dropped from the TUI heading -- noise on
+            # a screen already reached by selecting this exact check (the
+            # CLI's `dbfresh history` output keeps it; see render_history).
+            assert cid not in text
 
     asyncio.run(scenario())
 
@@ -636,5 +639,32 @@ def test_report_action_before_any_run_shows_placeholder(tmp_path):
             assert isinstance(app.screen, ReportScreen)
             text = str(app.screen.query_one("#report-text").content)
             assert "no run recorded" in text
+
+    asyncio.run(scenario())
+
+
+def test_status_grids_keep_cell_colors_on_the_cursor_row(tmp_path):
+    """Both status grids set cursor_foreground_priority="renderable" --
+    the DataTable default ("css") forces every cell on the selected row to
+    one flat foreground, which would erase the OK/WARN/FAIL/... encoding
+    on exactly the row under focus. See app.tcss's .datatable--cursor rule
+    for the matching cursor background restyle."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert table.cursor_foreground_priority == "renderable"
+
+            await pilot.press("enter")
+            await pilot.pause()
+            detail_table = app.screen.query_one(DataTable)
+            assert detail_table.cursor_foreground_priority == "renderable"
 
     asyncio.run(scenario())
