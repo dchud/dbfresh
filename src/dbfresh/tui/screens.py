@@ -43,6 +43,10 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
     status, then recolors that block's header line with the grid's own
     glyph/style for that status (:func:`~dbfresh.tui.dashboard.status_glyph`,
     :func:`~dbfresh.tui.dashboard.status_style`).
+
+    The walk is defensive: if it ever falls out of step with the digest
+    text -- a future change to ``render_digest``'s line format -- the
+    affected line falls back to uncolored rather than raising.
     """
     plain = render_digest(run, tz=tz)
     blocks = iter(
@@ -53,12 +57,15 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
     lines: list[Text] = []
     for line in plain.split("\n"):
         if line.startswith("✗ "):
-            status = next(blocks).status
-            styled = Text(status_glyph(status), style=status_style(status))
-            styled.append(line[1:])
-            lines.append(styled)
-        else:
-            lines.append(Text(line))
+            result = next(blocks, None)
+            if result is not None:
+                styled = Text(
+                    status_glyph(result.status), style=status_style(result.status)
+                )
+                styled.append(line[1:])
+                lines.append(styled)
+                continue
+        lines.append(Text(line))
     return Text("\n").join(lines)
 
 
