@@ -127,6 +127,81 @@ def test_rewrite_check_expectation_does_not_change_check_id(tmp_path):
     assert check_id_of_block(rewritten) == cid
 
 
+def test_rewrite_check_expectation_writes_a_between_lo_hi_pair(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n  s: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    between: [1, 1000]\n"
+    )
+    check = build_check("s", "t", "row_count", expect={"between": [1, 1000]})
+    cid = check_id_of_block(check)
+
+    ok = rewrite_check_expectation(cfg, cid, {"between": [5, 2000]})
+
+    assert ok is True
+    data = yaml.safe_load(cfg.read_text())
+    assert data["checks"][0]["expect"] == {"between": [5, 2000]}
+    assert data["sources"]["s"]["type"] == "sqlite"  # untouched
+
+
+def test_rewrite_check_expectation_between_preserves_other_checks(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n  s: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    between: [1, 1000]\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: null_rate\n"
+        "  column: email\n"
+        "  expect:\n"
+        "    max: 0.05\n"
+    )
+    row_count_check = build_check("s", "t", "row_count", expect={"between": [1, 1000]})
+    cid = check_id_of_block(row_count_check)
+
+    ok = rewrite_check_expectation(cfg, cid, {"between": [10, 500]})
+
+    assert ok is True
+    data = yaml.safe_load(cfg.read_text())
+    assert data["checks"][0]["expect"] == {"between": [10, 500]}
+    assert data["checks"][1]["expect"] == {"max": 0.05}  # untouched
+
+
+def test_rewrite_check_expectation_between_works_on_included_file(tmp_path):
+    (tmp_path / "checks").mkdir()
+    a = tmp_path / "checks" / "a.yaml"
+    a.write_text(
+        "checks:\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    between: [1, 1000]\n"
+    )
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ninclude: [checks/*.yaml]\nchecks: []\n")
+    check = build_check("s", "t", "row_count", expect={"between": [1, 1000]})
+    cid = check_id_of_block(check)
+
+    target = find_check_file(cfg, cid)
+    assert target == a
+    ok = rewrite_check_expectation(target, cid, {"between": [2, 3000]})
+
+    assert ok is True
+    data = yaml.safe_load(a.read_text())
+    assert data["checks"][0]["expect"] == {"between": [2, 3000]}
+
+
 def test_find_check_file_locates_the_file_containing_a_check_id(tmp_path):
     (tmp_path / "checks").mkdir()
     a = tmp_path / "checks" / "a.yaml"

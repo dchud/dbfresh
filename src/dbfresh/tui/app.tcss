@@ -110,6 +110,29 @@ Footer {
     margin: 1;
 }
 
+#detail-edit-scroll {
+    margin: 0 1 1 1;
+}
+
+ObjectDetailScreen Horizontal {
+    height: auto;
+    margin-bottom: 1;
+}
+
+ObjectDetailScreen Button {
+    margin-right: 1;
+}
+
+/* Input's own default (width: 100%) would claim the rest of an edit row's
+ * width and push its trailing Save/Delete buttons out of the row's
+ * overflow-hidden bounds -- a between row has two of these side by side,
+ * so both stay narrow enough (a duration or a numeric threshold is short)
+ * to leave room for the label ahead of them and the buttons after.
+ */
+ObjectDetailScreen #detail-edit-checks Input {
+    width: 10;
+}
+
 /* Report / History */
 
 #report-text,
