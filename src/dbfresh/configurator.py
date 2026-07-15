@@ -760,6 +760,57 @@ def _sequence_item_bounds(
     ]
 
 
+def _mapping_entry_bounds(
+    lines: list[str], parent_key: str, entry_key: str
+) -> tuple[int, int] | None:
+    """(start, end) line range for one ``entry_key:`` entry nested under a
+    top-level ``parent_key:`` mapping -- the mapping-entry counterpart to
+    :func:`_sequence_item_bounds`'s sequence-item ranges (e.g. one named
+    source under ``sources:``, rather than one item under ``checks:``).
+
+    ``end`` includes the entry's own more-indented continuation lines
+    (block-style, e.g. ``s:\\n  type: sqlite\\n``) or just its single line
+    (inline flow-style, e.g. ``s: { type: sqlite, database: ... }``),
+    stopping at the next line indented no deeper than the entry line
+    itself, or at the parent block's end -- greedy about trailing blank
+    and comment lines the same way :func:`_sequence_item_bounds` is, so a
+    caller that deletes or replaces the range should trim it first (see
+    :func:`_trim_trailing_blank_or_comment_lines`).
+
+    Returns ``None`` when ``parent_key`` or ``entry_key`` isn't found, or
+    when ``parent_key:``'s own value is flow-style with existing entries
+    (e.g. ``sources: {a: {...}}`` on one line) -- a shape this can't
+    safely splice into; the caller falls back to a full round trip.
+    """
+    idx = _find_top_level_key(lines, parent_key)
+    if idx is None:
+        return None
+    block_end = _block_end(lines, idx)
+    inline = lines[idx].split(":", 1)[1].strip()
+    if inline not in ("", "[]", "{}"):
+        return None  # flow-style value -- not this function's shape to handle
+
+    indent = _block_indent(lines, idx, block_end, default=2)
+    pattern = re.compile(rf"^ {{{indent}}}{re.escape(entry_key)}:(.*)$")
+    entry_start = next(
+        (i for i in range(idx + 1, block_end) if pattern.match(lines[i])), None
+    )
+    if entry_start is None:
+        return None
+
+    entry_end = entry_start + 1
+    while entry_end < block_end:
+        line = lines[entry_end]
+        stripped = line.strip()
+        if stripped == "" or stripped.startswith("#"):
+            entry_end += 1
+            continue
+        if len(line) - len(line.lstrip(" ")) <= indent:
+            break
+        entry_end += 1
+    return entry_start, entry_end
+
+
 def _replace_nested_key_value(
     lines: list[str], start: int, end: int, key: str, new_value: Any
 ) -> list[str] | None:
@@ -936,3 +987,138 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
         del checks[index]
         raw["checks"] = checks
     target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+
+def raw_source(config_path: str | Path, name: str) -> tuple[str, dict[str, str]]:
+    """The ``type`` and raw, un-interpolated params of one configured
+    source, straight off the root config -- ``${VAR}`` tokens intact,
+    never resolved.
+
+    ``sources:`` is declared only in the root config (see :func:`add_source`),
+    so this always reads ``config_path`` directly, never an included
+    checks file. What the Configure screen's edit-source form pre-fills
+    from, so a secret param shows as ``${VAR}`` rather than a resolved
+    value the user never typed; the counterpart write-back is
+    :func:`rewrite_source`.
+
+    Raises :class:`ValueError` when ``name`` isn't a configured source.
+    """
+    config_path = Path(config_path)
+    raw = yaml.safe_load(config_path.read_text()) or {}
+    sources = raw.get("sources") or {}
+    if name not in sources:
+        raise ValueError(f"source not found: {name!r}")
+    entry = dict(sources[name])
+    type_ = entry.pop("type", "")
+    return type_, entry
+
+
+def rewrite_source(
+    config_path: str | Path, name: str, type_: str, params: dict
+) -> None:
+    """Replace one already-configured source's ``type``/params in place --
+    the edit counterpart to :func:`add_source`. ``name`` is the entry's
+    identity and is never changed here, only its ``type:`` and params.
+
+    ``params`` are written verbatim, exactly like :func:`add_source` --
+    they may hold ``${VAR}`` secret tokens, which must never be resolved
+    before writing (the caller runs the mandatory connection test via
+    :func:`probe_new_source` first, against the *resolved* params, but
+    writes only what's passed here).
+
+    Attempts a text splice that touches only the matched entry's own
+    lines (:func:`_mapping_entry_bounds`), re-rendered at the same indent
+    via :func:`_reindent`, preserving every other source and all comments
+    elsewhere in the file. A comment sitting immediately after the
+    entry's own lines and before the next source is trimmed off the
+    replaced range first (:func:`_trim_trailing_blank_or_comment_lines`)
+    -- it's the next source's leading note, not this one's, so a rewrite
+    must not swallow it any more than a removal would (see
+    :func:`remove_source`). Falls back to a full YAML round trip -- which
+    loses comments -- only for a shape the splice can't safely handle
+    (e.g. a flow-style ``sources: {a: {...}}`` one-liner).
+
+    Raises :class:`ValueError` when ``name`` isn't a configured source.
+    """
+    config_path = Path(config_path)
+    text = config_path.read_text()
+    raw = yaml.safe_load(text) or {}
+    sources = raw.get("sources") or {}
+    if name not in sources:
+        raise ValueError(f"source not found: {name!r}")
+
+    entry = {"type": type_, **params}
+    lines = text.splitlines(keepends=True)
+    bounds = _mapping_entry_bounds(lines, "sources", name)
+    if bounds is not None:
+        start, end = bounds
+        core_end = _trim_trailing_blank_or_comment_lines(lines, start, end)
+        indent = len(lines[start]) - len(lines[start].lstrip(" "))
+        rendered = yaml.safe_dump({name: entry}, sort_keys=False)
+        new_lines = _reindent(rendered, indent)
+        config_path.write_text(
+            "".join(lines[:start]) + new_lines + "".join(lines[core_end:])
+        )
+        return
+
+    raw = dict(raw)
+    sources = dict(raw.get("sources") or {})
+    sources[name] = entry
+    raw["sources"] = sources
+    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+
+
+def remove_source(config_path: str | Path, name: str) -> None:
+    """Remove one configured source's entry from the root config -- the
+    remove counterpart to :func:`add_source`.
+
+    Refuses to orphan a check: counts checks referencing ``name`` as
+    their ``source:`` across every :func:`target_files` (root plus any
+    included checks files) and, if any exist, raises :class:`ValueError`
+    naming how many -- writing nothing -- rather than leaving those
+    checks pointing at a source that no longer exists.
+
+    Attempts a text splice (:func:`_mapping_entry_bounds`) that removes
+    only the matched entry's own lines -- trimmed of any trailing
+    blank/comment lines first (:func:`_trim_trailing_blank_or_comment_lines`)
+    so a following source's own leading comment survives -- preserving
+    every other source and comment elsewhere in the file. Falls back to a
+    full YAML round trip -- which loses comments -- only for a shape the
+    splice can't safely handle. Removing the last source leaves
+    ``sources:`` present but empty, the same shape every reader here
+    already tolerates.
+
+    Raises :class:`ValueError` when ``name`` isn't a configured source.
+    """
+    config_path = Path(config_path)
+
+    referencing = sum(
+        1
+        for path in target_files(config_path)
+        for block in _raw_checks_in(path)
+        if block.get("source") == name
+    )
+    if referencing:
+        raise ValueError(
+            f"{referencing} check(s) still reference source {name!r}; remove them first"
+        )
+
+    text = config_path.read_text()
+    raw = yaml.safe_load(text) or {}
+    sources = raw.get("sources") or {}
+    if name not in sources:
+        raise ValueError(f"source not found: {name!r}")
+
+    lines = text.splitlines(keepends=True)
+    bounds = _mapping_entry_bounds(lines, "sources", name)
+    if bounds is not None:
+        start, end = bounds
+        end = _trim_trailing_blank_or_comment_lines(lines, start, end)
+        config_path.write_text("".join(lines[:start] + lines[end:]))
+        return
+
+    raw = dict(raw)
+    sources = dict(raw.get("sources") or {})
+    del sources[name]
+    raw["sources"] = sources
+    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
