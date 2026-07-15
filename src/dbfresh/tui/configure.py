@@ -197,20 +197,40 @@ class ConfigureScreen(Screen[bool]):
             yield Label("Timestamp column (only if ambiguous -- see proposal)")
             yield Input(id="timestamp-input")
             with Horizontal():
-                yield Button("Propose", id="propose-btn")
-                yield Button("Accept", id="accept-btn", disabled=True)
+                yield Button("Propose", id="propose-btn", variant="primary")
+                yield Button(
+                    "Accept", id="accept-btn", variant="success", disabled=True
+                )
                 yield Button("Cancel", id="cancel-btn")
             yield VerticalScroll(
                 Static("", id="proposal-text", markup=False),
-                Static("Existing checks for this object"),
-                Vertical(id="existing-checks"),
-                Static("Proposed checks (uncheck any to drop them)"),
-                Vertical(id="proposed-checks"),
-                Static("Offered checks (check any to add them)"),
-                Vertical(id="offered-checks"),
+                Vertical(
+                    Static("Existing checks for this object", classes="section-title"),
+                    Vertical(id="existing-checks"),
+                    id="existing-section",
+                    classes="panel",
+                ),
+                Vertical(
+                    Static(
+                        "Proposed checks (uncheck any to drop them)",
+                        classes="section-title",
+                    ),
+                    Vertical(id="proposed-checks"),
+                    id="proposed-section",
+                    classes="panel",
+                ),
+                Vertical(
+                    Static(
+                        "Offered checks (check any to add them)",
+                        classes="section-title",
+                    ),
+                    Vertical(id="offered-checks"),
+                    id="offered-section",
+                    classes="panel",
+                ),
                 id="proposal-scroll",
             )
-        with Vertical(id="new-source-form"):
+        with Vertical(id="new-source-form", classes="panel"):
             yield Static("Add a new source", id="new-source-heading")
             yield Label("Source name")
             yield Input(id="new-source-name-input")
@@ -223,7 +243,7 @@ class ConfigureScreen(Screen[bool]):
             )
             yield TextArea(id="new-source-params")
             with Horizontal():
-                yield Button("Probe & add", id="new-source-add-btn")
+                yield Button("Probe & add", id="new-source-add-btn", variant="primary")
                 yield Button("Cancel", id="new-source-cancel-btn")
         yield Footer()
 
@@ -233,6 +253,18 @@ class ConfigureScreen(Screen[bool]):
         # against), so open straight into the new-source form instead of
         # making the user notice and click "+ new source" themselves.
         self._show_new_source_form(not self._config.sources)
+        if len(self._config.sources) == 1:
+            (name,) = self._config.sources
+            self.query_one("#source-select", Select).value = name
+        # The existing/proposed/offered panels have nothing to show until
+        # a Propose click populates them -- an empty panel with just its
+        # heading reads as broken rather than as "nothing here yet".
+        self._set_sections_visible(False)
+
+    def _set_sections_visible(self, visible: bool) -> None:
+        section_ids = ("#existing-section", "#proposed-section", "#offered-section")
+        for section_id in section_ids:
+            self.query_one(section_id).display = visible
 
     def _show_new_source_form(self, visible: bool) -> None:
         """Toggle between the new-source form and the propose form -- only
@@ -280,6 +312,7 @@ class ConfigureScreen(Screen[bool]):
         self.query_one("#offered-checks", Vertical).remove_children()
         self.query_one("#proposal-text", Static).update("")
         self.query_one("#accept-btn", Button).disabled = True
+        self._set_sections_visible(False)
 
     def _mount_proposed_checkboxes(self) -> None:
         """One checkbox per proposed check, checked by default -- unchecking
@@ -683,6 +716,7 @@ class ConfigureScreen(Screen[bool]):
         self._target_file = outcome.target_file
         self.query_one("#proposal-text", Static).update("\n".join(outcome.notes))
         self.query_one("#accept-btn", Button).disabled = not self._proposed
+        self._set_sections_visible(True)
 
     def _on_new_source_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up ``_new_source_worker``'s outcome: reflect a successful

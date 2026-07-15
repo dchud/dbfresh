@@ -90,6 +90,7 @@ class DbfreshApp(App):
     """Status dashboard over ``config_path``'s checks and ``store_path``."""
 
     TITLE = "dbfresh"
+    CSS_PATH = "app.tcss"
 
     BINDINGS = [
         Binding("r", "run_checks", "Run"),
@@ -115,6 +116,11 @@ class DbfreshApp(App):
         test that constructs ``DbfreshApp`` directly relies on.
         """
         super().__init__()
+        # Textual bundles this theme (Catppuccin's own Macchiato hexes for
+        # base/surface0/surface1/green/yellow/red/mauve/peach) -- app.tcss
+        # (CSS_PATH above) fills in the rest of the named palette as extra
+        # $-variables for this file's own rules to use.
+        self.theme = "catppuccin-macchiato"
         self.config_path = Path(config_path)
         self._store_path_override = store_path
         self.config: Config | None = initial_config
@@ -124,7 +130,9 @@ class DbfreshApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield DataTable(id=_GRID_ID, cursor_type="row")
+        yield DataTable(
+            id=_GRID_ID, cursor_type="row", zebra_stripes=True, cell_padding=2
+        )
         yield Static(status_legend(), id="status-legend")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()

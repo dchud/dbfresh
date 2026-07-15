@@ -26,13 +26,18 @@ _TRAILING_DAYS = 7
 # history (one run/day) needs far fewer observations than this.
 _HISTORY_FETCH_LIMIT = 50
 
+# Catppuccin Macchiato hexes (see dbfresh.tui.app.tcss for the same
+# palette wired into the TUI's CSS side) -- OK/WARN/FAIL/ERROR are bold so
+# they read as "known, active status"; SKIPPED and never-observed are not,
+# so the two active/inactive groups are distinct at a glance in addition
+# to their own colors.
 _STATUS_STYLE: dict[Status | None, str] = {
-    Status.OK: "bold green",
-    Status.WARN: "bold yellow",
-    Status.FAIL: "bold red",
-    Status.ERROR: "bold blue",
-    Status.SKIPPED: "dim cyan",
-    None: "dim",
+    Status.OK: "bold #a6da95",  # green
+    Status.WARN: "bold #eed49f",  # yellow
+    Status.FAIL: "bold #ed8796",  # red
+    Status.ERROR: "bold #8aadf4",  # blue -- distinct from FAIL
+    Status.SKIPPED: "#8bd5ca",  # teal -- distinct from never-observed
+    None: "#6e738d",  # overlay0 -- muted, never observed
 }
 
 # A day/overall cell is one glyph, not a word -- the grid's whole point is
@@ -277,9 +282,14 @@ def populate_grid(
     """
     table.clear(columns=True)
     table.add_column(label_header, key="label")
-    table.add_column("overall", key="overall")
+    # Explicit widths (content width, before cell_padding is added on top
+    # by the table) rather than auto-sizing to the header text -- both
+    # columns only ever hold a single glyph, so auto-sizing them to their
+    # own 3-7 character headers left just the table's cell_padding as
+    # breathing room around the glyph.
+    table.add_column("overall", key="overall", width=7)
     for day in trailing_dates(today):
-        table.add_column(day.strftime("%a"), key=day.isoformat())
+        table.add_column(day.strftime("%a"), key=day.isoformat(), width=3)
     for row in rows:
         cells = [row.label, _status_cell(row.overall)]
         cells.extend(_status_cell(status) for status in row.days)
