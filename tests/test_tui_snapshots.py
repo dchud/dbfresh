@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dbfresh.checks import Check, check_id
+from dbfresh.config import load_config_tolerant
 from dbfresh.engine import Result, RunResult, Status, worst_status
 from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp
@@ -295,5 +296,31 @@ def test_home_dashboard_shows_empty_state_with_no_checks(snap_compare, tmp_path)
     cfg_path.write_text("sources: {}\nchecks: []\n")
     store_path = tmp_path / "observations.db"
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
+
+    assert snap_compare(app, terminal_size=_TERMINAL_SIZE)
+
+
+def test_home_dashboard_shows_missing_secrets_banner(snap_compare, tmp_path):
+    """A config that exists but references an unset ${VAR} secret still
+    launches -- see cli._ui_command / config.load_config_tolerant -- and
+    Home shows a banner naming what's missing instead of erroring out."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        'sources:\n  orders_db: { type: sqlite, database: ":memory:" }\n'
+        '  warehouse: { type: sqlite, database: "${WAREHOUSE_DB_PASSWORD}" }\n'
+        "checks:\n"
+        "  - source: orders_db\n"
+        "    object: orders\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 100000] }\n"
+    )
+    store_path = tmp_path / "observations.db"
+    config, missing = load_config_tolerant(cfg_path, env={})
+    app = DbfreshApp(
+        config_path=cfg_path,
+        store_path=str(store_path),
+        initial_config=config,
+        missing_secrets=missing,
+    )
 
     assert snap_compare(app, terminal_size=_TERMINAL_SIZE)

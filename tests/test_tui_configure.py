@@ -777,7 +777,7 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
 
-        real_load_config = app_module.load_config
+        real_load_config = app_module.load_config_tolerant
         calls = {"n": 0}
 
         def flaky_load_config(path):
@@ -786,7 +786,7 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
                 raise ValueError("bad config after write")
             return real_load_config(path)
 
-        monkeypatch.setattr(app_module, "load_config", flaky_load_config)
+        monkeypatch.setattr(app_module, "load_config_tolerant", flaky_load_config)
 
         async with app.run_test() as pilot:
             await pilot.pause()

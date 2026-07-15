@@ -531,13 +531,21 @@ def _add_command(args: argparse.Namespace) -> int:
 
 
 def _ui_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import Config, ConfigError, load_config
+    from dbfresh.config import Config, ConfigError, load_config_tolerant
     from dbfresh.tui.app import DbfreshApp
 
     config_path = Path(args.config)
+    missing_secrets: frozenset[str] = frozenset()
     if config_path.exists():
         try:
-            config = load_config(config_path)
+            # Tolerant, unlike every other config-reading command: an
+            # undefined ${VAR} secret is collected instead of raising, so
+            # a colleague who cloned a shared config repo but hasn't set
+            # their secrets yet still gets a working dashboard (with a
+            # banner naming what's missing) instead of a terminal error.
+            # A non-variable problem (bad YAML, an unknown source
+            # reference, ...) still raises and still refuses to launch.
+            config, missing_secrets = load_config_tolerant(config_path)
         except (ConfigError, OSError, yaml.YAMLError) as exc:
             return _report_config_error(exc)
     else:
@@ -551,7 +559,10 @@ def _ui_command(args: argparse.Namespace) -> int:
         config = Config(sources={}, checks=[], config_dir=config_path.resolve().parent)
 
     app = DbfreshApp(
-        config_path=args.config, store_path=args.store, initial_config=config
+        config_path=args.config,
+        store_path=args.store,
+        initial_config=config,
+        missing_secrets=missing_secrets,
     )
     app.run()
     return 0

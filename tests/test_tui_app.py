@@ -7,6 +7,7 @@ from textual.widgets import DataTable, Static
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id
+from dbfresh.config import load_config_tolerant
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp
@@ -148,6 +149,85 @@ def test_home_hides_empty_state_once_checks_exist(tmp_path):
     asyncio.run(scenario())
 
 
+def _undefined_var_config(path, db):
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        '  broken: { type: sqlite, database: "${DB_PASSWORD}" }\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    return path
+
+
+def test_missing_secrets_banner_shows_names_and_where_to_set_them(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg_path = _undefined_var_config(tmp_path / "config.yaml", db)
+        config, missing = load_config_tolerant(cfg_path, env={})
+
+        app = DbfreshApp(
+            config_path=cfg_path,
+            store_path=str(tmp_path / "obs.db"),
+            initial_config=config,
+            missing_secrets=missing,
+        )
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            banner = app.query_one("#missing-secrets-banner", Static)
+            assert banner.display
+            text = str(banner.render())
+            assert "DB_PASSWORD" in text
+            assert "config.yaml" in text
+
+            # The literal ${VAR} token stays in place rather than being
+            # resolved -- the app started instead of refusing to launch.
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert table.display
+
+    asyncio.run(scenario())
+
+
+def test_missing_secrets_banner_hidden_when_nothing_missing(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            banner = app.query_one("#missing-secrets-banner", Static)
+            assert not banner.display
+
+    asyncio.run(scenario())
+
+
+def test_reload_tolerates_missing_secrets_when_no_initial_config(tmp_path, monkeypatch):
+    """The no-initial-config path -- on_mount's own _reload_config -- loads
+    tolerantly: an unset ${VAR} leaves the app running with the banner rather
+    than raising on reload (a plain load would raise on mount here)."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _undefined_var_config(tmp_path / "config.yaml", db)
+        monkeypatch.delenv("DB_PASSWORD", raising=False)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "DB_PASSWORD" in app.missing_secrets
+            assert app.query_one("#missing-secrets-banner", Static).display
+
+    asyncio.run(scenario())
+
+
 def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypatch):
     async def scenario():
         from dbfresh.config import load_config as real_load_config
@@ -160,9 +240,11 @@ def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypa
         preloaded = real_load_config(cfg)
 
         def fail_if_called(path):
-            raise AssertionError("load_config must not run again at mount time")
+            raise AssertionError(
+                "load_config_tolerant must not run again at mount time"
+            )
 
-        monkeypatch.setattr("dbfresh.tui.app.load_config", fail_if_called)
+        monkeypatch.setattr("dbfresh.tui.app.load_config_tolerant", fail_if_called)
 
         app = DbfreshApp(
             config_path=cfg, store_path=str(store_path), initial_config=preloaded
