@@ -103,6 +103,26 @@ def _config(path, db):
     return path
 
 
+def test_configure_preselects_a_lone_source(tmp_path):
+    """With exactly one configured source, Configure preselects it in the
+    source Select, so a single-source project needs no dropdown interaction
+    before Propose."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)  # exactly one source, "s"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+            assert app.screen.query_one("#source-select").value == "s"
+
+    asyncio.run(scenario())
+
+
 def test_configure_screen_proposes_and_appends_checks(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
