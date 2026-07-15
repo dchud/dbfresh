@@ -309,7 +309,11 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
         )
         error = row.get("error")
         if error:
-            line += f"  — {error}"
+            # Collapse whitespace: an error can be multi-line (a driver's
+            # traceback), and both this fixed-width table and the TUI
+            # History screen map one line per observation, so the row has
+            # to stay on a single line.
+            line += f"  — {' '.join(str(error).split())}"
         lines.append(line)
         if isinstance(value, (int, float)):
             previous = value
