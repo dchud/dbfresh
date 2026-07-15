@@ -50,6 +50,11 @@ hash), so its observation history carries over unaffected. A check whose
 expectation isn't a single value (`between`, `vs_previous`, schema's
 `unchanged`) shows read-only; edit those directly in the YAML.
 
+The proposed `freshness` check gets the same kind of editable field
+directly beside its own checkbox, pre-filled with the "24h" default --
+tune it before pressing Accept instead of accepting the default and
+editing it back in afterward as an already-written check.
+
 ## Report
 
 Shows the digest ([`render_digest`](checks.md)) for the run triggered in

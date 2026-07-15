@@ -65,9 +65,18 @@ def _id_part(value: str) -> str:
 
 def _describe_proposed(block: dict) -> str:
     """One-line label for a proposed check's trim checkbox: metric, its
-    column/key context (when it has one), and the expectation."""
+    column/key context (when it has one), and the expectation.
+
+    Freshness omits the expectation from the label -- it gets its own
+    editable value Input right beside the checkbox (see
+    :meth:`ConfigureScreen._mount_proposed_checkboxes`), and showing the
+    default a second time in static text would drift out of sync with
+    whatever the user types into that Input.
+    """
     context = block.get("column") or block.get("key")
     header = f"{block['metric']} ({context})" if context else block["metric"]
+    if block["metric"] == "freshness":
+        return header
     return f"{header}: {block['expect']}"
 
 
@@ -86,6 +95,7 @@ class ConfigureScreen(Screen[bool]):
         self._config = config
         self._proposed: list[dict] = []
         self._proposed_checkboxes: list[Checkbox] = []
+        self._proposed_value_inputs: list[Input | None] = []
         self._offered_blocks: list[dict] = []
         self._offered_checkboxes: list[Checkbox] = []
         self._offered_value_inputs: list[Input | None] = []
@@ -137,6 +147,7 @@ class ConfigureScreen(Screen[bool]):
         """Clear state and widgets left over from a previous Propose click."""
         self._proposed = []
         self._proposed_checkboxes = []
+        self._proposed_value_inputs = []
         self._offered_blocks = []
         self._offered_checkboxes = []
         self._offered_value_inputs = []
@@ -150,7 +161,14 @@ class ConfigureScreen(Screen[bool]):
 
     def _mount_proposed_checkboxes(self) -> None:
         """One checkbox per proposed check, checked by default -- unchecking
-        one trims it from what Accept writes."""
+        one trims it from what Accept writes. Freshness also gets a value
+        Input beside its checkbox, pre-filled with the proposal's default
+        max_lag (``propose_checks`` always proposes "24h") -- editable
+        before Accept, so a custom threshold doesn't require accepting the
+        default first and editing it back in as an already-written check.
+        No other proposed metric (schema, row_count, duplicate_count) has
+        a single-scalar threshold worth exposing this way.
+        """
         container = self.query_one("#proposed-checks", Vertical)
         for i, block in enumerate(self._proposed):
             checkbox = Checkbox(
@@ -159,7 +177,15 @@ class ConfigureScreen(Screen[bool]):
                 id=f"proposed-{i}-{_id_part(block['metric'])}",
             )
             self._proposed_checkboxes.append(checkbox)
-            container.mount(checkbox)
+            if block["metric"] == "freshness":
+                value_input = Input(
+                    value=str(block["expect"]["max_lag"]), id=f"proposed-value-{i}"
+                )
+                self._proposed_value_inputs.append(value_input)
+                container.mount(Horizontal(checkbox, value_input))
+            else:
+                self._proposed_value_inputs.append(None)
+                container.mount(checkbox)
 
     def _mount_offered_checkboxes(
         self,
@@ -431,21 +457,49 @@ class ConfigureScreen(Screen[bool]):
             None,
         )
 
+    def _rebuild_proposed_check(
+        self, block: dict, raw_value: str
+    ) -> tuple[dict | None, str | None]:
+        """Re-run the proposed freshness block with the threshold Input's
+        current text in place of the "24h" default baked in at Propose
+        time. Returns ``(rebuilt, None)`` on success, or ``(None, error)``
+        when ``raw_value`` doesn't parse as a duration -- the proposed-check
+        counterpart to :meth:`_rebuild_offered_check`; only freshness is
+        ever proposed with a single-scalar threshold to rebuild this way."""
+        value = raw_value.strip()
+        try:
+            parse_duration(value)
+        except ValueError as exc:
+            return None, f"freshness: invalid max lag: {exc}"
+        return {**block, "expect": {"max_lag": value}}, None
+
     def _selected_checks(self) -> tuple[list[dict], list[str]]:
         """Proposed checks still checked, plus offered checks checked in --
         the trim and offered-selection interactions collapsed into one
-        list, in the order Accept writes them. An offered ``null_rate`` or
-        ``freshness`` check is rebuilt from its threshold Input rather than
-        the default block mounted at Propose time; a value that fails to
-        parse is reported back as an error instead of being written."""
-        selected = [
-            block
-            for block, checkbox in zip(
-                self._proposed, self._proposed_checkboxes, strict=True
-            )
-            if checkbox.value
-        ]
+        list, in the order Accept writes them. A proposed ``freshness``
+        check (and an offered ``null_rate`` or ``freshness`` check) is
+        rebuilt from its threshold Input rather than the default block
+        mounted at Propose time; a value that fails to parse is reported
+        back as an error instead of being written."""
+        selected: list[dict] = []
         errors: list[str] = []
+        for block, checkbox, value_input in zip(
+            self._proposed,
+            self._proposed_checkboxes,
+            self._proposed_value_inputs,
+            strict=True,
+        ):
+            if not checkbox.value:
+                continue
+            if value_input is None:
+                selected.append(block)
+                continue
+            rebuilt, error = self._rebuild_proposed_check(block, value_input.value)
+            if error is not None:
+                errors.append(error)
+                continue
+            assert rebuilt is not None
+            selected.append(rebuilt)
         for block, checkbox, value_input in zip(
             self._offered_blocks,
             self._offered_checkboxes,
