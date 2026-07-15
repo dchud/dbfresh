@@ -647,3 +647,33 @@ def test_latest_run_skips_an_in_progress_run(tmp_path):
     assert latest["run_id"] == done
     assert latest["status"] == "OK"
     store.close()
+
+
+def test_migrate_tolerates_a_column_added_by_a_concurrent_opener(tmp_path, monkeypatch):
+    """A duplicate-column error from a racing opener is swallowed, not raised.
+
+    Forced deterministically: the store already has the new columns, but the
+    first ``table_info`` read is made to report an unrelated table's columns,
+    so ``_migrate`` believes expected/error are missing and attempts ALTERs
+    that conflict. The guard re-reads the real schema and continues.
+    """
+    db = tmp_path / "obs.db"
+    Store(db).close()  # current schema: expected + error already present
+
+    store = Store(db)
+    real_columns = store._observation_columns
+    calls = {"n": 0}
+
+    def stale_first():
+        calls["n"] += 1
+        # The first read (building `existing`) lies -- reports neither new
+        # column -- so _migrate attempts ALTERs that conflict with the
+        # columns already on disk; later reads (the guard's re-check) tell
+        # the truth.
+        if calls["n"] == 1:
+            return {"run_id", "check_id"}
+        return real_columns()
+
+    monkeypatch.setattr(store, "_observation_columns", stale_first)
+    store._migrate()  # must not raise despite the conflicting ALTERs
+    store.close()

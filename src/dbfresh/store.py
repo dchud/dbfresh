@@ -166,14 +166,30 @@ class Store:
         it, which every accessor already tolerates (rows come back as plain
         dicts). Reconciles ``expected`` and ``error`` on ``observation``.
         """
-        existing = {
-            row["name"] for row in self._conn.execute("PRAGMA table_info(observation)")
-        }
+        existing = self._observation_columns()
         for name, column_type in _OBSERVATION_ADDED_COLUMNS:
-            if name not in existing:
+            if name in existing:
+                continue
+            try:
                 self._conn.execute(
                     f"ALTER TABLE observation ADD COLUMN {name} {column_type}"
                 )
+            except sqlite3.OperationalError:
+                # Another opener can add the column between the read above
+                # and this ALTER: WAL + busy_timeout let two overlapping
+                # `dbfresh run` processes open the same not-yet-migrated
+                # store at once, and both attempt the migration. A
+                # duplicate-column error then just means the other process
+                # won the race -- re-read and treat it as done. Any other
+                # ALTER failure still propagates.
+                if name not in self._observation_columns():
+                    raise
+
+    def _observation_columns(self) -> set[str]:
+        """The observation table's current column names."""
+        return {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(observation)")
+        }
 
     def start_run(
         self, git_sha: str | None = None, started_at: datetime | None = None
