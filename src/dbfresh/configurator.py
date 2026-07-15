@@ -857,3 +857,82 @@ def rewrite_check_expectation(
         raw["checks"][index]["expect"] = new_expect
     target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
     return True
+
+
+def _trim_trailing_blank_or_comment_lines(
+    lines: list[str], start: int, end: int
+) -> int:
+    """Shrink an item's ``[start, end)`` range to exclude a trailing run of
+    blank or comment-only lines.
+
+    :func:`_sequence_item_bounds` greedily assigns everything up to the next
+    item's own dash line (or EOF) to the item before it -- including a
+    comment that's really a leading note about *that next* item, or plain
+    blank-line spacing that isn't specific to either one. A deletion must
+    leave those lines in place rather than erasing them along with the item
+    being removed; the item's own first line (its dash) is never blank or a
+    comment, so this never trims past ``start``.
+    """
+    trimmed = end
+    while trimmed > start:
+        stripped = lines[trimmed - 1].strip()
+        if stripped == "" or stripped.startswith("#"):
+            trimmed -= 1
+            continue
+        break
+    return trimmed
+
+
+def remove_check(config_path: str | Path, check_id_: str) -> None:
+    """Remove the check with this id from wherever it lives among
+    :func:`target_files`, preserving every other check plus the file's
+    structure and comments -- the delete counterpart to
+    :func:`rewrite_check_expectation`.
+
+    Raises :class:`ValueError` when no check with ``check_id_`` exists in
+    any target file: a delete request naming an unknown check must fail
+    clearly rather than silently no-op or, worse, corrupt whichever file
+    happened to be guessed at.
+
+    Attempts a text splice that removes only the matched item's own lines,
+    preserving comments and formatting everywhere else in the file
+    (mirroring :func:`rewrite_check_expectation`'s approach); falls back to
+    a full YAML round trip -- which loses comments -- only for a shape the
+    splice can't safely handle (e.g. a flow-style ``checks: [...]``
+    sequence). Removing the last check in a file leaves ``checks:`` with no
+    items rather than deleting the key itself, which every reader here
+    already treats as an empty check list.
+    """
+    config_path = Path(config_path)
+    target_path = find_check_file(config_path, check_id_)
+    if target_path is None:
+        raise ValueError(f"check not found: {check_id_!r}")
+
+    text = target_path.read_text()
+    raw = yaml.safe_load(text)
+    is_bare_list = isinstance(raw, list)
+    checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
+    index = next(
+        (i for i, block in enumerate(checks_list) if _check_id_of(block) == check_id_),
+        None,
+    )
+    if index is None:
+        raise ValueError(f"check not found: {check_id_!r} in {target_path}")
+
+    lines = text.splitlines(keepends=True)
+    bounds = _sequence_item_bounds(lines, None if is_bare_list else "checks")
+    if index < len(bounds):
+        start, end = bounds[index]
+        end = _trim_trailing_blank_or_comment_lines(lines, start, end)
+        target_path.write_text("".join(lines[:start] + lines[end:]))
+        return
+
+    if is_bare_list:
+        raw = list(raw)
+        del raw[index]
+    else:
+        raw = dict(raw)
+        checks = list(raw.get("checks") or [])
+        del checks[index]
+        raw["checks"] = checks
+    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))

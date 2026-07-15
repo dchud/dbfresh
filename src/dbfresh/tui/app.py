@@ -403,11 +403,36 @@ class DbfreshApp(App):
             ObjectDetailScreen(
                 self._require_store(),
                 self._require_config(),
+                self.config_path,
                 row.source,
                 row.object,
                 tz=tz,
-            )
+            ),
+            self._on_object_detail_dismissed,
         )
+
+    def _on_object_detail_dismissed(self, changed: bool | None) -> None:
+        """Mirrors :meth:`_on_configure_dismissed`: an edit or delete made
+        from the drill-in already wrote straight to disk (unlike Configure's
+        own Accept, there's no staged bundle to write here), so all that's
+        left is bringing Home's own config and dashboard back in step with
+        it. No auto-run afterward -- unlike a newly configured check, an
+        edited threshold or a deleted check has no "never observed" status
+        to resolve by running immediately.
+        """
+        if not changed:
+            return
+        try:
+            self._reload_config()
+        except Exception as exc:
+            self.notify(
+                f"config reload failed after write: {exc}",
+                title="Reload failed",
+                severity="error",
+                timeout=10,
+            )
+            return
+        self.refresh_dashboard()
 
     def on_unmount(self) -> None:
         if self.store is not None:
