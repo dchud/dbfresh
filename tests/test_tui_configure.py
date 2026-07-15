@@ -384,6 +384,66 @@ def test_propose_runs_in_a_worker_thread_with_a_busy_state(tmp_path, monkeypatch
     asyncio.run(scenario())
 
 
+def test_dismissing_configure_while_propose_is_in_flight_does_not_crash(
+    tmp_path, monkeypatch
+):
+    """Escape-dismissing Configure while its Propose worker is still blocked
+    on a slow source must not crash: unmounting the screen cancels the
+    worker, and the resulting CANCELLED state has to be handled without
+    reaching a torn-down screen to query a removed widget."""
+
+    async def scenario():
+        started = threading.Event()
+        release = threading.Event()
+
+        class _BlockingAdapter:
+            dialect = DatabricksDialect()
+
+            def scalar(self, sql):
+                return 1
+
+            def describe(self, obj):
+                started.set()
+                assert release.wait(timeout=2), "test never released describe()"
+                return ObjectInfo(columns=[])
+
+            def close(self):
+                pass
+
+        monkeypatch.setitem(factory._ADAPTERS, "blocking", _BlockingAdapter)
+        monkeypatch.setitem(factory._DIALECTS, "blocking", DatabricksDialect)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: blocking }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "t"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            assert started.wait(timeout=2)  # worker now blocked in describe()
+            await pilot.press("escape")  # dismiss Configure mid-propose
+            await pilot.pause()
+            assert not isinstance(app.screen, ConfigureScreen)  # back on Home
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # No crash from the CANCELLED state reaching the dismissed
+            # screen: still on Home and the grid is still queryable.
+            assert not isinstance(app.screen, ConfigureScreen)
+            app.query_one("#dashboard-grid")
+
+    asyncio.run(scenario())
+
+
 def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monkeypatch):
     async def scenario():
         db = tmp_path / "data.db"
