@@ -460,6 +460,56 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_p
     asyncio.run(scenario())
 
 
+def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
+    tmp_path, monkeypatch
+):
+    """A new source added with a ${VAR} param keeps ${VAR} in the YAML but
+    resolves it in memory, so an immediate Propose in the same session
+    connects with the real value -- not a literal "${VAR}". The form itself
+    recommends key=${VAR} for secrets, so this is the path a secret-using
+    user actually takes.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            params = app.screen.query_one("#new-source-params")
+            params.text = "database=${DBFRESH_TEST_DB}"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Disk keeps the raw ${VAR} -- no resolved secret written to YAML.
+            data = yaml.safe_load(cfg.read_text())
+            assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB}"
+            # In memory it is resolved, so the source is immediately usable.
+            assert app.screen._config.sources["s"].params["database"] == str(db)
+
+            # Propose against the just-added source connects with the real
+            # path; a literal "${DBFRESH_TEST_DB}" would find no fct table.
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("row_count" in label for label in labels)
+
+    asyncio.run(scenario())
+
+
 def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_open(
     tmp_path, monkeypatch
 ):

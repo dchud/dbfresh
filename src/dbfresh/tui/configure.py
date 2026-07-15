@@ -120,10 +120,13 @@ class _NewSourceOutcome:
     main thread.
 
     ``error`` set means the probe failed and nothing was written to disk.
-    Otherwise ``name``/``type_``/``params`` describe the source
-    :func:`add_source` already wrote -- the main thread reflects the same
-    values into ``self._config.sources`` and the source Select, so the new
-    source is immediately selectable without a full config reload.
+    Otherwise ``name``/``type_`` and ``params`` describe the source
+    :func:`add_source` already wrote. ``params`` here are the
+    ${VAR}-resolved params, not the raw ones written to the YAML: the main
+    thread builds an in-memory ``SourceConfig`` from them so the new source
+    is immediately selectable -- and immediately connectable, with real
+    values rather than a literal "${VAR}", the same values a later config
+    reload would resolve -- without a full config reload.
     """
 
     error: str | None = None
@@ -484,13 +487,20 @@ class ConfigureScreen(Screen[bool]):
         :meth:`on_worker_state_changed` reflects the new source into
         ``self._config`` and the Select back on the main thread.
         """
-        probe, _resolved_params = probe_new_source(type_, params)
+        probe, resolved_params = probe_new_source(type_, params)
         if not probe.ok:
             return _NewSourceOutcome(
                 error=f"could not connect to {name!r}: {probe.error}"
             )
+        # add_source writes the raw params -- ${VAR} secrets stay ${VAR} in
+        # the YAML -- but the in-memory SourceConfig the main thread builds
+        # from this outcome must carry the resolved params, so an immediate
+        # Propose against the new source connects with real values rather
+        # than a literal "${VAR}". That matches what a later config reload
+        # produces: load_config resolves ${VAR} at load time, so an existing
+        # source's params are already resolved in memory.
         add_source(self._config_path, name, type_, params)
-        return _NewSourceOutcome(name=name, type_=type_, params=params)
+        return _NewSourceOutcome(name=name, type_=type_, params=resolved_params)
 
     def _propose(self) -> None:
         """Validate the form, then hand introspection off to a worker thread.
