@@ -17,6 +17,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
+from textual.suggester import SuggestFromList
 from textual.widgets import (
     Button,
     Checkbox,
@@ -44,7 +45,10 @@ from dbfresh.configurator import (
     pick_timestamp_column,
     probe_new_source,
     propose_checks,
+    raw_source,
+    remove_source,
     rewrite_check_expectation,
+    rewrite_source,
     target_files,
 )
 from dbfresh.tui.dashboard import check_label
@@ -114,6 +118,16 @@ def _parse_params_text(text: str) -> dict[str, str]:
     return params
 
 
+def _params_to_text(params: dict[str, str]) -> str:
+    """Inverse of :func:`_parse_params_text`: one ``key=value`` per line --
+    pre-fills the new-source form's params TextArea in edit mode from
+    :func:`~dbfresh.configurator.raw_source`'s raw (``${VAR}``-intact)
+    params, so a secret shows as the token the user actually typed rather
+    than a resolved value.
+    """
+    return "\n".join(f"{key}={value}" for key, value in params.items())
+
+
 @dataclass
 class _NewSourceOutcome:
     """What :meth:`ConfigureScreen._new_source_worker` hands back to the
@@ -121,18 +135,22 @@ class _NewSourceOutcome:
 
     ``error`` set means the probe failed and nothing was written to disk.
     Otherwise ``name``/``type_`` and ``params`` describe the source
-    :func:`add_source` already wrote. ``params`` here are the
-    ${VAR}-resolved params, not the raw ones written to the YAML: the main
-    thread builds an in-memory ``SourceConfig`` from them so the new source
-    is immediately selectable -- and immediately connectable, with real
-    values rather than a literal "${VAR}", the same values a later config
-    reload would resolve -- without a full config reload.
+    :func:`add_source` (or, in edit mode, :func:`rewrite_source`) already
+    wrote. ``params`` here are the ${VAR}-resolved params, not the raw ones
+    written to the YAML: the main thread builds an in-memory ``SourceConfig``
+    from them so the source is immediately selectable -- and immediately
+    connectable, with real values rather than a literal "${VAR}", the same
+    values a later config reload would resolve -- without a full config
+    reload. ``edited`` distinguishes an edit (source already existed) from
+    a brand-new add, since the two notify and dirty the "config changed"
+    signal slightly differently.
     """
 
     error: str | None = None
     name: str = ""
     type_: str = ""
     params: dict = field(default_factory=dict)
+    edited: bool = False
 
 
 def _describe_proposed(block: dict) -> str:
@@ -180,7 +198,11 @@ class ConfigureScreen(Screen[bool]):
         self._target_file: Path | None = None
         self._existing_checks: list[Check] = []
         self._existing_value_inputs: list[Input | None] = []
-        self._existing_edit_made = False
+        self._config_changed = False
+        # None in "add a new source" mode; the source's own name while the
+        # new-source form is repurposed for editing it instead (see
+        # _edit_selected_source).
+        self._source_form_edit_name: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -192,6 +214,16 @@ class ConfigureScreen(Screen[bool]):
                     id="source-select",
                 )
                 yield Button("+ new source", id="new-source-btn")
+                yield Button("Edit source", id="edit-source-btn", disabled=True)
+                yield Button("Remove source", id="remove-source-btn", disabled=True)
+            remove_source_confirm_row = Horizontal(
+                Label("remove this source permanently?", classes="hint"),
+                Button("Confirm remove", id="remove-source-confirm-btn"),
+                Button("Cancel", id="remove-source-cancel-btn"),
+                id="remove-source-confirm-row",
+            )
+            remove_source_confirm_row.display = False
+            yield remove_source_confirm_row
             yield Label("Object name")
             yield Input(id="object-input")
             yield Label("Timestamp column (only if ambiguous -- see proposal)")
@@ -262,6 +294,50 @@ class ConfigureScreen(Screen[bool]):
         # a Propose click populates them -- an empty panel with just its
         # heading reads as broken rather than as "nothing here yet".
         self._set_sections_visible(False)
+        self._update_object_suggester(self._selected_source_name())
+        self._update_source_buttons_state()
+
+    def _selected_source_name(self) -> str | None:
+        """The currently-selected ``#source-select`` value, or ``None``
+        when nothing is selected -- shared by the object suggester and the
+        Edit/Remove-source affordances, both of which act on whatever is
+        currently selected."""
+        value = self.query_one("#source-select", Select).value
+        return None if value is Select.NULL else str(value)
+
+    def _known_objects_for_source(self, source_name: str | None) -> list[str]:
+        """Object names already configured for ``source_name`` -- the
+        suggestion pool for ``#object-input``'s inline autocomplete,
+        scoped to one source so objects belonging to other sources aren't
+        noise. Empty (no suggestions, not an error) when no source is
+        selected or it has no checks yet.
+        """
+        if source_name is None:
+            return []
+        return sorted(
+            {c.object for c in self._config.checks if c.source == source_name}
+        )
+
+    def _update_object_suggester(self, source_name: str | None) -> None:
+        objects = self._known_objects_for_source(source_name)
+        self.query_one("#object-input", Input).suggester = SuggestFromList(
+            objects, case_sensitive=True
+        )
+
+    def _update_source_buttons_state(self) -> None:
+        """Edit/Remove act on whatever's selected in ``#source-select`` --
+        disabled with nothing selected (a zero-sources project, or right
+        after removing the last remaining source)."""
+        has_selection = self._selected_source_name() is not None
+        self.query_one("#edit-source-btn", Button).disabled = not has_selection
+        self.query_one("#remove-source-btn", Button).disabled = not has_selection
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "source-select":
+            return
+        source_name = None if event.value is Select.NULL else str(event.value)
+        self._update_object_suggester(source_name)
+        self._update_source_buttons_state()
 
     def _set_sections_visible(self, visible: bool) -> None:
         section_ids = ("#existing-section", "#proposed-section", "#offered-section")
@@ -272,12 +348,20 @@ class ConfigureScreen(Screen[bool]):
         """Toggle between the new-source form and the propose form -- only
         one is ever shown at a time. See :meth:`on_mount` for why zero
         sources opens here automatically; otherwise it's reached any time
-        via the "+ new source" button beside the source Select.
+        via the "+ new source" button beside the source Select, or (in
+        edit mode) via :meth:`_edit_selected_source`, which overwrites
+        the blank-form defaults set here with the source's own current
+        values right after calling this.
         """
         self.query_one("#new-source-form", Vertical).display = visible
         self.query_one("#propose-section", Vertical).display = not visible
         if visible:
-            self.query_one("#new-source-name-input", Input).value = ""
+            self._source_form_edit_name = None
+            self.query_one("#new-source-heading", Static).update("Add a new source")
+            self.query_one("#new-source-add-btn", Button).label = "Probe & add"
+            name_input = self.query_one("#new-source-name-input", Input)
+            name_input.value = ""
+            name_input.disabled = False
             self.query_one("#new-source-type-input", Input).value = ""
             self.query_one("#new-source-params", TextArea).text = ""
 
@@ -288,13 +372,21 @@ class ConfigureScreen(Screen[bool]):
         elif button_id == "accept-btn":
             self._accept()
         elif button_id == "cancel-btn":
-            self.dismiss(self._existing_edit_made)
+            self.dismiss(self._config_changed)
         elif button_id == "new-source-btn":
             self._show_new_source_form(True)
         elif button_id == "new-source-add-btn":
             self._add_new_source()
         elif button_id == "new-source-cancel-btn":
             self._show_new_source_form(False)
+        elif button_id == "edit-source-btn":
+            self._edit_selected_source()
+        elif button_id == "remove-source-btn":
+            self._arm_remove_source()
+        elif button_id == "remove-source-confirm-btn":
+            self._confirm_remove_source()
+        elif button_id == "remove-source-cancel-btn":
+            self._cancel_remove_source()
         elif button_id.startswith("existing-save-"):
             self._save_existing(int(button_id.removeprefix("existing-save-")))
 
@@ -474,8 +566,78 @@ class ConfigureScreen(Screen[bool]):
             self.notify(f"could not locate check {cid} on disk", severity="error")
             return
         rewrite_check_expectation(target, cid, {check.expect.operator: new_operand})
-        self._existing_edit_made = True
+        self._config_changed = True
         self.notify(f"saved {check_label(check)}")
+
+    def _edit_selected_source(self) -> None:
+        """Repurpose the new-source form to edit the currently-selected
+        source instead of adding one: pre-fills the type and params from
+        :func:`raw_source` (so a ``${VAR}`` secret shows as the token,
+        never a resolved value), disables the name Input (the name is the
+        entry's identity here -- no rename), and routes the submit button
+        to :meth:`_new_source_worker` in edit mode (see
+        :attr:`_source_form_edit_name`).
+        """
+        name = self._selected_source_name()
+        if name is None:
+            return
+        try:
+            type_, params = raw_source(self._config_path, name)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+
+        self._show_new_source_form(True)
+        self._source_form_edit_name = name
+        self.query_one("#new-source-heading", Static).update(f"Edit source: {name}")
+        self.query_one("#new-source-add-btn", Button).label = "Probe & save"
+        name_input = self.query_one("#new-source-name-input", Input)
+        name_input.value = name
+        name_input.disabled = True
+        self.query_one("#new-source-type-input", Input).value = type_
+        self.query_one("#new-source-params", TextArea).text = _params_to_text(params)
+
+    def _arm_remove_source(self) -> None:
+        """First press of "Remove source": reveal the confirm/cancel row
+        rather than removing outright -- a stray click must never drop a
+        source (mirrors ``ObjectDetailScreen``'s delete-check confirm)."""
+        if self._selected_source_name() is None:
+            return
+        self.query_one("#remove-source-confirm-row", Horizontal).display = True
+
+    def _cancel_remove_source(self) -> None:
+        self.query_one("#remove-source-confirm-row", Horizontal).display = False
+
+    def _confirm_remove_source(self) -> None:
+        """Second press: actually remove the selected source on disk via
+        :func:`remove_source`, which refuses (raising ``ValueError``,
+        writing nothing) when any check still references it. On success,
+        drops the source from the Select and ``self._config`` and selects
+        whatever remains -- or, with nothing left, reopens the new-source
+        form, mirroring the zero-sources start-up case in :meth:`on_mount`.
+        """
+        self.query_one("#remove-source-confirm-row", Horizontal).display = False
+        name = self._selected_source_name()
+        if name is None:
+            return
+        try:
+            remove_source(self._config_path, name)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+
+        del self._config.sources[name]
+        self._config_changed = True
+        self._reset_proposal()
+        remaining = sorted(self._config.sources)
+        select = self.query_one("#source-select", Select)
+        select.set_options((n, n) for n in remaining)
+        if remaining:
+            select.value = remaining[0]
+        else:
+            self._show_new_source_form(True)
+        self._update_source_buttons_state()
+        self.notify(f"removed source {name!r}")
 
     def _add_new_source(self) -> None:
         """Validate the new-source form, then hand the connection probe
@@ -484,17 +646,21 @@ class ConfigureScreen(Screen[bool]):
         Mirrors :meth:`_propose`: everything here touches only cheap,
         already-in-memory state (widget values, ``self._config``); the
         network I/O (``probe_new_source``) and the config write
-        (``add_source``) both happen in :meth:`_new_source_worker` instead,
-        so neither ever blocks the UI thread.
+        (``add_source``/``rewrite_source``) both happen in
+        :meth:`_new_source_worker` instead, so neither ever blocks the UI
+        thread. :attr:`_source_form_edit_name` set means this is an edit
+        of an already-existing source rather than adding a new one -- see
+        :meth:`_edit_selected_source`.
         """
         name = self.query_one("#new-source-name-input", Input).value.strip()
         type_ = self.query_one("#new-source-type-input", Input).value.strip()
         params_text = self.query_one("#new-source-params", TextArea).text
+        edit_name = self._source_form_edit_name
 
         if not name:
             self.notify("enter a source name", severity="error")
             return
-        if name in self._config.sources:
+        if edit_name is None and name in self._config.sources:
             self.notify(f"source already exists: {name!r}", severity="error")
             return
         if not type_:
@@ -503,29 +669,35 @@ class ConfigureScreen(Screen[bool]):
 
         params = _parse_params_text(params_text)
         self.query_one("#new-source-add-btn", Button).disabled = True
-        self._new_source_worker(name, type_, params)
+        self._new_source_worker(name, type_, params, edit_name)
 
     @work(
         thread=True, exclusive=True, group=_NEW_SOURCE_WORKER_GROUP, exit_on_error=False
     )
     def _new_source_worker(
-        self, name: str, type_: str, params: dict
+        self, name: str, type_: str, params: dict, edit_name: str | None = None
     ) -> _NewSourceOutcome:
-        """Probe the new source's connection and, only once it succeeds,
-        write it to disk.
+        """Probe the (new or edited) source's connection and, only once it
+        succeeds, write it to disk.
 
         Runs on a worker thread (mirrors :meth:`_propose_worker`):
-        ``probe_new_source`` blocks on network I/O and ``add_source``
-        blocks on disk I/O, neither of which may run on the UI thread. This
-        method touches no widget and never mutates ``self._config`` -- it
-        returns a plain-data :class:`_NewSourceOutcome`;
-        :meth:`on_worker_state_changed` reflects the new source into
-        ``self._config`` and the Select back on the main thread.
+        ``probe_new_source`` blocks on network I/O and ``add_source``/
+        ``rewrite_source`` block on disk I/O, neither of which may run on
+        the UI thread. This method touches no widget and never mutates
+        ``self._config`` -- it returns a plain-data
+        :class:`_NewSourceOutcome`; :meth:`on_worker_state_changed`
+        reflects the source into ``self._config`` and the Select back on
+        the main thread.
         """
         probe, resolved_params = probe_new_source(type_, params)
         if not probe.ok:
             return _NewSourceOutcome(
                 error=f"could not connect to {name!r}: {probe.error}"
+            )
+        if edit_name is not None:
+            rewrite_source(self._config_path, edit_name, type_, params)
+            return _NewSourceOutcome(
+                name=name, type_=type_, params=resolved_params, edited=True
             )
         # add_source writes the raw params -- ${VAR} secrets stay ${VAR} in
         # the YAML -- but the in-memory SourceConfig the main thread builds
@@ -550,7 +722,7 @@ class ConfigureScreen(Screen[bool]):
         detect.
         """
         select = self.query_one("#source-select", Select)
-        if select.value is Select.BLANK:
+        if select.value is Select.NULL:
             self.notify("select a source", severity="error")
             return
         source_name = str(select.value)
@@ -731,7 +903,9 @@ class ConfigureScreen(Screen[bool]):
         runs here, back on the main thread, off of ``event.worker.result``.
         """
         if event.state == WorkerState.RUNNING:
-            self.sub_title = "adding source…"
+            self.sub_title = (
+                "saving source…" if self._source_form_edit_name else "adding source…"
+            )
             return
         if event.state not in (
             WorkerState.SUCCESS,
@@ -748,7 +922,10 @@ class ConfigureScreen(Screen[bool]):
             # worker group -- the newer click already reset the form.
             return
         if event.state == WorkerState.ERROR:
-            self.notify(f"could not add source: {event.worker.error}", severity="error")
+            verb = "save" if self._source_form_edit_name else "add"
+            self.notify(
+                f"could not {verb} source: {event.worker.error}", severity="error"
+            )
             return
 
         outcome = event.worker.result
@@ -764,7 +941,12 @@ class ConfigureScreen(Screen[bool]):
         select.set_options((name, name) for name in sorted(self._config.sources))
         select.value = outcome.name
         self._show_new_source_form(False)
-        self.notify(f"added source {outcome.name!r}")
+        self._update_source_buttons_state()
+        if outcome.edited:
+            self._config_changed = True
+            self.notify(f"updated source {outcome.name!r}")
+        else:
+            self.notify(f"added source {outcome.name!r}")
 
     def _rebuild_offered_check(
         self, block: dict, raw_value: str
@@ -892,4 +1074,4 @@ class ConfigureScreen(Screen[bool]):
         self.dismiss(True)
 
     def action_cancel(self) -> None:
-        self.dismiss(self._existing_edit_made)
+        self.dismiss(self._config_changed)

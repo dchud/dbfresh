@@ -4,7 +4,7 @@ import threading
 import pytest
 import yaml
 from textual.css.query import NoMatches
-from textual.widgets import Button, Checkbox, DataTable
+from textual.widgets import Button, Checkbox, DataTable, Input, TextArea
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
@@ -1751,5 +1751,364 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(tmp_pa
 
         data = yaml.safe_load(cfg.read_text())
         assert not any(c["metric"] == "freshness" for c in data["checks"])
+
+    asyncio.run(scenario())
+
+
+# -- object-input autocomplete (source-edit-and-object-picker) -------------
+
+
+def _config_with_two_sources_and_checks(cfg_path, db_a, db_b):
+    cfg_path.write_text(
+        f"sources:\n"
+        f'  a: {{ type: sqlite, database: "{db_a}" }}\n'
+        f'  b: {{ type: sqlite, database: "{db_b}" }}\n'
+        "checks:\n"
+        "  - source: a\n"
+        "    object: fct_a\n"
+        "    metric: row_count\n"
+        "    expect:\n"
+        "      max: 100\n"
+        "  - source: b\n"
+        "    object: fct_b\n"
+        "    metric: row_count\n"
+        "    expect:\n"
+        "      max: 100\n"
+    )
+    return cfg_path
+
+
+def test_object_input_suggester_built_on_mount_for_preselected_source(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert app.screen.query_one("#source-select").value == "s"
+            object_input = app.screen.query_one("#object-input", Input)
+            assert object_input.suggester is not None
+            suggestion = await object_input.suggester.get_suggestion("f")
+            assert suggestion == "fct"
+
+    asyncio.run(scenario())
+
+
+def test_object_input_suggester_rebuilds_when_source_select_changes(tmp_path):
+    async def scenario():
+        db_a = tmp_path / "a.db"
+        db_b = tmp_path / "b.db"
+        _table(db_a)
+        _table(db_b)
+        cfg = _config_with_two_sources_and_checks(tmp_path / "config.yaml", db_a, db_b)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "a"
+            await pilot.pause()
+            object_input = app.screen.query_one("#object-input", Input)
+            assert await object_input.suggester.get_suggestion("fct") == "fct_a"
+
+            app.screen.query_one("#source-select").value = "b"
+            await pilot.pause()
+            assert await object_input.suggester.get_suggestion("fct") == "fct_b"
+
+    asyncio.run(scenario())
+
+
+def test_object_input_suggester_empty_when_source_has_no_known_objects(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)  # source "s", no checks yet
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            object_input = app.screen.query_one("#object-input", Input)
+            assert await object_input.suggester.get_suggestion("anything") is None
+
+    asyncio.run(scenario())
+
+
+# -- edit / remove a configured source (source-edit-and-object-picker) -----
+
+
+def test_edit_and_remove_source_buttons_disabled_at_zero_sources(tmp_path):
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert app.screen.query_one("#edit-source-btn", Button).disabled
+            assert app.screen.query_one("#remove-source-btn", Button).disabled
+
+    asyncio.run(scenario())
+
+
+def test_edit_source_prefills_raw_var_token_not_resolved(tmp_path, monkeypatch):
+    """The edit form must pre-fill the ${VAR} token exactly as it's written
+    in the YAML -- never a resolved secret -- even though the referenced
+    variable is set (and thus resolvable) in this test's own environment."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            "sources:\n  s: { type: sqlite, database: '${DBFRESH_TEST_DB}' }\n"
+            "checks: []\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            await pilot.click("#edit-source-btn")
+            await pilot.pause()
+
+            assert app.screen.query_one("#new-source-form").display
+            heading = str(app.screen.query_one("#new-source-heading").render())
+            assert "Edit source: s" in heading
+
+            name_input = app.screen.query_one("#new-source-name-input", Input)
+            assert name_input.value == "s"
+            assert name_input.disabled
+            type_input = app.screen.query_one("#new-source-type-input", Input)
+            assert type_input.value == "sqlite"
+
+            params_text = app.screen.query_one("#new-source-params", TextArea).text
+            assert "${DBFRESH_TEST_DB}" in params_text
+            assert str(db) not in params_text
+
+    asyncio.run(scenario())
+
+
+def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        new_db = tmp_path / "new-data.db"
+        _table(new_db)
+        monkeypatch.setenv("DBFRESH_TEST_DB", str(new_db))
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            await pilot.click("#edit-source-btn")
+            await pilot.pause()
+
+            app.screen.query_one(
+                "#new-source-params", TextArea
+            ).text = "database=${DBFRESH_TEST_DB}"
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Back on the propose form, source still selected, in-memory
+            # params resolved for immediate use this session.
+            assert not app.screen.query_one("#new-source-form").display
+            assert app.screen.query_one("#source-select").value == "s"
+            assert app.screen._config.sources["s"].params["database"] == str(new_db)
+            # The edit already wrote to disk -- Home must reload on dismiss.
+            assert app.screen._config_changed is True
+
+        # Disk keeps the raw ${VAR} token -- never a resolved secret.
+        data = yaml.safe_load(cfg.read_text())
+        assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB}"
+
+    asyncio.run(scenario())
+
+
+def test_edit_source_probe_failure_shows_error_and_writes_nothing(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: unreachable }\nchecks: []\n")
+        original = cfg.read_text()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            await pilot.click("#edit-source-btn")
+            await pilot.pause()
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Did not crash: still on Configure, edit form still open, an
+            # error toast -- nothing written.
+            assert isinstance(app.screen, ConfigureScreen)
+            assert app.screen.query_one("#new-source-form").display
+            messages = [n.message for n in app._notifications]
+            assert any("could not connect" in m for m in messages)
+
+        assert cfg.read_text() == original
+
+    asyncio.run(scenario())
+
+
+def test_remove_source_two_press_confirm_then_cancel_keeps_source(tmp_path):
+    async def scenario():
+        db_a = tmp_path / "a.db"
+        db_b = tmp_path / "b.db"
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f"sources:\n"
+            f'  a: {{ type: sqlite, database: "{db_a}" }}\n'
+            f'  b: {{ type: sqlite, database: "{db_b}" }}\n'
+            "checks: []\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "a"
+            await pilot.pause()
+
+            await pilot.click("#remove-source-btn")
+            await pilot.pause()
+            assert app.screen.query_one("#remove-source-confirm-row").display
+
+            await pilot.click("#remove-source-cancel-btn")
+            await pilot.pause()
+            assert not app.screen.query_one("#remove-source-confirm-row").display
+
+        data = yaml.safe_load(cfg.read_text())
+        assert set(data["sources"]) == {"a", "b"}
+
+    asyncio.run(scenario())
+
+
+def test_remove_source_second_press_removes_and_selects_remaining(tmp_path):
+    async def scenario():
+        db_a = tmp_path / "a.db"
+        db_b = tmp_path / "b.db"
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f"sources:\n"
+            f'  a: {{ type: sqlite, database: "{db_a}" }}\n'
+            f'  b: {{ type: sqlite, database: "{db_b}" }}\n'
+            "checks: []\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "a"
+            await pilot.pause()
+
+            await pilot.click("#remove-source-btn")
+            await pilot.pause()
+            await pilot.click("#remove-source-confirm-btn")
+            await pilot.pause()
+
+            assert not app.screen.query_one("#remove-source-confirm-row").display
+            select = app.screen.query_one("#source-select")
+            assert select.value == "b"
+            assert "a" not in app.screen._config.sources
+            assert app.screen._config_changed is True
+
+        data = yaml.safe_load(cfg.read_text())
+        assert set(data["sources"]) == {"b"}
+
+    asyncio.run(scenario())
+
+
+def test_remove_source_with_orphaned_checks_shows_error_and_writes_nothing(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+        original = cfg.read_text()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert app.screen.query_one("#source-select").value == "s"
+            await pilot.click("#remove-source-btn")
+            await pilot.pause()
+            await pilot.click("#remove-source-confirm-btn")
+            await pilot.pause()
+
+            messages = [n.message for n in app._notifications]
+            assert any("check(s) still reference" in m for m in messages)
+            assert isinstance(app.screen, ConfigureScreen)
+            assert "s" in app.screen._config.sources
+
+        assert cfg.read_text() == original
+
+    asyncio.run(scenario())
+
+
+def test_remove_last_source_opens_new_source_form(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            assert app.screen.query_one("#source-select").value == "s"
+            await pilot.click("#remove-source-btn")
+            await pilot.pause()
+            await pilot.click("#remove-source-confirm-btn")
+            await pilot.pause()
+
+            assert app.screen.query_one("#new-source-form").display
+            assert not app.screen.query_one("#propose-section").display
+            assert app.screen._config_changed is True
+
+        data = yaml.safe_load(cfg.read_text())
+        assert not data.get("sources")  # {} or None both count as "empty"
 
     asyncio.run(scenario())
