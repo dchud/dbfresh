@@ -182,10 +182,10 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
         release = threading.Event()
         real_run_and_persist = runner.run_and_persist
 
-        def blocking_run_and_persist(config, store, now=None):
+        def blocking_run_and_persist(config, store, now=None, on_result=None):
             started.set()
             assert release.wait(timeout=2), "test never released the run"
-            return real_run_and_persist(config, store, now=now)
+            return real_run_and_persist(config, store, now=now, on_result=on_result)
 
         monkeypatch.setattr(runner, "run_and_persist", blocking_run_and_persist)
 
@@ -224,7 +224,7 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
         cfg = _config(tmp_path / "config.yaml", db)
         store_path = tmp_path / "obs.db"
 
-        def raising_run_and_persist(config, store, now=None):
+        def raising_run_and_persist(config, store, now=None, on_result=None):
             raise RuntimeError("store locked")
 
         monkeypatch.setattr(runner, "run_and_persist", raising_run_and_persist)
@@ -245,6 +245,174 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
 
             messages = [n.message for n in app._notifications]
             assert any("store locked" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
+def test_run_action_success_toast_summarizes_counts(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # row_count passes (3 rows, between 1 and 10) and null_rate
+            # fails (2 of 3 emails null, over the 0.1 max) -- see _seed_db
+            # / _config.
+            messages = [n.message for n in app._notifications]
+            assert any("1 ok" in m and "1 failed" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
+def test_run_action_wires_per_check_progress_into_the_header(tmp_path, monkeypatch):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        seen: list[tuple[int, int]] = []
+        real_on_run_progress = DbfreshApp.on_run_progress
+
+        def spy_on_run_progress(self, message):
+            seen.append((message.count, message.total))
+            real_on_run_progress(self, message)
+
+        monkeypatch.setattr(DbfreshApp, "on_run_progress", spy_on_run_progress)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Two checks configured on the same source, evaluated serially
+            # on that source's one connection (see dbfresh.engine.run_checks)
+            # -- one RunProgress message per completed check, counting up.
+            assert seen == [(1, 2), (2, 2)]
+
+    asyncio.run(scenario())
+
+
+def test_run_action_second_press_cancels_first_with_a_notice(tmp_path, monkeypatch):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        started = threading.Event()
+        release = threading.Event()
+        blocked_once = threading.Event()
+        blocked_once.set()
+        real_run_and_persist = runner.run_and_persist
+
+        def maybe_blocking_run_and_persist(config, store, now=None, on_result=None):
+            if blocked_once.is_set():
+                blocked_once.clear()
+                started.set()
+                assert release.wait(timeout=2), "test never released the first run"
+            return real_run_and_persist(config, store, now=now, on_result=on_result)
+
+        monkeypatch.setattr(runner, "run_and_persist", maybe_blocking_run_and_persist)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.pause()
+            assert started.wait(timeout=2)
+
+            # A second press while the first run is still in flight cancels
+            # it (exclusive worker group) rather than queuing or ignoring
+            # the keypress -- surfaced as a notice instead of silently.
+            await pilot.press("r")
+            await pilot.pause()
+
+            messages = [n.message for n in app._notifications]
+            assert any("cancelled" in m for m in messages)
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # The second run still completed normally.
+            assert app.last_run is not None
+            assert app.last_run.status == Status.FAIL
+
+    asyncio.run(scenario())
+
+
+def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")  # Home -> ObjectDetailScreen, s.t
+            await pilot.pause()
+            assert isinstance(app.screen, ObjectDetailScreen)
+            detail_table = app.screen.query_one(DataTable)
+            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "·"
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Still on the same screen -- no esc + re-enter needed -- and
+            # its grid reflects the run that just completed.
+            assert isinstance(app.screen, ObjectDetailScreen)
+            detail_table = app.screen.query_one(DataTable)
+            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
+            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_run_action_refreshes_report_screen_when_on_top(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            assert app.screen._run is app.last_run
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Still on the Report screen -- no esc + re-enter needed -- and
+            # it now reflects the second run rather than the one it was
+            # pushed with.
+            assert isinstance(app.screen, ReportScreen)
+            assert app.screen._run is app.last_run
 
     asyncio.run(scenario())
 
