@@ -101,6 +101,53 @@ def status_legend() -> Text:
     return text
 
 
+# Status label used only by last_run_line's one-line summary -- kept
+# separate from _STATUS_LABEL (the grid legend's wording, e.g. "error
+# (unreachable)") because that wording is too verbose for a one-line
+# summary, and because that mapping's None ("never observed") case never
+# applies here: every row counted comes from one already-completed run.
+_RUN_STATUS_WORD: dict[Status, str] = {
+    Status.OK: "ok",
+    Status.WARN: "warned",
+    Status.FAIL: "failed",
+    Status.ERROR: "unreachable",
+    Status.SKIPPED: "skipped",
+}
+
+
+def last_run_line(store: Store, tz: tzinfo | None) -> str | None:
+    """A one-line "last run: <time> · N checks · ..." summary of the most
+    recent completed run, or ``None`` when no run has finished yet -- the
+    caller hides the line entirely in that case rather than rendering a
+    blank one.
+
+    Time comes from the run's own ``finished_at`` (displayed in ``tz``);
+    counts come from that run's own observations
+    (:meth:`~dbfresh.store.Store.observations_for_run`) rather than the
+    dashboard grid's per-check latest status, so the line reflects exactly
+    what that one run produced, not the current state of every check.
+    """
+    run = store.latest_run()
+    if run is None:
+        return None
+    observations = store.observations_for_run(run["run_id"])
+    counts = dict.fromkeys(Status, 0)
+    for obs in observations:
+        counts[Status(obs["status"])] += 1
+    finished_at = datetime.fromisoformat(run["finished_at"])
+    when = finished_at.astimezone(tz) if tz is not None else finished_at
+    parts = [
+        f"{counts[status]} {word}"
+        for status, word in _RUN_STATUS_WORD.items()
+        if status != Status.OK and counts[status]
+    ]
+    summary = " · ".join(parts) if parts else "all ok"
+    return (
+        f"last run: {when.strftime('%Y-%m-%d %H:%M')} · "
+        f"{len(observations)} checks · {summary}"
+    )
+
+
 def check_label(check: Check) -> str:
     """The label shown for one check's row.
 

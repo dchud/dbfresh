@@ -649,6 +649,47 @@ def test_latest_run_skips_an_in_progress_run(tmp_path):
     store.close()
 
 
+def test_observations_for_run_returns_only_that_runs_rows_in_order(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    store.record_observation(run_id, _result(check_id="b", value=2))
+    other_run = store.start_run()
+    store.record_observation(other_run, _result(check_id="c", value=3))
+
+    rows = store.observations_for_run(run_id)
+    assert [r["check_id"] for r in rows] == ["a", "b"]
+    store.close()
+
+
+def test_observations_for_run_returns_empty_list_for_a_run_with_no_observations(
+    tmp_path,
+):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    assert store.observations_for_run(run_id) == []
+    store.close()
+
+
+def test_observations_for_run_includes_expected_and_error(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="fail", status=Status.FAIL, value=5, expected="max 1"),
+    )
+    store.record_observation(
+        run_id,
+        _result(
+            check_id="err", status=Status.ERROR, value=None, error="connection refused"
+        ),
+    )
+    rows = {r["check_id"]: r for r in store.observations_for_run(run_id)}
+    assert rows["fail"]["expected"] == "max 1"
+    assert rows["err"]["error"] == "connection refused"
+    store.close()
+
+
 def test_migrate_tolerates_a_column_added_by_a_concurrent_opener(tmp_path, monkeypatch):
     """A duplicate-column error from a racing opener is swallowed, not raised.
 

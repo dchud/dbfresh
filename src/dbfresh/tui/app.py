@@ -25,7 +25,13 @@ from textual.worker import Worker, WorkerState
 from dbfresh.config import Config, load_config_tolerant
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
-from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid, status_legend
+from dbfresh.tui.dashboard import (
+    GridRow,
+    last_run_line,
+    object_rows,
+    populate_grid,
+    status_legend,
+)
 
 _GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
@@ -171,6 +177,7 @@ class DbfreshApp(App):
             cursor_foreground_priority="renderable",
         )
         yield Static(status_legend(), id="status-legend")
+        yield Static("", id="last-run-line")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
@@ -220,9 +227,10 @@ class DbfreshApp(App):
 
         table = self.query_one(f"#{_GRID_ID}", DataTable)
         config = self._require_config()
+        store = self._require_store()
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
-        rows = object_rows(config, self._require_store(), today, tz)
+        rows = object_rows(config, store, today, tz)
         populate_grid(table, rows, today, label_header="object")
         self._rows_by_key = {row.key: row for row in rows}
 
@@ -230,6 +238,11 @@ class DbfreshApp(App):
         table.display = not empty
         self.query_one("#status-legend", Static).display = not empty
         self.query_one("#empty-state", Static).display = empty
+
+        last_run_widget = self.query_one("#last-run-line", Static)
+        line = last_run_line(store, tz)
+        last_run_widget.update(line or "")
+        last_run_widget.display = line is not None
 
         banner = self.query_one(f"#{_MISSING_SECRETS_ID}", Static)
         banner.update(self._missing_secrets_text())
@@ -368,7 +381,7 @@ class DbfreshApp(App):
         from dbfresh.tui.screens import ReportScreen
 
         tz = display_timezone(self._require_config().calendar)
-        self.push_screen(ReportScreen(self.last_run, tz=tz))
+        self.push_screen(ReportScreen(self.last_run, self._require_store(), tz=tz))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Selecting an object row opens its checks (ObjectDetailScreen).

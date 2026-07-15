@@ -14,7 +14,7 @@ from textual.widgets import DataTable, Footer, Header, Static
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.models import RunResult, Status
-from dbfresh.report import render_digest, render_history
+from dbfresh.report import reconstruct_run, render_digest, render_history
 from dbfresh.store import Store
 from dbfresh.tui.dashboard import (
     GridRow,
@@ -26,8 +26,21 @@ from dbfresh.tui.dashboard import (
     status_style,
 )
 
-_NO_RUN_MESSAGE = (
-    "no run recorded in this session yet -- press 'r' on the dashboard to run checks"
+_NO_RUN_MESSAGE = "no runs recorded yet -- press 'r' on the dashboard to run checks"
+
+# dbfresh.tui.app.tcss's $subtext0 -- Rich Text styling (used for the
+# reconstruction note below) can't reference a Textual CSS variable, so the
+# hex is duplicated here to match the same muted-metadata convention the
+# Home dashboard's last-run line uses (dbfresh.tui.dashboard.last_run_line).
+_SUBTEXT0 = "#a5adcb"
+
+# Shown above a Report reconstructed from the store rather than from an
+# in-session run, so a restart's report doesn't silently imply the fuller
+# detail (violating-row samples, schema diff) a live run's report can show
+# but a reconstruction never has -- see report.reconstruct_run.
+_RECONSTRUCTED_NOTE = (
+    "(reconstructed from stored observations -- sample rows and schema diff "
+    "detail are not available)"
 )
 
 # render_history's own fixed-width columns (see dbfresh.report.render_history:
@@ -132,29 +145,52 @@ def _colorized_history(candidate: dict, rows: list[dict], tz: tzinfo | None) -> 
 
 
 class ReportScreen(Screen):
-    """The most recent in-session run's digest, via :func:`render_digest`.
+    """The most recent run's digest, via :func:`render_digest`.
 
-    ``run`` is ``None`` until the user has triggered at least one in-app run
-    (the store's flattened observations don't retain enough to reconstruct
-    a full digest -- samples, diffs, and error text aren't persisted).
+    Prefers the in-session ``run`` (fuller detail: violating-row samples,
+    schema diff) when one exists. Once the app has run at least one check
+    this session, ``run`` is always set here -- :meth:`refresh_report`
+    keeps it current. Absent that (a fresh session -- app just launched, or
+    "p" pressed before "r"), falls back to reconstructing the most recent
+    *completed* run from ``store`` (:func:`~dbfresh.report.reconstruct_run`)
+    so a restart still shows the last real result rather than nothing; that
+    reconstruction is missing samples/diff (never persisted), so its digest
+    is prefixed with a note saying so. Only when the store has no completed
+    run either -- a genuinely fresh install -- is :data:`_NO_RUN_MESSAGE`
+    shown.
     """
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
-    def __init__(self, run: RunResult | None, tz: tzinfo | None = None) -> None:
+    def __init__(
+        self,
+        run: RunResult | None,
+        store: Store | None = None,
+        tz: tzinfo | None = None,
+    ) -> None:
         super().__init__()
         self._run = run
+        self._store = store
         self._tz = tz
 
     def compose(self) -> ComposeResult:
-        body: str | Text = (
-            _colorized_digest(self._run, tz=self._tz)
-            if self._run is not None
-            else _NO_RUN_MESSAGE
-        )
         yield Header()
-        yield VerticalScroll(Static(body, id="report-text", markup=False))
+        body = Static(self._render_body(), id="report-text", markup=False)
+        yield VerticalScroll(body)
         yield Footer()
+
+    def _render_body(self) -> str | Text:
+        if self._run is not None:
+            return _colorized_digest(self._run, tz=self._tz)
+        if self._store is not None:
+            stored_run = self._store.latest_run()
+            if stored_run is not None:
+                observations = self._store.observations_for_run(stored_run["run_id"])
+                reconstructed = reconstruct_run(stored_run, observations)
+                digest = _colorized_digest(reconstructed, tz=self._tz)
+                note = Text(_RECONSTRUCTED_NOTE, style=_SUBTEXT0)
+                return Text.assemble(note, "\n\n", digest)
+        return _NO_RUN_MESSAGE
 
     def refresh_report(self, run: RunResult | None) -> None:
         """Re-render from ``run`` -- the app's Run action calls this on a
@@ -162,10 +198,7 @@ class ReportScreen(Screen):
         ``compose`` above only ever renders once, at push time, off of
         whatever ``run`` its constructor was given."""
         self._run = run
-        body: str | Text = (
-            _colorized_digest(run, tz=self._tz) if run is not None else _NO_RUN_MESSAGE
-        )
-        self.query_one("#report-text", Static).update(body)
+        self.query_one("#report-text", Static).update(self._render_body())
 
     def action_dismiss_screen(self) -> None:
         self.app.pop_screen()

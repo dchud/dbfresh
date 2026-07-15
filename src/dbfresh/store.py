@@ -235,6 +235,23 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def observations_for_run(self, run_id: int) -> list[dict]:
+        """Every observation recorded for ``run_id``, in insertion order.
+
+        Insertion (``rowid``) order rather than ``observed_at``, since every
+        observation in one run typically shares the same ``observed_at`` --
+        insertion order is the only stable ordering available. Paired with
+        :meth:`latest_run`, this lets a caller reconstruct a whole run's
+        results from the store alone (see
+        :func:`dbfresh.report.reconstruct_run`), e.g. to redraw the TUI's
+        Report screen after a restart with no in-session run to show.
+        """
+        rows = self._conn.execute(
+            "SELECT * FROM observation WHERE run_id = ? ORDER BY rowid",
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def _insert_observation(
         self,
         run_id: int,

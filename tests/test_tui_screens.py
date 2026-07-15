@@ -21,12 +21,20 @@ _CANDIDATE = {
 }
 
 
-def _row(observed_at: str, status: str, value: float | None) -> dict:
+def _row(
+    observed_at: str,
+    status: str,
+    value: float | None,
+    expected: str | None = None,
+    error: str | None = None,
+) -> dict:
     return {
         "observed_at": observed_at,
         "status": status,
         "value": value,
         "value_text": None,
+        "expected": expected,
+        "error": error,
     }
 
 
@@ -88,6 +96,21 @@ def test_colorized_history_fail_and_error_stay_visually_distinct():
         if "ERROR" in text.plain[span.start : span.end]
     )
     assert fail_style != error_style
+
+
+def test_colorized_history_shows_expected_and_error():
+    rows = [
+        _row(
+            "2026-07-08T00:00:00+00:00",
+            "FAIL",
+            500.0,
+            expected="between 1 and 100000",
+        ),
+        _row("2026-07-09T00:00:00+00:00", "ERROR", None, error="connection refused"),
+    ]
+    text = _colorized_history(_CANDIDATE, rows, tz=None).plain
+    assert "between 1 and 100000" in text
+    assert "connection refused" in text
 
 
 def test_colorized_history_aligns_the_value_column_including_skipped():

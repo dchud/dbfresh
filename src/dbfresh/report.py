@@ -178,6 +178,45 @@ def render_digest(
     return "\n".join(lines)
 
 
+def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
+    """Rebuild a :class:`~dbfresh.models.RunResult` from a store run row and
+    that run's observation rows (:meth:`~dbfresh.store.Store.latest_run`,
+    :meth:`~dbfresh.store.Store.observations_for_run`).
+
+    Lets a caller redraw a completed run's :func:`render_digest` output from
+    persisted data alone -- e.g. the TUI's Report screen after a restart,
+    when no in-session ``RunResult`` survived it. The observation table only
+    ever persists a scalar/fingerprint per check plus its ``expected`` and
+    ``error`` text, never the violating rows or schema diff a live run
+    collects, so every reconstructed ``Result`` has ``samples=None`` and
+    ``diff=None`` -- ``render_digest`` already falls back to its "observed:
+    <value>" line whenever both are absent, so the reconstruction renders
+    without either, rather than raising or faking them.
+    """
+    results = [
+        Result(
+            source=obs["source"],
+            object=obs["object"],
+            metric=obs["metric"],
+            label=obs["label"],
+            status=Status(obs["status"]),
+            value=obs["value"] if obs["value"] is not None else obs["value_text"],
+            expected=obs["expected"],
+            error=obs["error"],
+            check_id=obs["check_id"],
+        )
+        for obs in observations
+    ]
+    finished_at = run["finished_at"]
+    return RunResult(
+        results=results,
+        status=Status(run["status"]),
+        run_id=run["run_id"],
+        started_at=datetime.fromisoformat(run["started_at"]),
+        finished_at=datetime.fromisoformat(finished_at) if finished_at else None,
+    )
+
+
 def render_json(run: RunResult) -> str:
     """Machine-readable output: a stable envelope over every result.
 
@@ -212,14 +251,24 @@ def render_candidates(object_: str, candidates: list[dict]) -> str:
     return "\n".join(lines)
 
 
+_HISTORY_EXPECTED_WIDTH = 24
+
+
 def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
-    """A check's recent values, statuses, and a simple up/down trend.
+    """A check's recent values, expectations, statuses, and a simple
+    up/down trend.
 
     ``check_id`` rides along in the header line as a parenthetical -- still
     present for anyone who needs to copy it (e.g. into ``--metric``-less
     disambiguation elsewhere), but not its own leading line, which gave the
     internal hash more visual weight than the source.object.label it
     identifies.
+
+    An ``expected`` column shows what each observation was compared
+    against; a row with an ``error`` (an ERROR observation -- source
+    unreachable, query failed) appends that text after the fixed-width
+    columns rather than truncating it to fit one, since it is the row's
+    most important content when present.
     """
     header = f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
     lines = [f"CHECK HISTORY — {header} ({candidate['check_id']})"]
@@ -230,7 +279,10 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
 
     metric = candidate.get("metric")
     lines.append("")
-    lines.append(f"{'observed_at':<28} {'status':<8} {'value':<16} trend")
+    lines.append(
+        f"{'observed_at':<28} {'status':<8} {'value':<16} "
+        f"{'expected':<{_HISTORY_EXPECTED_WIDTH}} trend"
+    )
     previous: float | None = None
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
@@ -250,7 +302,19 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
             display = f"{_format_duration(value)} stale"
         else:
             display = _format_observed(metric, value)
-        lines.append(f"{observed:<28} {row['status']:<8} {display:<16} {trend}")
+        expected = row.get("expected") or ""
+        line = (
+            f"{observed:<28} {row['status']:<8} {display:<16} "
+            f"{expected:<{_HISTORY_EXPECTED_WIDTH}} {trend}"
+        )
+        error = row.get("error")
+        if error:
+            # Collapse whitespace: an error can be multi-line (a driver's
+            # traceback), and both this fixed-width table and the TUI
+            # History screen map one line per observation, so the row has
+            # to stay on a single line.
+            line += f"  — {' '.join(str(error).split())}"
+        lines.append(line)
         if isinstance(value, (int, float)):
             previous = value
     return "\n".join(lines)
