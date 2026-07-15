@@ -79,6 +79,17 @@ Footer {
     margin: 1 1 0 1;
 }
 
+/* Same muted metadata tone as the legend above, not a status color --
+ * see dbfresh.tui.dashboard.last_run_line. Sits directly under the legend
+ * (no top margin of its own) at the same left gutter, so the two read as
+ * one grouped block under the grid. Hidden (display in app.py) until a
+ * run has completed.
+ */
+#last-run-line {
+    color: $subtext0;
+    margin: 0 1 0 1;
+}
+
 #empty-state {
     width: 100%;
     height: 100%;

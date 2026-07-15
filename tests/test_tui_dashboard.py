@@ -14,6 +14,7 @@ from dbfresh.tui.dashboard import (
     bucket_by_day,
     check_label,
     check_rows,
+    last_run_line,
     object_rows,
     populate_grid,
     status_glyph,
@@ -265,6 +266,112 @@ def test_status_legend_mentions_every_status_and_never_observed():
     for status in Status:
         assert status.value.lower() in legend.lower()
     assert "never observed" in legend
+
+
+# -- last_run_line ---------------------------------------------------------
+
+
+def test_last_run_line_is_none_with_no_completed_run():
+    store = Store(":memory:")
+    assert last_run_line(store, tz=None) is None
+
+
+def test_last_run_line_is_none_while_a_run_is_still_in_progress():
+    store = Store(":memory:")
+    store.start_run(started_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC))
+    assert last_run_line(store, tz=None) is None
+
+
+def test_last_run_line_reports_check_count_and_time():
+    store = Store(":memory:")
+    check = Check(source="s", object="orders", metric="row_count")
+    run_id = store.start_run(started_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC))
+    store.record_observation(
+        run_id,
+        Result(
+            object="orders",
+            metric="row_count",
+            status=Status.OK,
+            source="s",
+            value=5,
+            check_id=check_id(check),
+        ),
+    )
+    store.finish_run(
+        run_id, Status.OK, finished_at=datetime(2026, 7, 15, 14, 2, 30, tzinfo=UTC)
+    )
+    line = last_run_line(store, tz=UTC)
+    assert line == "last run: 2026-07-15 14:02 · 1 checks · all ok"
+
+
+def test_last_run_line_summarizes_non_ok_counts():
+    store = Store(":memory:")
+    run_id = store.start_run(started_at=datetime(2026, 7, 15, tzinfo=UTC))
+    store.record_observation(
+        run_id,
+        Result(
+            object="orders",
+            metric="row_count",
+            status=Status.OK,
+            source="s",
+            value=5,
+            check_id="a",
+        ),
+    )
+    store.record_observation(
+        run_id,
+        Result(
+            object="orders",
+            metric="null_rate",
+            status=Status.FAIL,
+            source="s",
+            value=0.9,
+            check_id="b",
+        ),
+    )
+    store.finish_run(
+        run_id, Status.FAIL, finished_at=datetime(2026, 7, 15, 14, 2, tzinfo=UTC)
+    )
+    line = last_run_line(store, tz=UTC)
+    assert line == "last run: 2026-07-15 14:02 · 2 checks · 1 failed"
+
+
+def test_last_run_line_reflects_that_runs_own_observations_not_current_status():
+    """Counts come from the run's own observations, not each check's
+    latest status -- a later, still-in-progress run must not change what
+    the last *completed* run's line reports."""
+    store = Store(":memory:")
+    check = Check(source="s", object="orders", metric="row_count")
+    first = store.start_run(started_at=datetime(2026, 7, 15, tzinfo=UTC))
+    store.record_observation(
+        first,
+        Result(
+            object="orders",
+            metric="row_count",
+            status=Status.OK,
+            source="s",
+            value=5,
+            check_id=check_id(check),
+        ),
+    )
+    store.finish_run(
+        first, Status.OK, finished_at=datetime(2026, 7, 15, 14, 2, tzinfo=UTC)
+    )
+    store.start_run(started_at=datetime(2026, 7, 15, 15, 0, tzinfo=UTC))  # unfinished
+
+    line = last_run_line(store, tz=UTC)
+    assert line == "last run: 2026-07-15 14:02 · 1 checks · all ok"
+
+
+def test_last_run_line_uses_the_given_display_timezone():
+    store = Store(":memory:")
+    run_id = store.start_run(started_at=datetime(2026, 7, 15, tzinfo=UTC))
+    store.finish_run(
+        run_id, Status.OK, finished_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC)
+    )
+    line = last_run_line(store, tz=ZoneInfo("America/New_York"))
+    assert line is not None
+    assert "10:00" in line  # 14:00 UTC == 10:00 EDT in July
 
 
 # -- populate_grid --------------------------------------------------------

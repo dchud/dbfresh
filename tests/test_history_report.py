@@ -164,6 +164,69 @@ def test_render_history_handles_no_observations():
     assert "no observations" in text.lower()
 
 
+def test_render_history_shows_expected_column():
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "row_count",
+        "label": "row_count",
+    }
+    rows = [
+        {
+            "observed_at": "2026-07-08T00:00:00+00:00",
+            "status": "OK",
+            "value": 10000.0,
+            "value_text": None,
+            "expected": "between 1 and 100000",
+            "error": None,
+        },
+    ]
+    text = render_history(candidate, rows)
+    assert "between 1 and 100000" in text
+    assert "expected" in text  # column header
+
+
+def test_render_history_shows_error_text_for_an_error_row():
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "row_count",
+        "label": "row_count",
+    }
+    rows = [
+        {
+            "observed_at": "2026-07-09T00:00:00+00:00",
+            "status": "ERROR",
+            "value": None,
+            "value_text": None,
+            "expected": None,
+            "error": "connection refused",
+        },
+    ]
+    text = render_history(candidate, rows)
+    assert "connection refused" in text
+
+
+def test_render_history_tolerates_rows_without_expected_or_error_keys():
+    """Older/hand-built row dicts (e.g. this suite's own fixtures elsewhere)
+    may not carry expected/error at all -- the column still renders, just
+    blank, rather than raising a KeyError."""
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "row_count",
+        "label": "row_count",
+    }
+    rows = [
+        {"observed_at": "2026-07-08T00:00:00+00:00", "status": "OK", "value": 10000.0}
+    ]
+    text = render_history(candidate, rows)
+    assert "10000" in text
+
+
 def test_render_history_falls_back_to_value_text():
     candidate = {
         "check_id": "aaa111222333",

@@ -149,6 +149,47 @@ def test_home_hides_empty_state_once_checks_exist(tmp_path):
     asyncio.run(scenario())
 
 
+def test_home_hides_last_run_line_with_no_completed_run(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert not app.query_one("#last-run-line", Static).display
+
+    asyncio.run(scenario())
+
+
+def test_home_shows_last_run_line_after_a_completed_run(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert not app.query_one("#last-run-line", Static).display
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # row_count passes, null_rate fails -- see _seed_db / _config.
+            widget = app.query_one("#last-run-line", Static)
+            assert widget.display
+            text = str(widget.render())
+            assert "last run:" in text
+            assert "2 checks" in text
+            assert "1 failed" in text
+
+    asyncio.run(scenario())
+
+
 def _undefined_var_config(path, db):
     path.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -706,6 +747,9 @@ def test_report_action_shows_last_in_session_run_digest(tmp_path):
 
 
 def test_report_action_before_any_run_shows_placeholder(tmp_path):
+    """No in-session run and nothing in the store either (a fresh install)
+    -- the placeholder, not a reconstruction attempt."""
+
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -720,7 +764,106 @@ def test_report_action_before_any_run_shows_placeholder(tmp_path):
 
             assert isinstance(app.screen, ReportScreen)
             text = str(app.screen.query_one("#report-text").content)
-            assert "no run recorded" in text
+            assert "no runs recorded yet" in text
+
+    asyncio.run(scenario())
+
+
+def test_report_action_reconstructs_from_store_when_no_session_run(tmp_path):
+    """A restart: no in-session run, but the store has a completed one from
+    before -- the Report screen reconstructs its digest from the store
+    instead of showing the "no runs" placeholder."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        run_id = store.start_run()
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="row_count",
+                status=Status.OK,
+                source="s",
+                value=3,
+                check_id=check_id(_row_count_check()),
+            ),
+        )
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="null_rate",
+                status=Status.FAIL,
+                source="s",
+                value=0.9,
+                expected="max 0.1",
+                check_id=check_id(_null_rate_check()),
+            ),
+        )
+        store.finish_run(run_id, Status.FAIL)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            assert app.screen._run is None  # no in-session run triggered this
+            text = str(app.screen.query_one("#report-text").content)
+            assert "DATA CHECK REPORT" in text
+            assert "reconstructed from stored observations" in text
+            assert "null_rate" in text  # the one failing check is listed
+            assert "max 0.1" in text  # its expectation is still shown
+
+    asyncio.run(scenario())
+
+
+def test_report_action_prefers_in_session_run_over_store(tmp_path):
+    """An old completed run sits in the store, but a run happened this
+    session too -- the Report screen shows the in-session run (fuller
+    detail) rather than falling back to the stale store reconstruction."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        old_run = store.start_run()
+        store.record_observation(
+            old_run,
+            Result(
+                object="t",
+                metric="row_count",
+                status=Status.OK,
+                source="s",
+                value=3,
+                check_id=check_id(_row_count_check()),
+            ),
+        )
+        store.finish_run(old_run, Status.OK)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            assert app.screen._run is app.last_run
+            text = str(app.screen.query_one("#report-text").content)
+            assert "null_rate" in text  # the in-session run's failing check
+            assert "reconstructed from stored observations" not in text
 
     asyncio.run(scenario())
 
