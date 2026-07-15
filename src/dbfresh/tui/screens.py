@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, tzinfo
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -12,14 +13,53 @@ from textual.widgets import DataTable, Footer, Header, Static
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
-from dbfresh.models import RunResult
+from dbfresh.models import RunResult, Status
 from dbfresh.report import render_digest, render_history
 from dbfresh.store import Store
-from dbfresh.tui.dashboard import GridRow, check_label, check_rows, populate_grid
+from dbfresh.tui.dashboard import (
+    GridRow,
+    check_label,
+    check_rows,
+    populate_grid,
+    status_glyph,
+    status_legend,
+    status_style,
+)
 
 _NO_RUN_MESSAGE = (
     "no run recorded in this session yet -- press 'r' on the dashboard to run checks"
 )
+
+
+def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
+    """:func:`render_digest`'s plain text, recolored by status severity for
+    the Report screen.
+
+    ``render_digest`` prefixes every non-OK/SKIPPED block with the same
+    literal glyph ("✗ "), so WARN, FAIL, and ERROR read identically in the
+    plain-text digest the CLI prints -- that text stays untouched here.
+    This walks the same non-OK/SKIPPED results in the same order
+    ``render_digest`` iterates ``run.results`` to recover each block's
+    status, then recolors that block's header line with the grid's own
+    glyph/style for that status (:func:`~dbfresh.tui.dashboard.status_glyph`,
+    :func:`~dbfresh.tui.dashboard.status_style`).
+    """
+    plain = render_digest(run, tz=tz)
+    blocks = iter(
+        result
+        for result in run.results
+        if result.status not in (Status.OK, Status.SKIPPED)
+    )
+    lines: list[Text] = []
+    for line in plain.split("\n"):
+        if line.startswith("✗ "):
+            status = next(blocks).status
+            styled = Text(status_glyph(status), style=status_style(status))
+            styled.append(line[1:])
+            lines.append(styled)
+        else:
+            lines.append(Text(line))
+    return Text("\n").join(lines)
 
 
 class ReportScreen(Screen):
@@ -38,13 +78,13 @@ class ReportScreen(Screen):
         self._tz = tz
 
     def compose(self) -> ComposeResult:
-        text = (
-            render_digest(self._run, tz=self._tz)
+        body: str | Text = (
+            _colorized_digest(self._run, tz=self._tz)
             if self._run is not None
             else _NO_RUN_MESSAGE
         )
         yield Header()
-        yield VerticalScroll(Static(text, id="report-text", markup=False))
+        yield VerticalScroll(Static(body, id="report-text", markup=False))
         yield Footer()
 
     def action_dismiss_screen(self) -> None:
@@ -76,6 +116,7 @@ class HistoryScreen(Screen):
             "source": self._check.source,
             "object": self._check.object,
             "label": check_label(self._check),
+            "metric": self._check.metric,
         }
         rows = self._store.history(cid)
         text = render_history(candidate, rows, tz=self._tz)
@@ -127,6 +168,7 @@ class ObjectDetailScreen(Screen):
         yield Header()
         yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
         yield DataTable(id=_DETAIL_GRID_ID, cursor_type="row")
+        yield Static(status_legend(), id="status-legend")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -135,7 +177,7 @@ class ObjectDetailScreen(Screen):
         rows = check_rows(
             self._source, self._object, self._config, self._store, today, self._tz
         )
-        populate_grid(table, rows, today)
+        populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:

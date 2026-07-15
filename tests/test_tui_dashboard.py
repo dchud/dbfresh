@@ -16,6 +16,9 @@ from dbfresh.tui.dashboard import (
     check_rows,
     object_rows,
     populate_grid,
+    status_glyph,
+    status_legend,
+    status_style,
     trailing_dates,
 )
 
@@ -238,6 +241,32 @@ def test_check_label_key_level_metric_includes_key():
     assert check_label(check) == "duplicate_count (sku)"
 
 
+# -- status_glyph / status_style / status_legend ---------------------------
+
+
+def test_status_glyph_fail_and_error_are_distinct():
+    assert status_glyph(Status.FAIL) != status_glyph(Status.ERROR)
+
+
+def test_status_style_fail_and_error_are_distinct():
+    assert status_style(Status.FAIL) != status_style(Status.ERROR)
+
+
+def test_status_glyph_skipped_and_never_observed_are_distinct():
+    assert status_glyph(Status.SKIPPED) != status_glyph(None)
+
+
+def test_status_style_skipped_and_never_observed_are_distinct():
+    assert status_style(Status.SKIPPED) != status_style(None)
+
+
+def test_status_legend_mentions_every_status_and_never_observed():
+    legend = str(status_legend())
+    for status in Status:
+        assert status.value.lower() in legend.lower()
+    assert "never observed" in legend
+
+
 # -- populate_grid --------------------------------------------------------
 #
 # DataTable.add_column measures column width against self.app.console, so
@@ -258,9 +287,9 @@ def test_populate_grid_builds_label_overall_and_seven_day_columns():
         app = _GridTestApp()
         async with app.run_test():
             table = app.query_one(DataTable)
-            populate_grid(table, rows, _TODAY)
+            populate_grid(table, rows, _TODAY, label_header="object")
             assert [str(c.label) for c in table.columns.values()] == [
-                "",
+                "object",
                 "overall",
                 "Wed",
                 "Thu",
@@ -281,7 +310,7 @@ def test_populate_grid_one_row_per_grid_row():
         app = _GridTestApp()
         async with app.run_test():
             table = app.query_one(DataTable)
-            populate_grid(table, rows, _TODAY)
+            populate_grid(table, rows, _TODAY, label_header="object")
             assert table.row_count == len(rows)
 
     asyncio.run(scenario())
@@ -294,8 +323,8 @@ def test_populate_grid_rebuild_clears_previous_contents():
         app = _GridTestApp()
         async with app.run_test():
             table = app.query_one(DataTable)
-            populate_grid(table, rows, _TODAY)
-            populate_grid(table, rows, _TODAY)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            populate_grid(table, rows, _TODAY, label_header="object")
             assert table.row_count == len(rows)
 
     asyncio.run(scenario())
@@ -308,7 +337,7 @@ def test_populate_grid_row_key_matches_grid_row_key():
         app = _GridTestApp()
         async with app.run_test():
             table = app.query_one(DataTable)
-            populate_grid(table, rows, _TODAY)
+            populate_grid(table, rows, _TODAY, label_header="object")
             row_keys = {key.value for key in table.rows}
             assert row_keys == {row.key for row in rows}
 

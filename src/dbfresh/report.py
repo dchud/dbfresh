@@ -213,9 +213,16 @@ def render_candidates(object_: str, candidates: list[dict]) -> str:
 
 
 def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
-    """A check's recent values, statuses, and a simple up/down trend."""
+    """A check's recent values, statuses, and a simple up/down trend.
+
+    ``check_id`` rides along in the header line as a parenthetical -- still
+    present for anyone who needs to copy it (e.g. into ``--metric``-less
+    disambiguation elsewhere), but not its own leading line, which gave the
+    internal hash more visual weight than the source.object.label it
+    identifies.
+    """
     header = f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
-    lines = [f"CHECK HISTORY — {header}", f"check_id {candidate['check_id']}"]
+    lines = [f"CHECK HISTORY — {header} ({candidate['check_id']})"]
     if not rows:
         lines.append("")
         lines.append("no observations recorded")

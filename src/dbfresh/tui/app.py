@@ -15,13 +15,13 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, load_config
 from dbfresh.models import RunResult
 from dbfresh.store import Store, resolve_store_path
-from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid
+from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid, status_legend
 
 _GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
@@ -66,6 +66,7 @@ class DbfreshApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(id=_GRID_ID, cursor_type="row")
+        yield Static(status_legend(), id="status-legend")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -106,7 +107,7 @@ class DbfreshApp(App):
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
         rows = object_rows(config, self._require_store(), today, tz)
-        populate_grid(table, rows, today)
+        populate_grid(table, rows, today, label_header="object")
         self._rows_by_key = {row.key: row for row in rows}
 
     def action_run_checks(self) -> None:

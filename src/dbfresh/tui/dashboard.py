@@ -30,22 +30,70 @@ _STATUS_STYLE: dict[Status | None, str] = {
     Status.OK: "bold green",
     Status.WARN: "bold yellow",
     Status.FAIL: "bold red",
-    Status.ERROR: "bold red",
-    Status.SKIPPED: "dim",
+    Status.ERROR: "bold blue",
+    Status.SKIPPED: "dim cyan",
     None: "dim",
 }
 
 # A day/overall cell is one glyph, not a word -- the grid's whole point is
-# fitting many rows/columns in limited width. Color (_STATUS_STYLE) already
-# distinguishes FAIL from ERROR, so they share a glyph.
+# fitting many rows/columns in limited width. FAIL ("bad data": the check
+# ran and the value failed its expectation) and ERROR ("source unreachable":
+# the check never got a value to compare) are different failure modes with
+# different fixes, so they get both a distinct glyph and a distinct color
+# rather than sharing one. SKIPPED (deliberately not evaluated) and unknown
+# (never observed) are both muted, but SKIPPED keeps a hint of color so the
+# two don't read as the same "nothing to see here" grey.
 _STATUS_GLYPH: dict[Status | None, str] = {
     Status.OK: "✓",
     Status.WARN: "!",
     Status.FAIL: "✗",
-    Status.ERROR: "✗",
+    Status.ERROR: "⊘",
     Status.SKIPPED: "–",
     None: "·",
 }
+
+_STATUS_LABEL: dict[Status | None, str] = {
+    Status.OK: "ok",
+    Status.WARN: "warn",
+    Status.FAIL: "fail",
+    Status.ERROR: "error (unreachable)",
+    Status.SKIPPED: "skipped",
+    None: "never observed",
+}
+
+
+def status_glyph(status: Status | None) -> str:
+    """The single-character glyph for ``status`` (``None`` = never
+    observed) -- shared by the status grid, its legend, and the Report
+    screen, so all three read the same glyph the same way."""
+    return _STATUS_GLYPH[status]
+
+
+def status_style(status: Status | None) -> str:
+    """The Rich style for ``status`` (``None`` = never observed) -- shared
+    by the status grid, its legend, and the Report screen."""
+    return _STATUS_STYLE[status]
+
+
+def status_legend() -> Text:
+    """A compact glyph legend, one entry per status plus never-observed --
+    the same order the grid's own severity reads worst to least severe,
+    with the two non-severity states (skipped, never observed) last."""
+    order = [
+        Status.OK,
+        Status.WARN,
+        Status.FAIL,
+        Status.ERROR,
+        Status.SKIPPED,
+        None,
+    ]
+    text = Text()
+    for status in order:
+        if text.plain:
+            text.append("   ")
+        text.append(status_glyph(status), style=status_style(status))
+        text.append(f" {_STATUS_LABEL[status]}")
+    return text
 
 
 def check_label(check: Check) -> str:
@@ -211,17 +259,24 @@ def check_rows(
 
 
 def _status_cell(status: Status | None) -> Text:
-    text = Text(_STATUS_GLYPH[status], style=_STATUS_STYLE[status])
+    text = Text(status_glyph(status), style=status_style(status))
     text.justify = "center"
     return text
 
 
-def populate_grid(table: DataTable, rows: list[GridRow], today: date) -> None:
+def populate_grid(
+    table: DataTable, rows: list[GridRow], today: date, label_header: str
+) -> None:
     """(Re)populate ``table`` from ``rows``. Safe to call repeatedly: clears
     both rows and columns first, since the trailing-day column headers
-    themselves shift by one day if two calls straddle midnight."""
+    themselves shift by one day if two calls straddle midnight.
+
+    ``label_header`` names the first column -- "object" at the Home scope,
+    "check" at the drill-in scope -- since the two share this one renderer
+    but the label column holds a different kind of thing at each scope.
+    """
     table.clear(columns=True)
-    table.add_column("", key="label")
+    table.add_column(label_header, key="label")
     table.add_column("overall", key="overall")
     for day in trailing_dates(today):
         table.add_column(day.strftime("%a"), key=day.isoformat())
