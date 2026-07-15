@@ -38,16 +38,19 @@ Footer {
  * forces every cell's foreground to match it, which erases the
  * OK/WARN/FAIL/ERROR/SKIPPED encoding on exactly the row under focus.
  * cursor_foreground_priority="renderable" (set on both DataTable widgets
- * in app.py / screens.py) already stops the forced foreground; this rule
- * softens the background from mauve to a neutral surface tone instead, so
- * the row still reads as selected without competing with the status
- * colors it's supposed to make more visible, not less. ID selectors (not
- * a shared class) so this beats the default CSS's own :focus-scoped rule
- * regardless of focus state.
+ * in app.py / screens.py) keeps a status cell's own color, so this rule
+ * softens the background from mauve to a neutral surface tone. The label
+ * column carries no color of its own, so on the cursor row it falls back
+ * to this rule's foreground -- set to $foreground rather than the theme's
+ * near-black block-cursor foreground so the object/check name stays
+ * legible on the surface tint. ID selectors (not a shared class) so this
+ * beats the default CSS's own :focus-scoped rule regardless of focus
+ * state.
  */
 #dashboard-grid > .datatable--cursor,
 #object-detail-grid > .datatable--cursor {
     background: $surface2 50%;
+    color: $foreground;
 }
 
 /* Home dashboard */
