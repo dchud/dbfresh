@@ -22,7 +22,7 @@ from textual.notifications import SeverityLevel
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import Worker, WorkerState
 
-from dbfresh.config import Config, load_config
+from dbfresh.config import Config, load_config_tolerant
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid, status_legend
@@ -181,7 +181,13 @@ class DbfreshApp(App):
         self.refresh_dashboard()
 
     def _reload_config(self) -> None:
-        self.config = load_config(self.config_path)
+        # Tolerant, like cli._ui_command's initial load: a reload (after a
+        # Configure write, or the no-initial-config path) keeps working
+        # when a ${VAR} secret is still unset, refreshing missing_secrets
+        # for the banner rather than raising and leaving the dashboard
+        # stuck behind a "reload failed" toast.
+        self.config, missing = load_config_tolerant(self.config_path)
+        self.missing_secrets = tuple(sorted(missing))
 
     def _require_config(self) -> Config:
         """``self.config``, guaranteed set: every caller runs after ``on_mount``."""
@@ -224,6 +230,10 @@ class DbfreshApp(App):
         table.display = not empty
         self.query_one("#status-legend", Static).display = not empty
         self.query_one("#empty-state", Static).display = empty
+
+        banner = self.query_one(f"#{_MISSING_SECRETS_ID}", Static)
+        banner.update(self._missing_secrets_text())
+        banner.display = bool(self.missing_secrets)
 
     def action_run_checks(self) -> None:
         """Start a check run in a worker thread; the UI stays responsive."""

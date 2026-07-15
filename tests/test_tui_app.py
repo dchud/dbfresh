@@ -208,6 +208,26 @@ def test_missing_secrets_banner_hidden_when_nothing_missing(tmp_path):
     asyncio.run(scenario())
 
 
+def test_reload_tolerates_missing_secrets_when_no_initial_config(tmp_path, monkeypatch):
+    """The no-initial-config path -- on_mount's own _reload_config -- loads
+    tolerantly: an unset ${VAR} leaves the app running with the banner rather
+    than raising on reload (a plain load would raise on mount here)."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _undefined_var_config(tmp_path / "config.yaml", db)
+        monkeypatch.delenv("DB_PASSWORD", raising=False)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert "DB_PASSWORD" in app.missing_secrets
+            assert app.query_one("#missing-secrets-banner", Static).display
+
+    asyncio.run(scenario())
+
+
 def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypatch):
     async def scenario():
         from dbfresh.config import load_config as real_load_config
@@ -220,9 +240,11 @@ def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypa
         preloaded = real_load_config(cfg)
 
         def fail_if_called(path):
-            raise AssertionError("load_config must not run again at mount time")
+            raise AssertionError(
+                "load_config_tolerant must not run again at mount time"
+            )
 
-        monkeypatch.setattr("dbfresh.tui.app.load_config", fail_if_called)
+        monkeypatch.setattr("dbfresh.tui.app.load_config_tolerant", fail_if_called)
 
         app = DbfreshApp(
             config_path=cfg, store_path=str(store_path), initial_config=preloaded
