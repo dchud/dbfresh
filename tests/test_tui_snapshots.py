@@ -155,6 +155,23 @@ def test_home_dashboard_shows_mixed_statuses(snap_compare, tmp_path, monkeypatch
     assert snap_compare(app, terminal_size=_TERMINAL_SIZE)
 
 
+def test_object_detail_screen_shows_check_grid_and_legend(
+    snap_compare, tmp_path, monkeypatch
+):
+    monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
+    monkeypatch.setattr("dbfresh.tui.screens.datetime", _FrozenDateTime)
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
+    cfg_path, store_path = _build_fixture(tmp_path)
+    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
+
+    # Home grid: orders_db.orders is the first row -- enter drills into its
+    # checks, the same drill-in test_history_screen_shows_trend goes one
+    # hop further from. This one stops here, so the drill-in grid's own
+    # "check" column label and status legend are captured directly rather
+    # than only implied by a screen two hops downstream.
+    assert snap_compare(app, press=("enter",), terminal_size=_TERMINAL_SIZE)
+
+
 def _crafted_run_result() -> RunResult:
     """A hand-built run result with a mix of statuses, standing in for a
     real run so the report digest is exercised without touching a source

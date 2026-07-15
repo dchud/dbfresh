@@ -287,10 +287,14 @@ def test_selecting_a_check_row_opens_history_with_its_observations(tmp_path):
             await pilot.pause()
 
             assert isinstance(app.screen, HistoryScreen)
-            text = app.screen.query_one("#history-text").content
-            assert "3.0" in str(text)
-            assert "5.0" in str(text)
-            assert cid in str(text)
+            text = str(app.screen.query_one("#history-text").content)
+            # row_count is an integer metric -- formatted like the digest
+            # (plain "3"/"5"), not the raw stored float ("3.0"/"5.0").
+            assert f"{'3':<16}" in text
+            assert f"{'5':<16}" in text
+            assert "3.0" not in text
+            assert "5.0" not in text
+            assert cid in text
 
     asyncio.run(scenario())
 
