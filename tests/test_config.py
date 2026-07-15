@@ -1,6 +1,11 @@
 import pytest
 
-from dbfresh.config import ConfigError, interpolate_env, load_config
+from dbfresh.config import (
+    ConfigError,
+    interpolate_env,
+    load_config,
+    load_config_tolerant,
+)
 
 
 def test_interpolate_env_replaces_var():
@@ -376,6 +381,93 @@ checks:
     cfg = load_config(path, env={"DB_PATH": ":memory:", "REGION": "US"})
     assert cfg.sources["s"].params["database"] == ":memory:"
     assert cfg.checks[0].where == "region = 'US'"
+
+
+def test_load_config_tolerant_collects_missing_vars_without_raising(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: "${DB_PATH}" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    config, missing = load_config_tolerant(path, env={})
+    assert missing == frozenset({"DB_PATH"})
+    # The token is left literal rather than resolved -- a check against
+    # this source comes back ERROR at run time instead of the load itself
+    # crashing.
+    assert config.sources["s"].params["database"] == "${DB_PATH}"
+
+
+def test_load_config_tolerant_no_missing_vars_returns_empty_set(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    config, missing = load_config_tolerant(path, env={})
+    assert missing == frozenset()
+    assert config.sources["s"].params["database"] == ":memory:"
+
+
+def test_load_config_tolerant_still_raises_on_broken_config(tmp_path):
+    # Undefined-variable tolerance is narrow: a genuinely broken config
+    # (here, a reference to an unknown source) is not a missing-variable
+    # problem and still raises, exactly like load_config.
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: ":memory:" }
+checks:
+  - source: other
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config_tolerant(path, env={})
+    assert "unknown source" in str(excinfo.value)
+
+
+def test_load_config_tolerant_still_raises_on_invalid_yaml(tmp_path):
+    path = _write(tmp_path, "sources: [this is not: valid: yaml\n")
+    with pytest.raises(ConfigError):
+        load_config_tolerant(path, env={})
+
+
+def test_load_config_tolerant_missing_var_and_broken_config_still_raises(tmp_path):
+    # A config can have both problems at once -- the non-variable
+    # validation error still wins (raises) even though a variable is also
+    # undefined, since tolerance covers only the undefined-variable case.
+    path = _write(
+        tmp_path,
+        """
+sources:
+  s: { type: sqlite, database: "${DB_PATH}" }
+checks:
+  - source: other
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+    with pytest.raises(ConfigError) as excinfo:
+        load_config_tolerant(path, env={})
+    assert "unknown source" in str(excinfo.value)
 
 
 def test_duplicate_check_id_differing_only_by_where_names_metric(tmp_path):

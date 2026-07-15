@@ -50,6 +50,40 @@ def test_command_reports_config_error_cleanly(tmp_path, capsys, argv_prefix):
     assert "Traceback" not in captured.err
 
 
+def _write_undefined_var_config(tmp_path):
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        'sources:\n  s: { type: sqlite, database: "${DB_PASSWORD}" }\nchecks: []\n'
+    )
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "argv_prefix",
+    [["run"], ["history", "dbo.fct_sales"], ["prune"], ["add"]],
+    ids=["run", "history", "prune", "add"],
+)
+def test_command_reports_undefined_secret_var_cleanly(
+    tmp_path, capsys, monkeypatch, argv_prefix
+):
+    # `ui` is the one exception (see test_cli_ui.py's
+    # test_ui_command_starts_with_undefined_secret_var): every other
+    # config-reading command still hard-errors on an undefined ${VAR}
+    # secret -- a CLI run against an unresolved secret should fail
+    # clearly, not silently query the wrong thing.
+    cfg = _write_undefined_var_config(tmp_path)
+    monkeypatch.delenv("DB_PASSWORD", raising=False)
+
+    code = main([*argv_prefix, "-c", str(cfg)])
+
+    captured = capsys.readouterr()
+    assert code == 3
+    assert captured.err.strip() == (
+        "config error: undefined environment variable: DB_PASSWORD"
+    )
+    assert "Traceback" not in captured.err
+
+
 def test_run_missing_config_file_reports_cleanly(tmp_path, capsys):
     missing = tmp_path / "does_not_exist.yaml"
 

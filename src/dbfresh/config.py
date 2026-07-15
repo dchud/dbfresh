@@ -287,23 +287,18 @@ def _read_included_file(
     return _load_included_checks(raw, path)
 
 
-def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
-    """Parse a YAML config, interpolate secrets, and validate references.
-
-    Supports composition: the root config's ``include:`` list of
-    path globs, resolved relative to the root config's directory, whose
-    matched files each contribute a ``checks:`` list merged with the root
-    file's own. The composed check list is validated as one unit, so a
-    duplicate ``check_id`` anywhere across the root and included files is a
-    validation error.
-
-    Every load, parse, or validation failure surfaces as a single
-    :class:`ConfigError`, chained from its underlying cause -- a missing
-    or unreadable file, a YAML parse error, a missing required field, an
-    invalid expectation, or any of the validation checks below.
+def _load_config_or_raise(
+    path: str | Path, env: dict[str, str] | None, collect_missing: bool
+) -> tuple[Config, frozenset[str]]:
+    """Shared exception-translation boundary for :func:`load_config` and
+    :func:`load_config_tolerant` -- both call :func:`_load_config` and
+    turn every failure mode into a single :class:`ConfigError`, chained
+    from its underlying cause: a missing or unreadable file, a YAML parse
+    error, a missing required field, an invalid expectation, or any of
+    the validation checks in :func:`_validate_checks` / :func:`_validate_sources`.
     """
     try:
-        return _load_config(path, env)
+        return _load_config(path, env, collect_missing=collect_missing)
     except ConfigError:
         raise
     except FileNotFoundError as exc:
@@ -318,6 +313,52 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
         raise ConfigError(f"invalid expectation: {exc}") from exc
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+
+
+def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
+    """Parse a YAML config, interpolate secrets, and validate references.
+
+    Supports composition: the root config's ``include:`` list of
+    path globs, resolved relative to the root config's directory, whose
+    matched files each contribute a ``checks:`` list merged with the root
+    file's own. The composed check list is validated as one unit, so a
+    duplicate ``check_id`` anywhere across the root and included files is a
+    validation error.
+
+    Every load, parse, or validation failure surfaces as a single
+    :class:`ConfigError`, chained from its underlying cause -- a missing
+    or unreadable file, a YAML parse error, a missing required field, an
+    invalid expectation, or any of the validation checks below, including
+    an undefined ``${VAR}`` reference. See :func:`load_config_tolerant`
+    for the one caller (``dbfresh ui``) that needs an undefined variable
+    to not be fatal.
+    """
+    config, _missing = _load_config_or_raise(path, env, collect_missing=False)
+    return config
+
+
+def load_config_tolerant(
+    path: str | Path, env: dict[str, str] | None = None
+) -> tuple[Config, frozenset[str]]:
+    """Like :func:`load_config`, but an undefined ``${VAR}`` reference is
+    collected into the returned set instead of raising -- the affected
+    parameter keeps its literal ``${VAR}`` token rather than being
+    resolved. Every other failure mode (a missing or unreadable file, a
+    YAML parse error, a missing required field, an invalid expectation, or
+    any validation problem such as an unknown source reference or a
+    duplicate check_id) still raises :class:`ConfigError` exactly as
+    :func:`load_config` does -- this widens only the undefined-variable
+    case, nothing else.
+
+    Meant for ``dbfresh ui`` only: a shared config repo whose secrets
+    nobody has set yet is a normal first run, not a broken config, so the
+    TUI can launch and show what's missing instead of refusing to start.
+    Every other config-reading command (``run``/``history``/``prune``/
+    ``add``) keeps calling :func:`load_config` and still hard-errors on a
+    missing secret, since a CLI run against an unresolved secret should
+    fail clearly rather than silently query the wrong thing.
+    """
+    return _load_config_or_raise(path, env, collect_missing=True)
 
 
 def _validate_metric_fields(check: Check, label: str) -> list[ValueError]:
@@ -530,7 +571,17 @@ def _raise_validation_errors(errors: list[ValueError]) -> None:
     ) from errors[0]
 
 
-def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
+def _load_config(
+    path: str | Path,
+    env: dict[str, str] | None = None,
+    collect_missing: bool = False,
+) -> tuple[Config, frozenset[str]]:
+    """``collect_missing`` mirrors :func:`interpolate_env`'s own ``missing``
+    parameter: false (the default, used by :func:`load_config`) raises on
+    any undefined ``${VAR}``; true (used by :func:`load_config_tolerant`)
+    collects every undefined name into the returned set instead, leaving
+    the ``${VAR}`` token literal in place rather than resolving it.
+    """
     path = Path(path)
     config_dir = path.resolve().parent
     data = yaml.safe_load(path.read_text()) or {}
@@ -555,7 +606,7 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
         for include_path in resolve_includes(config_dir, include_patterns):
             raw_checks.extend(_read_included_file(include_path, env, missing))
 
-    if missing:
+    if missing and not collect_missing:
         names = ", ".join(sorted(missing))
         raise ConfigError(
             f"undefined environment variable: {names}"
@@ -591,10 +642,13 @@ def _load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     if errors:
         _raise_validation_errors(errors)
 
-    return Config(
-        sources=sources,
-        checks=checks,
-        config_dir=config_dir,
-        store=_parse_store(data.get("store")),
-        calendar=calendar,
+    return (
+        Config(
+            sources=sources,
+            checks=checks,
+            config_dir=config_dir,
+            store=_parse_store(data.get("store")),
+            calendar=calendar,
+        ),
+        frozenset(missing),
     )

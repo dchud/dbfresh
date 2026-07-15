@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +54,13 @@ _RUN_TOAST_SEVERITY: dict[Status, SeverityLevel] = {
 _EMPTY_STATE_MESSAGE = (
     "no checks configured yet -- press 'c' to configure a source and its checks"
 )
+
+_MISSING_SECRETS_ID = "missing-secrets-banner"
+# Its own glyph, not dashboard.status_glyph(Status.WARN) -- this banner
+# flags a config problem (an unset secret), never a check result, so it
+# is never built from the same lookup that renders OK/WARN/FAIL/ERROR/
+# SKIPPED on the grid, even where the character happens to coincide.
+_MISSING_SECRETS_GLYPH = "!"
 
 
 def _run_summary(run: RunResult) -> str:
@@ -104,6 +112,7 @@ class DbfreshApp(App):
         config_path: str | Path,
         store_path: str | None = None,
         initial_config: Config | None = None,
+        missing_secrets: Iterable[str] | None = None,
     ) -> None:
         """Build the app; ``initial_config``, when given, is used as-is at
         mount time instead of re-parsing ``config_path``.
@@ -114,6 +123,12 @@ class DbfreshApp(App):
         parsing the same unchanged file a second time. Omit it (the
         default) to have :meth:`on_mount` load it itself -- what every
         test that constructs ``DbfreshApp`` directly relies on.
+
+        ``missing_secrets`` names every ``${VAR}`` the config referenced
+        but couldn't resolve (``cli._ui_command`` loads tolerantly rather
+        than refusing to launch) -- shown as a banner on Home rather than
+        acted on here; a source whose params still hold a literal
+        ``${VAR}`` simply comes back ERROR the first time it's run.
         """
         super().__init__()
         # Textual bundles this theme (Catppuccin's own Macchiato hexes for
@@ -127,9 +142,22 @@ class DbfreshApp(App):
         self.store: Store | None = None
         self.last_run: RunResult | None = None
         self._rows_by_key: dict[str, GridRow] = {}
+        self.missing_secrets: tuple[str, ...] = tuple(
+            sorted(set(missing_secrets or ()))
+        )
+
+    def _missing_secrets_text(self) -> str:
+        names = ", ".join(self.missing_secrets)
+        return (
+            f"{_MISSING_SECRETS_GLYPH} secrets not set: {names} -- set them in a "
+            f".env file beside {self.config_path.name}, or export them"
+        )
 
     def compose(self) -> ComposeResult:
         yield Header()
+        banner = Static(self._missing_secrets_text(), id=_MISSING_SECRETS_ID)
+        banner.display = bool(self.missing_secrets)
+        yield banner
         yield DataTable(
             id=_GRID_ID,
             cursor_type="row",

@@ -55,6 +55,21 @@ Footer {
 
 /* Home dashboard */
 
+/* A config problem (an unset ${VAR} secret), never a check result --
+ * color comes from $warning (this theme's own yellow, bundled with
+ * catppuccin-macchiato) applied directly here, not by routing through
+ * dashboard.status_style/status_glyph, which are reserved for
+ * OK/WARN/FAIL/ERROR/SKIPPED on the grid itself. FAIL-red and
+ * ERROR-blue never appear on this banner under any circumstance.
+ * Hidden (banner.display in app.py) when nothing is missing.
+ */
+#missing-secrets-banner {
+    background: $mantle;
+    color: $warning;
+    text-style: bold;
+    padding: 0 1;
+}
+
 #dashboard-grid {
     margin: 1 1 0 1;
 }
