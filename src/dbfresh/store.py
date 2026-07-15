@@ -49,12 +49,23 @@ CREATE TABLE IF NOT EXISTS observation (
   value_text TEXT,
   status    TEXT    NOT NULL,
   observed_at TEXT  NOT NULL,
-  weekday   INTEGER NOT NULL
+  weekday   INTEGER NOT NULL,
+  expected  TEXT,
+  error     TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS ix_obs_checkid_time
   ON observation(check_id, observed_at);
 """
+
+# Observation columns added after the store's first release. The base
+# _SCHEMA (CREATE TABLE IF NOT EXISTS) creates them on a fresh file;
+# _migrate adds any a pre-existing store file is missing. Each stays
+# nullable and uses a STRICT-legal type, so existing rows need no backfill.
+_OBSERVATION_ADDED_COLUMNS = (
+    ("expected", "TEXT"),
+    ("error", "TEXT"),
+)
 
 # Sentinel run status between start_run and finish_run; never a Status value.
 _RUN_STARTED = "RUNNING"
@@ -142,7 +153,43 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add observation columns introduced after this store was created.
+
+        The base schema uses ``CREATE TABLE IF NOT EXISTS``, which never
+        alters a table that already exists, so a store file written before
+        a column existed keeps its old shape. Each missing column is added
+        with a nullable ``ALTER``; existing rows then read back ``NULL`` for
+        it, which every accessor already tolerates (rows come back as plain
+        dicts). Reconciles ``expected`` and ``error`` on ``observation``.
+        """
+        existing = self._observation_columns()
+        for name, column_type in _OBSERVATION_ADDED_COLUMNS:
+            if name in existing:
+                continue
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE observation ADD COLUMN {name} {column_type}"
+                )
+            except sqlite3.OperationalError:
+                # Another opener can add the column between the read above
+                # and this ALTER: WAL + busy_timeout let two overlapping
+                # `dbfresh run` processes open the same not-yet-migrated
+                # store at once, and both attempt the migration. A
+                # duplicate-column error then just means the other process
+                # won the race -- re-read and treat it as done. Any other
+                # ALTER failure still propagates.
+                if name not in self._observation_columns():
+                    raise
+
+    def _observation_columns(self) -> set[str]:
+        """The observation table's current column names."""
+        return {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(observation)")
+        }
 
     def start_run(
         self, git_sha: str | None = None, started_at: datetime | None = None
@@ -173,6 +220,21 @@ class Store:
         )
         self._conn.commit()
 
+    def latest_run(self) -> dict | None:
+        """The most recent completed run, or ``None`` when none has finished.
+
+        A run row opens with the ``_RUN_STARTED`` sentinel and a NULL
+        ``finished_at``; :meth:`finish_run` stamps both. Only finished runs
+        count here, so a caller rendering "last run: <status>" never
+        surfaces the in-progress sentinel. Ordered by ``run_id``, which is
+        monotonic in start order, so the highest is the most recent.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM run WHERE finished_at IS NOT NULL "
+            "ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()
+        return dict(row) if row else None
+
     def _insert_observation(
         self,
         run_id: int,
@@ -197,8 +259,9 @@ class Store:
         )
         self._conn.execute(
             "INSERT INTO observation (run_id, check_id, source, object, metric, "
-            "label, value, value_text, status, observed_at, weekday) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "label, value, value_text, status, observed_at, weekday, expected, "
+            "error) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 run_id,
                 result.check_id,
@@ -211,6 +274,8 @@ class Store:
                 Status(result.status).value,
                 observed_at.isoformat(),
                 weekday,
+                result.expected,
+                result.error,
             ),
         )
 

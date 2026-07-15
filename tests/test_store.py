@@ -522,3 +522,158 @@ def test_observation_table_is_strict_rejects_mistyped_value(tmp_path):
             "'2026-01-01T00:00:00Z', 3)"
         )
     store.close()
+
+
+def _legacy_store(db: Path) -> None:
+    """Write a store file with the observation schema as it stood before the
+    expected/error columns existed, plus one row, so a reopen exercises the
+    migration path against a real pre-existing file."""
+    conn = sqlite3.connect(str(db))
+    conn.executescript(
+        """
+        CREATE TABLE run (
+          run_id INTEGER PRIMARY KEY, started_at TEXT NOT NULL,
+          finished_at TEXT, status TEXT NOT NULL, git_sha TEXT
+        ) STRICT;
+        CREATE TABLE observation (
+          run_id INTEGER NOT NULL REFERENCES run(run_id),
+          check_id TEXT NOT NULL, source TEXT NOT NULL, object TEXT NOT NULL,
+          metric TEXT, label TEXT NOT NULL, value REAL, value_text TEXT,
+          status TEXT NOT NULL, observed_at TEXT NOT NULL, weekday INTEGER NOT NULL
+        ) STRICT;
+        """
+    )
+    conn.execute(
+        "INSERT INTO run (started_at, status) "
+        "VALUES ('2026-01-01T00:00:00+00:00', 'OK')"
+    )
+    conn.execute(
+        "INSERT INTO observation (run_id, check_id, source, object, metric, "
+        "label, value, value_text, status, observed_at, weekday) "
+        "VALUES (1, 'cid', 'src', 'obj', 'row_count', 'row_count', 5, NULL, "
+        "'OK', '2026-01-01T00:00:00+00:00', 3)"
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_migrate_adds_expected_and_error_to_a_legacy_store(tmp_path):
+    db = tmp_path / "obs.db"
+    _legacy_store(db)
+
+    store = Store(db)  # opening triggers _migrate
+    columns = {
+        row["name"] for row in store._conn.execute("PRAGMA table_info(observation)")
+    }
+    assert {"expected", "error"} <= columns
+    # The pre-existing row survives, reading back NULL for the new columns.
+    row = store._conn.execute(
+        "SELECT * FROM observation WHERE check_id = 'cid'"
+    ).fetchone()
+    assert row["value"] == 5
+    assert row["expected"] is None
+    assert row["error"] is None
+    store.close()
+
+
+def test_migrate_is_idempotent_on_a_current_store(tmp_path):
+    db = tmp_path / "obs.db"
+    Store(db).close()  # first open creates the current schema
+    store = Store(db)  # second open: columns already present, no error
+    columns = {
+        row["name"] for row in store._conn.execute("PRAGMA table_info(observation)")
+    }
+    assert {"expected", "error"} <= columns
+    store.close()
+
+
+def test_record_observation_persists_expected_and_error(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(
+            check_id="cid_fail",
+            status=Status.FAIL,
+            value=250,
+            expected="between 1 and 100",
+        ),
+    )
+    store.record_observation(
+        run_id,
+        _result(
+            check_id="cid_error",
+            status=Status.ERROR,
+            value=None,
+            error="connection refused",
+        ),
+    )
+    fail = store.latest_observation("cid_fail")
+    err = store.latest_observation("cid_error")
+    assert fail["expected"] == "between 1 and 100"
+    assert fail["error"] is None
+    assert err["expected"] is None
+    assert err["error"] == "connection refused"
+    store.close()
+
+
+def test_latest_run_returns_most_recent_completed_run(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    assert store.latest_run() is None  # nothing has finished yet
+    first = store.start_run(started_at=datetime(2026, 1, 1, tzinfo=UTC))
+    store.finish_run(
+        first, Status.OK, finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    )
+    second = store.start_run(started_at=datetime(2026, 1, 2, tzinfo=UTC))
+    store.finish_run(
+        second, Status.FAIL, finished_at=datetime(2026, 1, 2, 0, 1, tzinfo=UTC)
+    )
+    latest = store.latest_run()
+    assert latest["run_id"] == second
+    assert latest["status"] == "FAIL"
+    assert latest["finished_at"] is not None
+    store.close()
+
+
+def test_latest_run_skips_an_in_progress_run(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    done = store.start_run(started_at=datetime(2026, 1, 1, tzinfo=UTC))
+    store.finish_run(
+        done, Status.OK, finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    )
+    store.start_run(started_at=datetime(2026, 1, 2, tzinfo=UTC))  # started, unfinished
+    latest = store.latest_run()
+    assert latest is not None
+    assert latest["run_id"] == done
+    assert latest["status"] == "OK"
+    store.close()
+
+
+def test_migrate_tolerates_a_column_added_by_a_concurrent_opener(tmp_path, monkeypatch):
+    """A duplicate-column error from a racing opener is swallowed, not raised.
+
+    Forced deterministically: the store already has the new columns, but the
+    first ``table_info`` read is made to report an unrelated table's columns,
+    so ``_migrate`` believes expected/error are missing and attempts ALTERs
+    that conflict. The guard re-reads the real schema and continues.
+    """
+    db = tmp_path / "obs.db"
+    Store(db).close()  # current schema: expected + error already present
+
+    store = Store(db)
+    real_columns = store._observation_columns
+    calls = {"n": 0}
+
+    def stale_first():
+        calls["n"] += 1
+        # The first read (building `existing`) lies -- reports neither new
+        # column -- so _migrate attempts ALTERs that conflict with the
+        # columns already on disk; later reads (the guard's re-check) tell
+        # the truth.
+        if calls["n"] == 1:
+            return {"run_id", "check_id"}
+        return real_columns()
+
+    monkeypatch.setattr(store, "_observation_columns", stale_first)
+    store._migrate()  # must not raise despite the conflicting ALTERs
+    store.close()
