@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 import yaml
@@ -119,6 +120,7 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path):
             app.screen.query_one("#object-input").value = "fct"
 
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
@@ -155,6 +157,7 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.click("#accept-btn")
             await pilot.pause()
@@ -185,6 +188,7 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "v"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
@@ -212,6 +216,7 @@ def test_configure_screen_notes_when_engine_cannot_introspect_keys(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "t"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
@@ -235,6 +240,7 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
@@ -261,6 +267,7 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
             app.screen.query_one("#object-input").value = "fct"
             app.screen.query_one("#timestamp-input").value = "updated_at"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
@@ -294,14 +301,85 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-            # Did not crash: still on the Configure screen.
+            # Did not crash: still on the Configure screen, with an error
+            # toast rather than a crash -- Propose's connect failure runs
+            # through the same notify() channel as every other error on
+            # this screen (Save, Accept).
             assert isinstance(app.screen, ConfigureScreen)
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "could not connect" in proposal_text
+            messages = [n.message for n in app._notifications]
+            assert any("could not connect" in m for m in messages)
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
+
+    asyncio.run(scenario())
+
+
+def test_propose_runs_in_a_worker_thread_with_a_busy_state(tmp_path, monkeypatch):
+    """Propose's introspection (create_adapter + describe(), via
+    check_object_exists) runs off the main thread: while it's in flight,
+    the screen stays responsive (queryable, nothing yet mounted from a
+    result that hasn't arrived) rather than freezing on a slow/unreachable
+    source, and shows a busy state the whole time."""
+
+    async def scenario():
+        started = threading.Event()
+        release = threading.Event()
+
+        class _BlockingAdapter:
+            dialect = DatabricksDialect()
+
+            def scalar(self, sql):
+                return 1
+
+            def describe(self, obj):
+                started.set()
+                assert release.wait(timeout=2), "test never released describe()"
+                column = Column(
+                    name="id", type="INT", nullable=False, category=Category.NUMERIC
+                )
+                return ObjectInfo(columns=[column])
+
+            def close(self):
+                pass
+
+        monkeypatch.setitem(factory._ADAPTERS, "blocking", _BlockingAdapter)
+        monkeypatch.setitem(factory._DIALECTS, "blocking", DatabricksDialect)
+
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: blocking }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "t"
+            await pilot.click("#propose-btn")
+            await pilot.pause()
+
+            assert started.wait(timeout=2)
+            propose_btn = app.screen.query_one("#propose-btn", Button)
+            assert propose_btn.disabled
+            assert app.screen.sub_title == "proposing checks…"
+            assert not app.screen.query(Checkbox)  # nothing mounted yet
+
+            # The event loop kept servicing messages meanwhile -- the
+            # screen is still responsive to further queries.
+            assert isinstance(app.screen, ConfigureScreen)
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert not propose_btn.disabled
+            assert app.screen.sub_title is None
+            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
+            assert any("schema" in label for label in labels)
 
     asyncio.run(scenario())
 
@@ -335,6 +413,7 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.click("#accept-btn")
             await pilot.pause()
@@ -377,6 +456,7 @@ def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # Several included files match: the proposal names the one
@@ -412,10 +492,11 @@ def test_configure_screen_unknown_object_disables_accept(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "does_not_exist"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "not found" in proposal_text
+            messages = [n.message for n in app._notifications]
+            assert any("not found" in m for m in messages)
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
 
@@ -440,6 +521,7 @@ def test_configure_screen_cancel_button_writes_nothing(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pilot.click("#cancel-btn")
             await pilot.pause()
@@ -491,6 +573,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             freshness_cb = next(
@@ -526,6 +609,7 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # "sum" over the numeric "amount" column is offered but is not
@@ -620,6 +704,7 @@ def test_configure_screen_offered_check_value_is_written(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             value_input = app.screen.query_one(f"#offered-value-{column}-{metric}")
@@ -655,13 +740,13 @@ def test_configure_screen_offered_check_value_is_written(
         ),
     ],
 )
-def test_configure_screen_offered_check_invalid_value_shows_note(
+def test_configure_screen_offered_check_invalid_value_shows_error_toast(
     tmp_path, metric, build_table, column, invalid_value
 ):
     """An offered null_rate/freshness threshold that doesn't parse for its
-    metric is reported back as a note on the Configure screen -- the same
-    value formats the CLI wizard's prompt accepts -- rather than being
-    written, or crashing the screen."""
+    metric is reported back as an error toast -- the same value formats the
+    CLI wizard's prompt accepts -- rather than being written, or crashing
+    the screen."""
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -677,6 +762,7 @@ def test_configure_screen_offered_check_invalid_value_shows_note(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one(
@@ -686,10 +772,11 @@ def test_configure_screen_offered_check_invalid_value_shows_note(
             await pilot.click("#accept-btn")
             await pilot.pause()
 
-            # Did not crash: still on the Configure screen, with a note.
+            # Did not crash: still on the Configure screen, with an error
+            # toast.
             assert isinstance(app.screen, ConfigureScreen)
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert invalid_value in proposal_text
+            messages = [n.message for n in app._notifications]
+            assert any(invalid_value in m for m in messages)
 
         data = yaml.safe_load(cfg.read_text())
         assert data["checks"] == []
@@ -714,6 +801,7 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # ``modified_at`` already has a proposed freshness checkbox --
@@ -743,6 +831,7 @@ def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             for cb in app.screen.query(Checkbox):
@@ -803,6 +892,7 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # Every proposed checkbox starts checked, and every one of
@@ -857,6 +947,7 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # The offered null_rate threshold Input still defaults to the
@@ -920,6 +1011,7 @@ def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             existing = app.screen.query_one("#existing-checks")
@@ -943,6 +1035,7 @@ def test_configure_screen_existing_check_input_prefilled_with_current_value(tmp_
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             value_input = app.screen.query_one("#existing-value-0")
@@ -966,6 +1059,7 @@ def test_configure_screen_between_operator_check_is_read_only(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             # Only the row_count/max check (index 0) is editable -- the
@@ -993,6 +1087,7 @@ def test_configure_screen_save_existing_check_rewrites_expect_on_disk(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#existing-value-0").value = "500"
@@ -1028,6 +1123,7 @@ def test_configure_screen_save_existing_check_does_not_change_check_id(tmp_path)
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#existing-value-0").value = "500"
@@ -1063,6 +1159,7 @@ def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_d
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#existing-value-0").value = "not-a-number"
@@ -1092,6 +1189,7 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#existing-value-0").value = "500"
@@ -1138,6 +1236,7 @@ def test_configure_screen_proposed_freshness_has_a_value_input_prefilled_with_de
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             assert app.screen._proposed[2]["metric"] == "freshness"
@@ -1162,6 +1261,7 @@ def test_configure_screen_non_freshness_proposed_checks_have_no_value_input(tmp_
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             for i, block in enumerate(app.screen._proposed):
@@ -1188,6 +1288,7 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(tmp_path):
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#proposed-value-2").value = "48h"
@@ -1221,6 +1322,7 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#proposed-value-2").value = "not-a-duration"
@@ -1230,8 +1332,8 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
             # Errors keep the screen open rather than dismissing with a
             # partially-accepted bundle.
             assert isinstance(app.screen, ConfigureScreen)
-            text = str(app.screen.query_one("#proposal-text").content)
-            assert "invalid max lag" in text
+            messages = [n.message for n in app._notifications]
+            assert any("invalid max lag" in m for m in messages)
 
         assert cfg.read_text() == original_text
 
@@ -1253,6 +1355,7 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(tmp_pa
             app.screen.query_one("#source-select").value = "s"
             app.screen.query_one("#object-input").value = "fct"
             await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
 
             app.screen.query_one("#proposed-value-2").value = "not-a-duration"

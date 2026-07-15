@@ -9,22 +9,74 @@ live here.
 from __future__ import annotations
 
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.message import Message
+from textual.notifications import SeverityLevel
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, load_config
-from dbfresh.models import RunResult
+from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import GridRow, object_rows, populate_grid, status_legend
 
 _GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
+
+# Toast label and severity for a completed run's status counts, in the same
+# worst-to-least-severe order the status legend reads -- a zero count is
+# omitted rather than padding the summary with "0 skipped" noise.
+_RUN_STATUS_LABEL: dict[Status, str] = {
+    Status.OK: "ok",
+    Status.WARN: "warned",
+    Status.FAIL: "failed",
+    Status.ERROR: "unreachable",
+    Status.SKIPPED: "skipped",
+}
+_RUN_TOAST_SEVERITY: dict[Status, SeverityLevel] = {
+    Status.OK: "information",
+    Status.WARN: "warning",
+    Status.FAIL: "error",
+    Status.ERROR: "error",
+    Status.SKIPPED: "information",
+}
+
+
+def _run_summary(run: RunResult) -> str:
+    """A short "N ok, N failed, ..." toast summary of ``run``'s counts."""
+    counts = dict.fromkeys(Status, 0)
+    for result in run.results:
+        counts[result.status] += 1
+    parts = [
+        f"{counts[status]} {label}"
+        for status, label in _RUN_STATUS_LABEL.items()
+        if counts[status]
+    ]
+    return ", ".join(parts) if parts else "no checks ran"
+
+
+class RunProgress(Message):
+    """One check finished during an active run.
+
+    ``run_checks`` evaluates each source's checks on its own worker thread
+    (see ``dbfresh.engine.run_checks``) and calls ``on_result`` from
+    whichever of those threads just finished a check -- never the single
+    Textual thread worker that calls ``run_and_persist``. ``post_message``
+    is safe to call from any thread, unlike setting a reactive attribute or
+    touching a widget directly, so the progress callback posts one of
+    these per check instead of updating the header itself.
+    """
+
+    def __init__(self, count: int, total: int) -> None:
+        self.count = count
+        self.total = total
+        super().__init__()
 
 
 class DbfreshApp(App):
@@ -116,26 +168,72 @@ class DbfreshApp(App):
 
     @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP, exit_on_error=False)
     def _run_checks_worker(self) -> RunResult:
+        """Run every check, posting a :class:`RunProgress` message per
+        completed one along the way.
+
+        ``on_result`` (see ``dbfresh.runner.run_and_persist`` /
+        ``dbfresh.engine.run_checks``) fires from whichever per-source
+        worker thread just finished a check, potentially several at once
+        -- ``count`` is only ever mutated under ``lock``, and every update
+        reaches the UI via ``post_message`` rather than by touching a
+        widget or reactive attribute from these threads directly.
+        """
         from dbfresh.runner import run_and_persist
 
-        return run_and_persist(self._require_config(), self.store)
+        config = self._require_config()
+        total = len(config.checks)
+        lock = threading.Lock()
+        count = 0
+
+        def on_result(_result: Result) -> None:
+            nonlocal count
+            with lock:
+                count += 1
+                current = count
+            self.post_message(RunProgress(current, total))
+
+        return run_and_persist(config, self.store, on_result=on_result)
+
+    def on_run_progress(self, message: RunProgress) -> None:
+        self.sub_title = f"running checks: {message.count}/{message.total}"
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
 
         A run that gets cancelled (superseded by a later keypress on an
         exclusive worker group) leaves the dashboard and ``last_run``
-        untouched rather than raising. A run that errors (store locked
-        past its busy timeout, disk full, etc.) is caught the same way --
+        untouched rather than raising -- surfaced as a brief notice instead
+        of cancelling silently. A run that errors (store locked past its
+        busy timeout, disk full, etc.) is caught the same way --
         ``exit_on_error=False`` on the worker keeps the exception from
         tearing down the whole app -- and is instead surfaced as an error
         toast, again leaving the dashboard and ``last_run`` untouched.
         """
         if event.worker.group != _RUN_WORKER_GROUP:
             return
+        if event.state == WorkerState.RUNNING:
+            self.sub_title = "running checks…"
+            return
+        if event.state == WorkerState.CANCELLED:
+            self.notify(
+                "run cancelled -- a newer run started",
+                title="Run cancelled",
+                severity="warning",
+            )
+            return
+
+        self.sub_title = ""
         if event.state == WorkerState.SUCCESS:
-            self.last_run = event.worker.result
+            run = event.worker.result
+            assert run is not None
+            self.last_run = run
             self.refresh_dashboard()
+            self._refresh_topmost_screen()
+            self.notify(
+                _run_summary(run),
+                title="Run complete",
+                severity=_RUN_TOAST_SEVERITY[run.status],
+            )
         elif event.state == WorkerState.ERROR:
             self.notify(
                 f"check run failed: {event.worker.error}",
@@ -143,6 +241,24 @@ class DbfreshApp(App):
                 severity="error",
                 timeout=10,
             )
+
+    def _refresh_topmost_screen(self) -> None:
+        """Refresh whichever pushed screen is on top, if it shows run data.
+
+        ``refresh_dashboard`` above only ever touches the Home grid --
+        ``App.query_one`` always queries the default screen, never
+        whichever screen is actually active (see ``App._get_dom_base``) --
+        so a screen pushed on top of Home (``ObjectDetailScreen``,
+        ``ReportScreen``) needs its own refresh call to pick up a run that
+        completed while it was showing, rather than only updating once the
+        user pops back to Home and back in.
+        """
+        from dbfresh.tui.screens import ObjectDetailScreen, ReportScreen
+
+        if isinstance(self.screen, ObjectDetailScreen):
+            self.screen.refresh_grid()
+        elif isinstance(self.screen, ReportScreen):
+            self.screen.refresh_report(self.last_run)
 
     def action_configure(self) -> None:
         from dbfresh.tui.configure import ConfigureScreen

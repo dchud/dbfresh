@@ -9,8 +9,10 @@ observation store.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -25,10 +27,11 @@ from textual.widgets import (
     Select,
     Static,
 )
+from textual.worker import Worker, WorkerState
 
 from dbfresh.adapters.base import Column
 from dbfresh.checks import Check, check_id, parse_duration
-from dbfresh.config import Config
+from dbfresh.config import Config, SourceConfig
 from dbfresh.configurator import (
     append_checks,
     build_offered_check,
@@ -43,6 +46,8 @@ from dbfresh.configurator import (
 )
 from dbfresh.tui.dashboard import check_label
 
+_PROPOSE_WORKER_GROUP = "propose"
+
 _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 
 # Threshold-bearing offered metrics get a value Input beside their checkbox,
@@ -56,6 +61,30 @@ _OFFERED_VALUE_DEFAULTS: dict[str, str] = {"null_rate": "0.05", "freshness": "24
 # need more than one Input's worth of UI, so v1 shows those read-only
 # rather than build a bespoke form per shape.
 _NON_EDITABLE_OPERATORS = frozenset({"between", "unchanged", "vs_previous"})
+
+
+@dataclass
+class _ProposeOutcome:
+    """What :meth:`ConfigureScreen._propose_worker` hands back to the main
+    thread, off of which :meth:`ConfigureScreen.on_worker_state_changed`
+    mounts widgets.
+
+    ``error``, when set, is the only field that matters -- a connect
+    failure or a missing object aborts the proposal before anything else
+    is known, and every other field is left at its default. Otherwise
+    every field the main thread needs to mount the existing/proposed/
+    offered-checks widgets and the review notes, none of which the worker
+    itself may touch directly (see :meth:`ConfigureScreen._propose_worker`).
+    """
+
+    error: str | None = None
+    source_name: str = ""
+    object_name: str = ""
+    columns: list[Column] = field(default_factory=list)
+    has_calendar: bool = False
+    proposed: list[dict] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    target_file: Path | None = None
 
 
 def _id_part(value: str) -> str:
@@ -157,6 +186,7 @@ class ConfigureScreen(Screen[bool]):
         self.query_one("#existing-checks", Vertical).remove_children()
         self.query_one("#proposed-checks", Vertical).remove_children()
         self.query_one("#offered-checks", Vertical).remove_children()
+        self.query_one("#proposal-text", Static).update("")
         self.query_one("#accept-btn", Button).disabled = True
 
     def _mount_proposed_checkboxes(self) -> None:
@@ -321,49 +351,75 @@ class ConfigureScreen(Screen[bool]):
         self.notify(f"saved {check_label(check)}")
 
     def _propose(self) -> None:
-        from dbfresh.adapters.factory import create_adapter
+        """Validate the form, then hand introspection off to a worker thread.
 
-        proposal_widget = self.query_one("#proposal-text", Static)
-        self._reset_proposal()
-
+        Everything here runs on the main thread and touches only cheap,
+        already-in-memory state (widget values, ``self._config``) -- the
+        network I/O (``create_adapter``, ``describe()`` via
+        ``check_object_exists``) happens in :meth:`_propose_worker`
+        instead, so a slow or unreachable source never blocks the UI. A
+        source that isn't selected or doesn't exist is caught here, before
+        a worker is even started, since neither needs a connection to
+        detect.
+        """
         select = self.query_one("#source-select", Select)
         if select.value is Select.BLANK:
-            proposal_widget.update("select a source")
+            self.notify("select a source", severity="error")
             return
         source_name = str(select.value)
         object_name = self.query_one("#object-input", Input).value.strip()
+        timestamp_entered = self.query_one("#timestamp-input", Input).value.strip()
 
         source = self._config.sources.get(source_name)
         if source is None:
-            proposal_widget.update(f"unknown source: {source_name!r}")
+            self.notify(f"unknown source: {source_name!r}", severity="error")
             return
+
+        self._reset_proposal()
+        self.query_one("#propose-btn", Button).disabled = True
+        self._propose_worker(source_name, object_name, timestamp_entered, source)
+
+    @work(thread=True, exclusive=True, group=_PROPOSE_WORKER_GROUP, exit_on_error=False)
+    def _propose_worker(
+        self,
+        source_name: str,
+        object_name: str,
+        timestamp_entered: str,
+        source: SourceConfig,
+    ) -> _ProposeOutcome:
+        """Introspect ``source_name``.``object_name`` off the Textual
+        thread and build the proposal bundle from it.
+
+        Runs on a worker thread (mirrors ``DbfreshApp._run_checks_worker``):
+        ``create_adapter`` and ``describe()`` (via ``check_object_exists``)
+        block on network I/O, which must never run on the UI thread. This
+        method touches no widget -- it returns a plain-data
+        :class:`_ProposeOutcome`; :meth:`on_worker_state_changed` does the
+        actual mounting back on the main thread off of that return value.
+        """
+        from dbfresh.adapters.factory import create_adapter
 
         try:
             adapter = create_adapter(source.type, source.params, timeout=source.timeout)
         except Exception as exc:
-            proposal_widget.update(f"could not connect to {source_name!r}: {exc}")
-            return
+            return _ProposeOutcome(error=f"could not connect to {source_name!r}: {exc}")
 
         try:
             existence = check_object_exists(adapter, object_name)
             if not existence.exists:
-                proposal_widget.update(
-                    f"object not found: {object_name!r} ({existence.error})"
+                return _ProposeOutcome(
+                    error=f"object not found: {object_name!r} ({existence.error})"
                 )
-                return
             # existence.exists is only True when describe() succeeded, which
             # is exactly when info is populated (see ExistenceCheck).
             assert existence.info is not None
-
-            self._mount_existing_checks(source_name, object_name)
 
             ambiguity_note = None
             timestamp_override = None
             timestamp = pick_timestamp_column(existence.info.columns)
             if timestamp.needs_choice:
-                entered = self.query_one("#timestamp-input", Input).value.strip()
-                if entered in timestamp.candidates:
-                    timestamp_override = entered
+                if timestamp_entered in timestamp.candidates:
+                    timestamp_override = timestamp_entered
                 else:
                     ambiguity_note = (
                         "ambiguous timestamp candidates: "
@@ -372,8 +428,7 @@ class ConfigureScreen(Screen[bool]):
                     )
 
             has_calendar = self._config.calendar is not None
-            self._has_calendar = has_calendar
-            self._proposed = propose_checks(
+            proposed = propose_checks(
                 source_name,
                 object_name,
                 existence.info,
@@ -383,13 +438,9 @@ class ConfigureScreen(Screen[bool]):
                 timestamp_override=timestamp_override,
             )
             key_note = key_introspection_note(adapter.dialect, existence.info)
-            self._mount_proposed_checkboxes()
-            self._mount_offered_checkboxes(
-                source_name,
-                object_name,
-                existence.info.columns,
-                has_calendar,
-                self._proposed,
+            offered_count = sum(
+                len(offer["checks"])
+                for offer in offered_column_checks(existence.info.columns, proposed)
             )
         finally:
             adapter.close()
@@ -401,16 +452,77 @@ class ConfigureScreen(Screen[bool]):
             notes.append(ambiguity_note)
 
         files = target_files(self._config_path)
-        self._target_file = files[0] if files else self._config_path
+        target_file = files[0] if files else self._config_path
         if len(files) > 1:
-            notes.append(
-                f"writing to {self._target_file} (of {len(files)} included files)"
-            )
+            notes.append(f"writing to {target_file} (of {len(files)} included files)")
 
-        if not notes and not self._proposed and not self._offered_blocks:
+        if not notes and not proposed and not offered_count:
             notes.append("no checks proposed")
 
-        proposal_widget.update("\n".join(notes))
+        return _ProposeOutcome(
+            source_name=source_name,
+            object_name=object_name,
+            columns=existence.info.columns,
+            has_calendar=has_calendar,
+            proposed=proposed,
+            notes=notes,
+            target_file=target_file,
+        )
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Pick up ``_propose_worker``'s outcome and mount widgets from it.
+
+        Mirrors ``DbfreshApp.on_worker_state_changed``: the introspection
+        already ran off-thread in ``_propose_worker``; every widget touch
+        below -- mounting the existing/proposed/offered-checks sections,
+        updating the notes panel and the Accept button -- runs here, back
+        on the main thread, off of ``event.worker.result`` (or, on an
+        unexpected exception, ``event.worker.error``) rather than from
+        inside the worker itself.
+        """
+        if event.worker.group != _PROPOSE_WORKER_GROUP:
+            return
+        if event.state == WorkerState.RUNNING:
+            self.sub_title = "proposing checks…"
+            return
+        if event.state not in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            return
+
+        self.sub_title = None
+        self.query_one("#propose-btn", Button).disabled = False
+
+        if event.state == WorkerState.CANCELLED:
+            # Superseded by a later Propose click on this exclusive worker
+            # group; the newer click already reset the widgets it cares
+            # about, so there's nothing stale here to clean up.
+            return
+        if event.state == WorkerState.ERROR:
+            self.notify(f"propose failed: {event.worker.error}", severity="error")
+            return
+
+        outcome = event.worker.result
+        assert outcome is not None
+        if outcome.error is not None:
+            self.notify(outcome.error, severity="error")
+            return
+
+        self._mount_existing_checks(outcome.source_name, outcome.object_name)
+        self._has_calendar = outcome.has_calendar
+        self._proposed = outcome.proposed
+        self._mount_proposed_checkboxes()
+        self._mount_offered_checkboxes(
+            outcome.source_name,
+            outcome.object_name,
+            outcome.columns,
+            outcome.has_calendar,
+            outcome.proposed,
+        )
+        self._target_file = outcome.target_file
+        self.query_one("#proposal-text", Static).update("\n".join(outcome.notes))
         self.query_one("#accept-btn", Button).disabled = not self._proposed
 
     def _rebuild_offered_check(
@@ -522,7 +634,9 @@ class ConfigureScreen(Screen[bool]):
     def _accept(self) -> None:
         selected, errors = self._selected_checks()
         if errors:
-            self.query_one("#proposal-text", Static).update("\n".join(errors))
+            self.notify(
+                "\n".join(errors), title="Invalid check value", severity="error"
+            )
             return
         if not selected:
             return

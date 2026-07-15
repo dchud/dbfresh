@@ -94,6 +94,17 @@ class ReportScreen(Screen):
         yield VerticalScroll(Static(body, id="report-text", markup=False))
         yield Footer()
 
+    def refresh_report(self, run: RunResult | None) -> None:
+        """Re-render from ``run`` -- the app's Run action calls this on a
+        completed run when this screen is the one currently on top, since
+        ``compose`` above only ever renders once, at push time, off of
+        whatever ``run`` its constructor was given."""
+        self._run = run
+        body: str | Text = (
+            _colorized_digest(run, tz=self._tz) if run is not None else _NO_RUN_MESSAGE
+        )
+        self.query_one("#report-text", Static).update(body)
+
     def action_dismiss_screen(self) -> None:
         self.app.pop_screen()
 
@@ -179,6 +190,14 @@ class ObjectDetailScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.refresh_grid()
+
+    def refresh_grid(self) -> None:
+        """(Re)populate this object's check grid from the store's current
+        observations -- also called by the app's Run action when this
+        screen is the one currently on top of a just-completed run, so its
+        statuses update without the user having to pop back to Home and
+        back in."""
         table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
         today = datetime.now(self._tz or UTC).date()
         rows = check_rows(
