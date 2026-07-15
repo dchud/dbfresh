@@ -131,7 +131,16 @@ class DbfreshApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         yield DataTable(
-            id=_GRID_ID, cursor_type="row", zebra_stripes=True, cell_padding=2
+            id=_GRID_ID,
+            cursor_type="row",
+            zebra_stripes=True,
+            cell_padding=2,
+            # A status cell's own Rich style (status_style) sets its own
+            # foreground -- "renderable" lets that survive on the cursor
+            # row instead of the cursor's CSS color forcing every cell on
+            # the selected row to one flat color, which would erase the
+            # OK/WARN/FAIL/... encoding at exactly the row under focus.
+            cursor_foreground_priority="renderable",
         )
         yield Static(status_legend(), id="status-legend")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
