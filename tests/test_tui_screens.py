@@ -88,3 +88,19 @@ def test_colorized_history_fail_and_error_stay_visually_distinct():
         if "ERROR" in text.plain[span.start : span.end]
     )
     assert fail_style != error_style
+
+
+def test_colorized_history_aligns_the_value_column_including_skipped():
+    """The value column starts at the same position on every row. The
+    "glyph SKIPPED" cell is one char wider than the others, so without the
+    widened status field the SKIPPED row's value would drift right of the
+    rest."""
+    rows = [
+        _row("2026-07-08T00:00:00+00:00", "OK", 10000.0),
+        _row("2026-07-09T00:00:00+00:00", "SKIPPED", 10000.0),
+    ]
+    ok_line, skipped_line = _colorized_history(_CANDIDATE, rows, tz=None).plain.split(
+        "\n"
+    )[-2:]
+    assert "OK" in ok_line and "SKIPPED" in skipped_line
+    assert ok_line.index("10000") == skipped_line.index("10000")

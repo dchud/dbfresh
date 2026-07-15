@@ -105,13 +105,26 @@ def _colorized_history(candidate: dict, rows: list[dict], tz: tzinfo | None) -> 
     else:
         header_lines, data_lines = lines, []
 
-    styled = [Text(line) for line in header_lines]
     status_start = _HISTORY_OBSERVED_WIDTH + 1
     status_end = status_start + _HISTORY_STATUS_WIDTH
+    # "glyph status" runs up to two chars wider than the bare status word --
+    # "– SKIPPED" is 9, one past render_history's 8-char status field -- so
+    # give the styled cells one extra column and widen the column header's
+    # status slot to match, keeping the value column aligned on every row,
+    # SKIPPED included.
+    field = _HISTORY_STATUS_WIDTH + 1
+    styled = [Text(line) for line in header_lines]
+    if rows:
+        header = header_lines[-1]
+        styled[-1] = Text(
+            header[:status_start]
+            + header[status_start:status_end].ljust(field)
+            + header[status_end:]
+        )
     for row, line in zip(rows, data_lines, strict=True):
         status = Status(row["status"])
         entry = Text(line[:status_start])
-        label = f"{status_glyph(status)} {status}".ljust(_HISTORY_STATUS_WIDTH)
+        label = f"{status_glyph(status)} {status}".ljust(field)
         entry.append(label, style=status_style(status))
         entry.append(line[status_end:])
         styled.append(entry)
