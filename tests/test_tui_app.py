@@ -207,7 +207,7 @@ def test_home_hides_last_run_line_with_no_completed_run(tmp_path):
     asyncio.run(scenario())
 
 
-def test_home_shows_last_run_line_after_a_completed_run(tmp_path):
+def test_home_shows_last_run_line_after_a_completed_run(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -222,6 +222,9 @@ def test_home_shows_last_run_line_after_a_completed_run(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: app.query_one("#last-run-line", Static).display
+            )
 
             # row_count passes, null_rate fails -- see _seed_db / _config.
             widget = app.query_one("#last-run-line", Static)
@@ -341,7 +344,7 @@ def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypa
     asyncio.run(scenario())
 
 
-def test_run_action_updates_dashboard_from_new_observations(tmp_path):
+def test_run_action_updates_dashboard_from_new_observations(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -361,6 +364,15 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
             # wait for it to finish before asserting on its results.
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    _overall_glyph(
+                        app.query_one("#dashboard-grid", DataTable), _OBJECT_ROW_KEY
+                    )
+                    == "✗"
+                ),
+            )
 
             table = app.query_one("#dashboard-grid", DataTable)
             assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # null_rate fails
@@ -380,6 +392,7 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path):
 def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
     tmp_path,
     monkeypatch,
+    pump_until,
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -421,6 +434,7 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
@@ -430,7 +444,9 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
     asyncio.run(scenario())
 
 
-def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
+def test_run_action_error_notifies_and_leaves_app_alive(
+    tmp_path, monkeypatch, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -451,6 +467,10 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any("store locked" in n.message for n in app._notifications),
+            )
 
             # The app survived the worker error rather than being torn
             # down, and the dashboard/last_run are untouched.
@@ -464,7 +484,7 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_run_action_success_toast_summarizes_counts(tmp_path):
+def test_run_action_success_toast_summarizes_counts(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -478,6 +498,13 @@ def test_run_action_success_toast_summarizes_counts(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "1 ok" in n.message and "1 failed" in n.message
+                    for n in app._notifications
+                ),
+            )
 
             # row_count passes (3 rows, between 1 and 10) and null_rate
             # fails (2 of 3 emails null, over the 0.1 max) -- see _seed_db
@@ -488,7 +515,9 @@ def test_run_action_success_toast_summarizes_counts(tmp_path):
     asyncio.run(scenario())
 
 
-def test_run_action_wires_per_check_progress_into_the_header(tmp_path, monkeypatch):
+def test_run_action_wires_per_check_progress_into_the_header(
+    tmp_path, monkeypatch, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -511,6 +540,7 @@ def test_run_action_wires_per_check_progress_into_the_header(tmp_path, monkeypat
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: seen == [(1, 2), (2, 2)])
 
             # Two checks configured on the same source, evaluated serially
             # on that source's one connection (see dbfresh.engine.run_checks)
@@ -520,7 +550,9 @@ def test_run_action_wires_per_check_progress_into_the_header(tmp_path, monkeypat
     asyncio.run(scenario())
 
 
-def test_run_action_second_press_cancels_first_with_a_notice(tmp_path, monkeypatch):
+def test_run_action_second_press_cancels_first_with_a_notice(
+    tmp_path, monkeypatch, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -566,6 +598,7 @@ def test_run_action_second_press_cancels_first_with_a_notice(tmp_path, monkeypat
             release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             # The second run still completed normally.
             assert app.last_run is not None
@@ -574,7 +607,7 @@ def test_run_action_second_press_cancels_first_with_a_notice(tmp_path, monkeypat
     asyncio.run(scenario())
 
 
-def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path):
+def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -593,6 +626,15 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    _overall_glyph(
+                        app.screen.query_one(DataTable), check_id(_row_count_check())
+                    )
+                    == "✓"
+                ),
+            )
 
             # Still on the same screen -- no esc + re-enter needed -- and
             # its grid reflects the run that just completed.
@@ -744,7 +786,7 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
     asyncio.run(scenario())
 
 
-def test_report_screen_uses_calendar_timezone(tmp_path):
+def test_report_screen_uses_calendar_timezone(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -761,6 +803,7 @@ def test_report_screen_uses_calendar_timezone(tmp_path):
             # racing it.
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
             await pilot.press("p")
             await pilot.pause()
 
@@ -772,7 +815,7 @@ def test_report_screen_uses_calendar_timezone(tmp_path):
     asyncio.run(scenario())
 
 
-def test_report_action_shows_last_in_session_run_digest(tmp_path):
+def test_report_action_shows_last_in_session_run_digest(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -789,6 +832,7 @@ def test_report_action_shows_last_in_session_run_digest(tmp_path):
             # racing it.
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
             await pilot.press("p")
             await pilot.pause()
 
@@ -878,7 +922,7 @@ def test_report_action_reconstructs_from_store_when_no_session_run(tmp_path):
     asyncio.run(scenario())
 
 
-def test_report_action_prefers_in_session_run_over_store(tmp_path):
+def test_report_action_prefers_in_session_run_over_store(tmp_path, pump_until):
     """An old completed run sits in the store, but a run happened this
     session too -- the Report screen shows the in-session run (fuller
     detail) rather than falling back to the stale store reconstruction."""
@@ -910,6 +954,7 @@ def test_report_action_prefers_in_session_run_over_store(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
             await pilot.press("p")
             await pilot.pause()
 
