@@ -357,7 +357,7 @@ def _select_source(
     (and eventually written) params stay literal so no secret lands in the
     tracked YAML.
     """
-    from dbfresh.adapters.factory import create_adapter
+    from dbfresh.adapters.factory import create_adapter, supported_types
     from dbfresh.configurator import probe_connection, probe_new_source
 
     sources = config.sources if config else {}
@@ -376,7 +376,11 @@ def _select_source(
         return source_name, None, False, None
 
     print(f"{source_name!r} is a new source.")
-    type_ = _prompt("Source type (e.g. sqlite)")
+    types = supported_types()
+    print("Supported source types:")
+    for i, type_name in enumerate(types, 1):
+        print(f"  {i}. {type_name}")
+    type_ = types[_prompt_index("Source type (number)", "1", len(types))]
     params: dict = {}
     print("Enter connection params as key=value (blank line to finish):")
     print("  tip: use key=${VAR} for secrets to keep them out of the YAML")
