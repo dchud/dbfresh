@@ -279,7 +279,18 @@ class DbfreshApp(App):
                 current = count
             self.post_message(RunProgress(current, total))
 
-        return run_and_persist(config, self.store, on_result=on_result)
+        # Persist through a fresh Store on this worker thread rather than the
+        # app's shared self.store. on_unmount closes self.store from the main
+        # thread; writing here on another thread would otherwise race that
+        # close() on a single sqlite3 connection -- which segfaults the SQLite
+        # C extension rather than raising. A separate connection to the same
+        # file is WAL-safe (the same approach StoreScreen's prune worker uses),
+        # and it keeps self.store touched only by the main thread.
+        store = Store(self._require_store().path)
+        try:
+            return run_and_persist(config, store, on_result=on_result)
+        finally:
+            store.close()
 
     def on_run_progress(self, message: RunProgress) -> None:
         self.sub_title = f"running checks: {message.count}/{message.total}"
