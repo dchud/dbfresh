@@ -222,7 +222,7 @@ def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(tmp_p
     asyncio.run(scenario())
 
 
-def test_run_still_works_from_a_pushed_screen(tmp_path):
+def test_run_still_works_from_a_pushed_screen(tmp_path, pump_until):
     """Unlike configure/report/store, 'r' is not Home-only -- it never
     pushes a screen, so it has nothing to duplicate, and it stays available
     (and shown) everywhere. (The full re-run-refreshes-the-open-screen
@@ -240,6 +240,7 @@ def test_run_still_works_from_a_pushed_screen(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             assert app.last_run is not None
 

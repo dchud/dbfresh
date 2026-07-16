@@ -60,6 +60,27 @@ def row_count_config():
 
 
 @pytest.fixture
+def pump_until():
+    """Advance the app message loop until predicate() holds (bounded).
+
+    workers.wait_for_complete() waits for a worker thread; the
+    StateChanged it posts is handled a loop cycle later, and a loaded CI
+    runner can lag past one pause(). Poll for the observable effect
+    instead of assuming a fixed number of pauses. The caller still
+    asserts afterward, so a genuine failure (the effect never happens)
+    surfaces as that assertion rather than a silent pass.
+    """
+
+    async def _pump(pilot, predicate, *, tries=100):
+        for _ in range(tries):
+            if predicate():
+                return
+            await pilot.pause()
+
+    return _pump
+
+
+@pytest.fixture
 def seed_observations():
     """Persist a sequence of ``(Result, observed_at)`` pairs as one run."""
 
