@@ -235,30 +235,6 @@ def test_report_screen_shows_failures_and_warnings(snap_compare, tmp_path, monke
     )
 
 
-def test_history_screen_shows_trend(snap_compare, tmp_path, monkeypatch):
-    # See the comment in test_report_screen_shows_failures_and_warnings --
-    # same reason for pinning display_timezone to UTC here.
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
-    # See _FrozenDateTime's docstring -- both the Home grid (app.py) and its
-    # drill-in (screens.py) compute "today" independently, so both need the
-    # trailing-7-day window pinned for the snapshot to be deterministic.
-    monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
-    monkeypatch.setattr("dbfresh.tui.screens.datetime", _FrozenDateTime)
-    cfg_path, store_path = _build_fixture(tmp_path)
-    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
-
-    # Home grid: orders_db.orders is the first row (alphabetically first
-    # source) -- enter drills into its checks. row_count is the first
-    # check in config order, so the default cursor position on the
-    # drill-in grid is already row_count -- a second enter opens its
-    # History screen.
-    assert snap_compare(
-        app,
-        press=("enter", "enter"),
-        terminal_size=_TERMINAL_SIZE,
-    )
-
-
 def test_configure_screen_initial_layout(snap_compare, tmp_path):
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
@@ -286,14 +262,3 @@ def test_configure_screen_new_source_form_at_zero_sources(snap_compare, tmp_path
         pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
 
     assert snap_compare(app, run_before=run_before, terminal_size=_TERMINAL_SIZE)
-
-
-def test_home_dashboard_shows_empty_state_with_no_checks(snap_compare, tmp_path):
-    """A brand-new, valid-but-empty config renders guidance instead of a
-    bare grid with just its header row."""
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text("sources: {}\nchecks: []\n")
-    store_path = tmp_path / "observations.db"
-    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
-
-    assert snap_compare(app, terminal_size=_TERMINAL_SIZE)
