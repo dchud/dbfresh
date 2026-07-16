@@ -120,7 +120,9 @@ def test_store_prune_cancel_leaves_observations_untouched(tmp_path):
     asyncio.run(scenario())
 
 
-def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(tmp_path):
+def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(
+    tmp_path, pump_until
+):
     async def scenario():
         cfg = _config(tmp_path / "config.yaml")
         store_path = tmp_path / "obs.db"
@@ -139,6 +141,10 @@ def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(tmp
             app.screen.query_one("#store-prune-confirm-btn", Button).press()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: app.store is not None and app.store.observation_count() == 1,
+            )
 
             assert not app.screen.query_one("#store-prune-confirm-row").display
             assert app.store is not None
@@ -151,6 +157,14 @@ def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(tmp
                 row["check_id"] for row in app.store.history("old")
             }
             assert remaining == {"new"}
+
+            await pump_until(
+                pilot,
+                lambda: (
+                    "pruned"
+                    in str(app.screen.query_one("#store-prune-result", Static).render())
+                ),
+            )
 
             info = str(app.screen.query_one("#store-info", Static).render())
             assert "observations: 1" in info

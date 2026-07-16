@@ -432,7 +432,9 @@ def test_object_detail_dismiss_without_any_mutation_does_not_reload(tmp_path):
 # -- "Run this object" (object-scoped run) -----------------------------------
 
 
-def test_object_detail_run_this_object_button_runs_only_this_objects_checks(tmp_path):
+def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)  # creates table "t" only -- "u" has no table behind it
@@ -449,6 +451,7 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(tmp_
             app.screen.query_one("#detail-run-object-btn", Button).press()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             # Only "t" ran -- "u" (no real table behind it) was never even
             # touched, so the run stayed OK instead of ERROR.
@@ -462,7 +465,9 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(tmp_
     asyncio.run(scenario())
 
 
-def test_object_detail_run_this_object_also_refreshes_the_home_grid(tmp_path):
+def test_object_detail_run_this_object_also_refreshes_the_home_grid(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -476,6 +481,15 @@ def test_object_detail_run_this_object_also_refreshes_the_home_grid(tmp_path):
             app.screen.query_one("#detail-run-object-btn", Button).press()
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    _overall_glyph(
+                        app.query_one("#dashboard-grid", DataTable), "s\x1ft"
+                    )
+                    == "✓"
+                ),
+            )
 
             # Home's own grid is a different, non-topmost screen -- still
             # picked up without popping back to it first.
@@ -486,7 +500,7 @@ def test_object_detail_run_this_object_also_refreshes_the_home_grid(tmp_path):
     asyncio.run(scenario())
 
 
-def test_object_detail_run_object_binding_matches_the_button(tmp_path):
+def test_object_detail_run_object_binding_matches_the_button(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -500,6 +514,7 @@ def test_object_detail_run_object_binding_matches_the_button(tmp_path):
             await pilot.press("O")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             assert app.last_run is not None
             assert [r.object for r in app.last_run.results] == ["t"]
@@ -507,7 +522,7 @@ def test_object_detail_run_object_binding_matches_the_button(tmp_path):
     asyncio.run(scenario())
 
 
-def test_global_run_from_object_detail_still_runs_every_object(tmp_path):
+def test_global_run_from_object_detail_still_runs_every_object(tmp_path, pump_until):
     """'r' (run everything) keeps working unscoped from ObjectDetailScreen
     -- scoping only ever kicks in via the new 'O' binding / button, never
     by way of the global run action."""
@@ -525,6 +540,7 @@ def test_global_run_from_object_detail_still_runs_every_object(tmp_path):
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             assert app.last_run is not None
             assert {r.object for r in app.last_run.results} == {"t", "u"}

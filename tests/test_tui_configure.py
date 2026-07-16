@@ -123,7 +123,7 @@ def test_configure_preselects_a_lone_source(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_proposes_and_appends_checks(tmp_path):
+def test_configure_screen_proposes_and_appends_checks(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -142,6 +142,12 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "row_count" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
             assert any("row_count" in label for label in labels)
@@ -162,7 +168,7 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
+def test_configure_screen_dashboard_reflects_appended_checks(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -179,6 +185,9 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
             await pilot.click("#accept-btn")
             await pilot.pause()
 
@@ -189,7 +198,9 @@ def test_configure_screen_dashboard_reflects_appended_checks(tmp_path):
     asyncio.run(scenario())
 
 
-def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(tmp_path):
+def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(
+    tmp_path, pump_until
+):
     """Nothing connects "just configured a check" to "see it run" other
     than the user finding the 'r' key on their own -- Accept must wire the
     two together itself, firing the existing Run action once Home has
@@ -211,6 +222,9 @@ def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(tmp_pa
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
             await pilot.click("#accept-btn")
             await pilot.pause()
 
@@ -219,6 +233,7 @@ def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(tmp_pa
             # (never pressed 'r' in this scenario) before asserting on it.
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
 
             assert app.last_run is not None
             table = app.query_one("#dashboard-grid", DataTable)
@@ -262,7 +277,7 @@ def test_configure_screen_passes_is_view_so_no_freshness_is_proposed(
 
 
 def test_configure_screen_notes_when_engine_cannot_introspect_keys(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     async def scenario():
         monkeypatch.setitem(factory._ADAPTERS, "keyless", _FakeKeylessAdapter)
@@ -282,6 +297,13 @@ def test_configure_screen_notes_when_engine_cannot_introspect_keys(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    "cannot introspect key"
+                    in str(app.screen.query_one("#proposal-text").content)
+                ),
+            )
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
             assert "cannot introspect key" in proposal_text
@@ -289,7 +311,9 @@ def test_configure_screen_notes_when_engine_cannot_introspect_keys(
     asyncio.run(scenario())
 
 
-def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
+def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _ambiguous_table(db)
@@ -306,6 +330,12 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    "created_at" in str(app.screen.query_one("#proposal-text").content)
+                ),
+            )
 
             proposal_text = str(app.screen.query_one("#proposal-text").content)
             assert "created_at" in proposal_text
@@ -315,7 +345,7 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_uses_picked_timestamp_column(tmp_path):
+def test_configure_screen_uses_picked_timestamp_column(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _ambiguous_table(db)
@@ -333,6 +363,12 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "freshness" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
             assert any("freshness" in label for label in labels)
@@ -348,7 +384,7 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path):
 
 
 def test_configure_screen_unreachable_source_shows_error_not_crash(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     async def scenario():
         monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
@@ -367,6 +403,12 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "could not connect" in n.message for n in app._notifications
+                ),
+            )
 
             # Did not crash: still on the Configure screen, with an error
             # toast rather than a crash -- Propose's connect failure runs
@@ -432,7 +474,9 @@ def test_configure_screen_new_source_button_reveals_form_when_sources_exist(tmp_
     asyncio.run(scenario())
 
 
-def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_path):
+def test_configure_screen_new_source_probe_success_adds_and_selects_source(
+    tmp_path, pump_until
+):
     """A probe that succeeds writes the source to disk (via
     ``configurator.add_source``, reused verbatim), reflects it into the
     Select, and returns to the propose form with it selected and already
@@ -458,6 +502,9 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_p
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: app.screen.query_one("#source-select").value == "s"
+            )
 
             assert not app.screen.query_one("#new-source-form").display
             assert app.screen.query_one("#propose-section").display
@@ -473,6 +520,12 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_p
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "row_count" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
 
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
             assert any("row_count" in label for label in labels)
@@ -481,7 +534,7 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(tmp_p
 
 
 def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     """A new source added with a ${VAR} param keeps ${VAR} in the YAML but
     resolves it in memory, so an immediate Propose in the same session
@@ -511,6 +564,14 @@ def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    app.screen._config.sources.get("s") is not None
+                    and app.screen._config.sources["s"].params.get("database")
+                    == str(db)
+                ),
+            )
 
             # Disk keeps the raw ${VAR} -- no resolved secret written to YAML.
             data = yaml.safe_load(cfg.read_text())
@@ -524,6 +585,12 @@ def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "row_count" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
             assert any("row_count" in label for label in labels)
 
@@ -531,7 +598,7 @@ def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
 
 
 def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_open(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     async def scenario():
         monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
@@ -551,6 +618,12 @@ def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_op
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "could not connect" in n.message for n in app._notifications
+                ),
+            )
 
             # Did not crash: still on Configure, in the new-source form
             # (not silently dropped back to the propose form), with an
@@ -599,7 +672,7 @@ def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
     asyncio.run(scenario())
 
 
-def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path):
+def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path, pump_until):
     """The full first-run path: ``dbfresh ui`` against a config path that
     doesn't exist yet starts ``DbfreshApp`` against an empty in-memory
     ``Config`` (see ``cli._ui_command`` / test_cli_ui.py's missing-config
@@ -634,6 +707,9 @@ def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path):
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: app.screen.query_one("#source-select").value == "s"
+            )
 
             assert cfg.exists()  # written for the first time by add_source
             select = app.screen.query_one("#source-select")
@@ -642,7 +718,9 @@ def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path):
     asyncio.run(scenario())
 
 
-def test_propose_runs_in_a_worker_thread_with_a_busy_state(tmp_path, monkeypatch):
+def test_propose_runs_in_a_worker_thread_with_a_busy_state(
+    tmp_path, monkeypatch, pump_until
+):
     """Propose's introspection (create_adapter + describe(), via
     check_object_exists) runs off the main thread: while it's in flight,
     the screen stays responsive (queryable, nothing yet mounted from a
@@ -700,6 +778,12 @@ def test_propose_runs_in_a_worker_thread_with_a_busy_state(tmp_path, monkeypatch
             release.set()
             await app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "schema" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
 
             assert not propose_btn.disabled
             assert app.screen.sub_title is None
@@ -769,7 +853,9 @@ def test_dismissing_configure_while_propose_is_in_flight_does_not_crash(
     asyncio.run(scenario())
 
 
-def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monkeypatch):
+def test_config_reload_failure_after_write_is_caught_not_crashed(
+    tmp_path, monkeypatch, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -800,6 +886,9 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
             await pilot.click("#accept-btn")
             await pilot.pause()
 
@@ -815,7 +904,9 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(tmp_path, monke
     asyncio.run(scenario())
 
 
-def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
+def test_configure_screen_surfaces_target_file_among_several_included(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -843,6 +934,10 @@ def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: "a.yaml" in str(app.screen.query_one("#proposal-text").content),
+            )
 
             # Several included files match: the proposal names the one
             # that Accept will actually write to, rather than writing
@@ -862,7 +957,7 @@ def test_configure_screen_surfaces_target_file_among_several_included(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_unknown_object_disables_accept(tmp_path):
+def test_configure_screen_unknown_object_disables_accept(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -879,6 +974,9 @@ def test_configure_screen_unknown_object_disables_accept(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: any("not found" in n.message for n in app._notifications)
+            )
 
             messages = [n.message for n in app._notifications]
             assert any("not found" in m for m in messages)
@@ -943,7 +1041,7 @@ def test_configure_screen_escape_cancels_without_writing(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
+def test_configure_screen_trim_deselects_a_proposed_check(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -960,6 +1058,12 @@ def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "freshness" in str(cb.label) for cb in app.screen.query(Checkbox)
+                ),
+            )
 
             freshness_cb = next(
                 cb for cb in app.screen.query(Checkbox) if "freshness" in str(cb.label)
@@ -979,7 +1083,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_offered_check_can_be_selected(tmp_path):
+def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -996,6 +1100,9 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: bool(app.screen.query("#offered-amount-sum"))
+            )
 
             # "sum" over the numeric "amount" column is offered but is not
             # part of the base proposed bundle, and starts unselected -- the
@@ -1068,6 +1175,7 @@ def test_configure_screen_offered_check_value_is_written(
     default_text,
     expect_key,
     expect_value,
+    pump_until,
 ):
     """The threshold Input beside an offered null_rate/freshness checkbox is
     pre-filled with the CLI wizard's own default for that metric (asserted
@@ -1091,6 +1199,10 @@ def test_configure_screen_offered_check_value_is_written(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: bool(app.screen.query(f"#offered-value-{column}-{metric}")),
+            )
 
             value_input = app.screen.query_one(f"#offered-value-{column}-{metric}")
             assert value_input.value == default_text
@@ -1126,7 +1238,7 @@ def test_configure_screen_offered_check_value_is_written(
     ],
 )
 def test_configure_screen_offered_check_invalid_value_shows_error_toast(
-    tmp_path, metric, build_table, column, invalid_value
+    tmp_path, metric, build_table, column, invalid_value, pump_until
 ):
     """An offered null_rate/freshness threshold that doesn't parse for its
     metric is reported back as an error toast -- the same value formats the
@@ -1149,6 +1261,9 @@ def test_configure_screen_offered_check_invalid_value_shows_error_toast(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: bool(app.screen.query(f"#offered-{column}-{metric}"))
+            )
 
             app.screen.query_one(
                 f"#offered-value-{column}-{metric}"
@@ -1170,7 +1285,7 @@ def test_configure_screen_offered_check_invalid_value_shows_error_toast(
 
 
 def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
-    tmp_path,
+    tmp_path, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1188,6 +1303,10 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: bool(app.screen.query("#offered-event_time-freshness")),
+            )
 
             # ``modified_at`` already has a proposed freshness checkbox --
             # offering it a second time would collide on check_id and get
@@ -1234,7 +1353,9 @@ def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
+def test_configure_screen_accept_notifies_when_everything_dedups_away(
+    tmp_path, pump_until
+):
     """Every check the table would propose already exists in the config
     (same source/object/metric/column identity, regardless of threshold),
     so Accept's dedup skips all of them and nothing new is written. Accept
@@ -1279,6 +1400,9 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
 
             # Every proposed checkbox starts checked, and every one of
             # them collides with an existing check -- select everything
@@ -1297,7 +1421,7 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(tmp_path):
 
 
 def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
-    tmp_path,
+    tmp_path, pump_until
 ):
     """The Configure screen must open/propose cleanly against a config that
     already carries manually-tuned checks (non-default thresholds someone
@@ -1334,6 +1458,10 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: bool(app.screen.query("#offered-value-amount-null_rate")),
+            )
 
             # The offered null_rate threshold Input still defaults to the
             # CLI wizard's own default -- the wizard never reads existing
@@ -1381,7 +1509,7 @@ def _config_with_existing_checks(cfg_path, db):
     return cfg_path
 
 
-def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path):
+def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1398,6 +1526,9 @@ def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot, lambda: bool(app.screen.query_one("#existing-checks").children)
+            )
 
             existing = app.screen.query_one("#existing-checks")
             assert "(none yet)" in str(existing.children[0].render())
@@ -1405,7 +1536,9 @@ def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_existing_check_input_prefilled_with_current_value(tmp_path):
+def test_configure_screen_existing_check_input_prefilled_with_current_value(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1422,6 +1555,7 @@ def test_configure_screen_existing_check_input_prefilled_with_current_value(tmp_
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-value-0")))
 
             value_input = app.screen.query_one("#existing-value-0")
             assert value_input.value == "100"
@@ -1457,7 +1591,9 @@ def test_configure_screen_between_operator_check_is_read_only(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_save_existing_check_rewrites_expect_on_disk(tmp_path):
+def test_configure_screen_save_existing_check_rewrites_expect_on_disk(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1474,6 +1610,7 @@ def test_configure_screen_save_existing_check_rewrites_expect_on_disk(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-value-0")))
 
             app.screen.query_one("#existing-value-0").value = "500"
             app.screen.query_one("#existing-save-0", Button).press()
@@ -1493,7 +1630,9 @@ def test_configure_screen_save_existing_check_rewrites_expect_on_disk(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_save_existing_check_does_not_change_check_id(tmp_path):
+def test_configure_screen_save_existing_check_does_not_change_check_id(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1510,6 +1649,7 @@ def test_configure_screen_save_existing_check_does_not_change_check_id(tmp_path)
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-value-0")))
 
             app.screen.query_one("#existing-value-0").value = "500"
             app.screen.query_one("#existing-save-0", Button).press()
@@ -1527,7 +1667,7 @@ def test_configure_screen_save_existing_check_does_not_change_check_id(tmp_path)
 
 
 def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_disk(
-    tmp_path,
+    tmp_path, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1546,6 +1686,7 @@ def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_d
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-value-0")))
 
             app.screen.query_one("#existing-value-0").value = "not-a-number"
             app.screen.query_one("#existing-save-0", Button).press()
@@ -1559,7 +1700,9 @@ def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_d
     asyncio.run(scenario())
 
 
-def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path):
+def test_configure_screen_cancel_after_existing_edit_still_reloads_home(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1576,6 +1719,7 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-value-0")))
 
             app.screen.query_one("#existing-value-0").value = "500"
             app.screen.query_one("#existing-save-0", Button).press()
@@ -1605,7 +1749,7 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(tmp_path
 
 
 def test_configure_screen_proposed_freshness_has_a_value_input_prefilled_with_default(
-    tmp_path,
+    tmp_path, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1623,6 +1767,13 @@ def test_configure_screen_proposed_freshness_has_a_value_input_prefilled_with_de
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    len(app.screen._proposed) > 2
+                    and app.screen._proposed[2]["metric"] == "freshness"
+                ),
+            )
 
             assert app.screen._proposed[2]["metric"] == "freshness"
             value_input = app.screen.query_one("#proposed-value-2")
@@ -1658,7 +1809,9 @@ def test_configure_screen_non_freshness_proposed_checks_have_no_value_input(tmp_
     asyncio.run(scenario())
 
 
-def test_configure_screen_accept_uses_edited_proposed_freshness_value(tmp_path):
+def test_configure_screen_accept_uses_edited_proposed_freshness_value(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1675,6 +1828,7 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(tmp_path):
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#proposed-value-2")))
 
             app.screen.query_one("#proposed-value-2").value = "48h"
             await pilot.click("#accept-btn")
@@ -1690,7 +1844,7 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(tmp_path):
 
 
 def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing(
-    tmp_path,
+    tmp_path, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1709,6 +1863,7 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#proposed-value-2")))
 
             app.screen.query_one("#proposed-value-2").value = "not-a-duration"
             await pilot.click("#accept-btn")
@@ -1725,7 +1880,9 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
     asyncio.run(scenario())
 
 
-def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(tmp_path):
+def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _table(db)
@@ -1742,6 +1899,7 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(tmp_pa
             await pilot.click("#propose-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(pilot, lambda: bool(app.screen.query("#proposed-value-2")))
 
             app.screen.query_one("#proposed-value-2").value = "not-a-duration"
             app.screen.query_one("#proposed-2-freshness", Checkbox).value = False
@@ -1905,7 +2063,7 @@ def test_edit_source_prefills_raw_var_token_not_resolved(tmp_path, monkeypatch):
 
 
 def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1934,6 +2092,14 @@ def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: (
+                    app.screen._config.sources.get("s") is not None
+                    and app.screen._config.sources["s"].params.get("database")
+                    == str(new_db)
+                ),
+            )
 
             # Back on the propose form, source still selected, in-memory
             # params resolved for immediate use this session.
@@ -1951,7 +2117,7 @@ def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
 
 
 def test_edit_source_probe_failure_shows_error_and_writes_nothing(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, pump_until
 ):
     async def scenario():
         monkeypatch.setitem(factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter)
@@ -1971,6 +2137,12 @@ def test_edit_source_probe_failure_shows_error_and_writes_nothing(
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "could not connect" in n.message for n in app._notifications
+                ),
+            )
 
             # Did not crash: still on Configure, edit form still open, an
             # error toast -- nothing written.
