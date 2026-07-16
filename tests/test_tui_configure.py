@@ -1509,6 +1509,41 @@ def _config_with_existing_checks(cfg_path, db):
     return cfg_path
 
 
+def test_existing_check_edit_row_keeps_input_and_save_on_screen(tmp_path, pump_until):
+    """The editable existing-check row is Label + value Input + Save button
+    in a Horizontal; a full-width label or Input would push the Save button
+    off the right edge (the clip the ObjectDetail edit rows also guard).
+    The row renders below a 30-row fold, so assert the geometry directly
+    rather than lean on a snapshot.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _table(db)
+        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pump_until(pilot, lambda: bool(app.screen.query("#existing-save-0")))
+
+            value_input = app.screen.query_one("#existing-value-0", Input)
+            save_button = app.screen.query_one("#existing-save-0", Button)
+            row = value_input.parent
+            # Neither the value box nor the Save button is pushed past the
+            # row's own right edge (with the pre-fix full-width Static label
+            # the Save button landed far off the 100-column screen).
+            assert value_input.region.right <= row.region.right
+            assert save_button.region.right <= row.region.right
+
+    asyncio.run(scenario())
+
+
 def test_configure_screen_shows_no_existing_checks_placeholder(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"

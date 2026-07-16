@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, check_id
 from dbfresh.engine import Result, RunResult, Status, worst_status
 from dbfresh.store import Store
@@ -262,3 +263,47 @@ def test_configure_screen_new_source_form_at_zero_sources(snap_compare, tmp_path
         pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
 
     assert snap_compare(app, run_before=run_before, terminal_size=_TERMINAL_SIZE)
+
+
+def test_configure_screen_post_propose_layout(snap_compare, tmp_path):
+    """Configure's densest state: after a successful Propose, the existing
+    (one editable single-scalar check with its value Input + Save button,
+    one read-only between check), proposed, and offered panels are all
+    populated at once. Guards the three-panel VerticalScroll layout, and
+    in particular the editable existing-check row against clipping its
+    Input/Save off the right edge.
+    """
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows(
+        "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
+    )
+    adapter.close()
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n    object: fct\n    metric: row_count\n"
+        "    expect:\n      max: 100\n"
+        "  - source: s\n    object: fct\n    metric: row_count\n"
+        "    expect:\n      between: [1, 1000]\n    id: fct_between\n"
+    )
+    app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+
+    async def run_before(pilot):
+        await pilot.press("c")
+        await pilot.pause()
+        pilot.app.screen.query_one("#source-select").value = "s"
+        pilot.app.screen.query_one("#object-input").value = "fct"
+        await pilot.click("#propose-btn")
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
+
+    # Taller than the standard height: the three stacked panels don't fit a
+    # 30-row viewport (a 30-row capture shows only the propose form, which
+    # the initial-layout snapshot already covers), so this uses a viewport
+    # tall enough to actually capture the dense existing/proposed/offered
+    # content -- including the editable existing-check row with its Save
+    # button, the row the clipping fix keeps on screen.
+    assert snap_compare(app, run_before=run_before, terminal_size=(100, 55))

@@ -530,7 +530,9 @@ class ConfigureScreen(Screen[bool]):
             self._existing_value_inputs.append(value_input)
             container.mount(
                 Horizontal(
-                    Static(f"{label} ({check.expect.operator}):"),
+                    # Label (width:auto), not Static (which fills the row
+                    # and pushes the Input + Save button off the right edge).
+                    Label(f"{label} ({check.expect.operator}):"),
                     value_input,
                     Button("Save", id=f"existing-save-{i}"),
                 )
