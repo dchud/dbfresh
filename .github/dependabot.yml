@@ -1,0 +1,19 @@
+# Keep GitHub Actions and Python dependencies current, with a cooldown so a
+# brand-new release settles before Dependabot opens a PR for it. The actions
+# are SHA-pinned in the workflows (see zizmor's unpinned-uses check); Dependabot
+# bumps both the pinned SHA and its version comment. Python deps are already
+# exact-pinned with hashes in uv.lock -- here Dependabot just proposes versions.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
