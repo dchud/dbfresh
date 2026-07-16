@@ -4,7 +4,7 @@ import threading
 import pytest
 import yaml
 from textual.css.query import NoMatches
-from textual.widgets import Button, Checkbox, DataTable, Input, TextArea
+from textual.widgets import Button, Checkbox, DataTable, Input, Select, TextArea
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
@@ -496,7 +496,7 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(
             await pilot.pause()
 
             app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-type-select", Select).value = "sqlite"
             app.screen.query_one("#new-source-params").text = f"database={db}"
 
             await pilot.click("#new-source-add-btn")
@@ -557,7 +557,7 @@ def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
             await pilot.pause()
 
             app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-type-select", Select).value = "sqlite"
             params = app.screen.query_one("#new-source-params")
             params.text = "database=${DBFRESH_TEST_DB}"
 
@@ -613,7 +613,9 @@ def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_op
             await pilot.pause()
 
             app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one("#new-source-type-input").value = "unreachable"
+            app.screen.query_one(
+                "#new-source-type-select", Select
+            ).value = "unreachable"
 
             await pilot.click("#new-source-add-btn")
             await pilot.app.workers.wait_for_complete()
@@ -658,7 +660,7 @@ def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
             await pilot.pause()
 
             app.screen.query_one("#new-source-name-input").value = "s"  # already exists
-            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-type-select", Select).value = "sqlite"
 
             await pilot.click("#new-source-add-btn")
             await pilot.pause()
@@ -668,6 +670,107 @@ def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
             assert not app.workers
             messages = [n.message for n in app._notifications]
             assert any("already exists" in m for m in messages)
+
+    asyncio.run(scenario())
+
+
+def test_new_source_type_select_lists_exactly_the_supported_types(tmp_path):
+    """The type dropdown's options are exactly what the adapter factory
+    supports -- never a hand-maintained list that could drift out of sync
+    with what ``create_adapter`` actually accepts."""
+
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            type_select = app.screen.query_one("#new-source-type-select", Select)
+            values = sorted(v for _, v in type_select._options if v is not Select.NULL)
+            assert values == factory.supported_types()
+
+    asyncio.run(scenario())
+
+
+def test_new_source_no_type_selected_is_rejected_before_probing(tmp_path):
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources: {}\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#new-source-name-input").value = "s"
+            # type left at its default -- unselected (Select.NULL)
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.pause()
+
+            # Rejected synchronously, before any worker (and therefore any
+            # network probe) ever started.
+            assert not app.workers
+            messages = [n.message for n in app._notifications]
+            assert any("select a source type" in m for m in messages)
+
+        data = yaml.safe_load(cfg.read_text())
+        assert data["sources"] == {}
+
+    asyncio.run(scenario())
+
+
+def test_edit_source_with_unrecognized_type_shows_it_as_extra_option(
+    tmp_path, pump_until
+):
+    """A source whose ``type:`` isn't (or is no longer) registered with the
+    adapter factory -- hand-written, or left over from a removed engine --
+    must not crash the edit form. It's surfaced as an extra dropdown
+    option holding the source's actual current value rather than being
+    silently blanked out, so submitting unchanged still attempts a probe
+    with that value (and fails the same way it would have before this
+    dropdown existed) instead of being refused as "no type selected"."""
+
+    async def scenario():
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text("sources:\n  s: { type: made_up_engine }\nchecks: []\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            await pilot.click("#edit-source-btn")
+            await pilot.pause()
+
+            type_select = app.screen.query_one("#new-source-type-select", Select)
+            assert type_select.value == "made_up_engine"
+            values = [v for _, v in type_select._options if v is not Select.NULL]
+            assert "made_up_engine" in values
+            assert "made_up_engine" not in factory.supported_types()
+
+            await pilot.click("#new-source-add-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    "could not connect" in n.message for n in app._notifications
+                ),
+            )
+            messages = [n.message for n in app._notifications]
+            assert any("could not connect" in m for m in messages)
+
+        # The failed probe wrote nothing -- the source's type on disk is
+        # unchanged.
+        data = yaml.safe_load(cfg.read_text())
+        assert data["sources"]["s"]["type"] == "made_up_engine"
 
     asyncio.run(scenario())
 
@@ -701,7 +804,7 @@ def test_new_source_flow_works_when_config_file_did_not_exist_yet(tmp_path, pump
             await pilot.pause()
 
             app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one("#new-source-type-input").value = "sqlite"
+            app.screen.query_one("#new-source-type-select", Select).value = "sqlite"
             app.screen.query_one("#new-source-params").text = f"database={db}"
 
             await pilot.click("#new-source-add-btn")
@@ -2087,8 +2190,8 @@ def test_edit_source_prefills_raw_var_token_not_resolved(tmp_path, monkeypatch):
             name_input = app.screen.query_one("#new-source-name-input", Input)
             assert name_input.value == "s"
             assert name_input.disabled
-            type_input = app.screen.query_one("#new-source-type-input", Input)
-            assert type_input.value == "sqlite"
+            type_select = app.screen.query_one("#new-source-type-select", Select)
+            assert type_select.value == "sqlite"
 
             params_text = app.screen.query_one("#new-source-params", TextArea).text
             assert "${DBFRESH_TEST_DB}" in params_text

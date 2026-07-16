@@ -1,6 +1,6 @@
 import pytest
 
-from dbfresh.adapters.factory import adapter_class_for, create_adapter
+from dbfresh.adapters.factory import adapter_class_for, create_adapter, supported_types
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.adapters.sqlserver import SqlServerAdapter
 
@@ -40,6 +40,10 @@ def test_sqlserver_type_resolves_to_the_sqlserver_adapter():
     # rather than raising "unknown source type".
     with pytest.raises(ModuleNotFoundError):
         create_adapter("sqlserver", {"url": "sqlserver://user:pass@host/db"})
+
+
+def test_supported_types_lists_every_registered_type_sorted():
+    assert supported_types() == ["databricks", "postgres", "sqlite", "sqlserver"]
 
 
 def test_databricks_type_resolves_to_the_databricks_adapter():
