@@ -446,6 +446,30 @@ def target_files(config_path: str | Path) -> list[Path]:
     return resolve_includes(config_dir, patterns)
 
 
+def check_bearing_files(config_path: str | Path) -> list[Path]:
+    """Every file that may hold check definitions for this config: the root
+    config itself, plus any included checks files.
+
+    Distinct from :func:`target_files`, which selects where *new* checks
+    are written (only the included files, once ``include:`` is set). The
+    consumers that must consider *all existing* checks -- :func:`append_checks`'s
+    dedup scan, :func:`find_check_file`, and :func:`remove_source`'s orphan
+    guard -- need this instead: a config may keep checks in the root config
+    *and* in included files (``load_config`` composes both), and
+    ``target_files`` drops the root once ``include:`` appears. Root first,
+    then the included files, de-duplicated by resolved path.
+    """
+    config_path = Path(config_path)
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in (config_path, *target_files(config_path)):
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(path)
+    return unique
+
+
 def _find_top_level_key(lines: list[str], key: str) -> int | None:
     """The line index of a column-0 ``key:`` line, or ``None`` if absent."""
     pattern = re.compile(rf"^{re.escape(key)}:(.*)$")
@@ -626,7 +650,7 @@ def append_checks(
     composed config make the next :func:`dbfresh.config.load_config` raise,
     so this dedup runs before anything touches disk. ``config_path`` is the
     root config; when given, existing ids are gathered across every file
-    :func:`target_files` resolves (the whole composed config), not just
+    :func:`check_bearing_files` resolves (the whole composed config), not just
     ``target_path`` -- a duplicate anywhere is caught, not only one already
     in the same file. Without ``config_path``, only ``target_path``'s own
     current contents are considered.
@@ -637,7 +661,7 @@ def append_checks(
     """
     target_path = Path(target_path)
     existing_files = (
-        target_files(config_path) if config_path is not None else [target_path]
+        check_bearing_files(config_path) if config_path is not None else [target_path]
     )
     existing_ids = {
         _check_id_of(raw) for f in existing_files for raw in _raw_checks_in(f)
@@ -689,13 +713,13 @@ def _write_new_checks(target_path: Path, blocks: list[dict]) -> None:
 
 
 def find_check_file(config_path: str | Path, check_id_: str) -> Path | None:
-    """Which of :func:`target_files` for ``config_path`` contains the check
-    with this id, or ``None`` if it isn't found in any of them. The
+    """Which of :func:`check_bearing_files` for ``config_path`` contains the
+    check with this id, or ``None`` if it isn't found in any of them. The
     counterpart lookup to :func:`append_checks`'s own dedup scan -- for
     locating a check to edit rather than confirming one doesn't already
     exist.
     """
-    for path in target_files(config_path):
+    for path in check_bearing_files(config_path):
         for block in _raw_checks_in(path):
             if _check_id_of(block) == check_id_:
                 return path
@@ -897,6 +921,12 @@ def rewrite_check_expectation(
     bounds = _sequence_item_bounds(lines, None if is_bare_list else "checks")
     if index < len(bounds):
         start, end = bounds[index]
+        # Exclude the trailing blank/comment run (spacing, or the *next*
+        # check's own leading note) before splicing: expect: is the last key
+        # an item emits, so _replace_nested_key_value's value scan would
+        # otherwise reach this item's greedy end and drop that run.
+        # remove_check trims the same way.
+        end = _trim_trailing_blank_or_comment_lines(lines, start, end)
         spliced = _replace_nested_key_value(lines, start, end, "expect", new_expect)
         if spliced is not None:
             target_path.write_text("".join(spliced))
@@ -1094,7 +1124,7 @@ def remove_source(config_path: str | Path, name: str) -> None:
 
     referencing = sum(
         1
-        for path in target_files(config_path)
+        for path in check_bearing_files(config_path)
         for block in _raw_checks_in(path)
         if block.get("source") == name
     )
