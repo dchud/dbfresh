@@ -237,3 +237,35 @@ def check_id_of_block(block: dict) -> str:
             key=block.get("key"),
         )
     )
+
+
+def test_rewrite_check_expectation_keeps_the_next_checks_leading_comment(tmp_path):
+    """Editing a check's expect must not swallow a comment that is a leading
+    note for the *following* check -- the same trailing-run trim remove_check
+    already applies."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n  s: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    max: 100\n"
+        "# a note about the next check\n"
+        "- source: s\n"
+        "  object: u\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    max: 50\n"
+    )
+    first = build_check("s", "t", "row_count", expect={"max": 100})
+
+    ok = rewrite_check_expectation(cfg, check_id_of_block(first), {"max": 200})
+
+    assert ok is True
+    text = cfg.read_text()
+    assert "# a note about the next check" in text
+    data = yaml.safe_load(text)
+    assert data["checks"][0]["expect"] == {"max": 200}
+    assert data["checks"][1]["object"] == "u"
