@@ -185,7 +185,7 @@ def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(tmp_path, monke
     answers = iter(
         [
             "s",  # new source name
-            "sqlite",  # source type
+            "3",  # source type (numbered menu; sqlite is #3 of the sorted set)
             "database=${DBFRESH_TEST_DB_PATH}",  # connection param, env-backed
             "",  # end of params
             "fct",  # object name
@@ -214,7 +214,7 @@ def test_add_wizard_hints_at_env_var_for_credential_looking_keys(
     answers = iter(
         [
             "s",  # new source name
-            "sqlite",  # source type
+            "3",  # source type (numbered menu; sqlite is #3 of the sorted set)
             "token=hunter2",  # a literal secret, not ${VAR}-wrapped
             "",  # end of params
             "n",  # decline adding the (unreachable) source anyway
@@ -452,7 +452,7 @@ def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
     answers = iter(
         [
             "s",  # new source name
-            "sqlite",  # source type
+            "3",  # source type (numbered menu; sqlite is #3 of the sorted set)
             f"database={db}",  # connection param
             "",  # end of params
             "fct",  # object name
@@ -470,3 +470,38 @@ def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
     data = yaml.safe_load(cfg.read_text())
     assert data["sources"]["s"]["type"] == "sqlite"
     assert len(data["checks"]) >= 1
+
+
+def test_add_wizard_source_type_menu_lists_types_and_rejects_bad_choice(
+    tmp_path, monkeypatch, capsys
+):
+    db = tmp_path / "data.db"
+    _table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
+
+    answers = iter(
+        [
+            "s",  # new source name
+            "9",  # out-of-range type choice -- must be rejected and re-prompted
+            "3",  # then a valid choice: sqlite
+            f"database={db}",
+            "",  # end of params
+            "fct",  # object name
+            "y",  # accept the proposed bundle
+            "",
+            "",
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    code = main(["add", "-c", str(cfg)])
+    assert code == 0
+
+    out = capsys.readouterr().out
+    for type_name in ("sqlite", "postgres", "sqlserver", "databricks"):
+        assert type_name in out  # the menu lists every supported type
+    assert "1 to 4" in out  # the out-of-range 9 was rejected
+    data = yaml.safe_load(cfg.read_text())
+    assert data["sources"]["s"]["type"] == "sqlite"
