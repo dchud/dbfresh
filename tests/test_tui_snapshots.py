@@ -324,3 +324,26 @@ def test_home_dashboard_shows_missing_secrets_banner(snap_compare, tmp_path):
     )
 
     assert snap_compare(app, terminal_size=_TERMINAL_SIZE)
+
+
+def test_store_screen_shows_size_counts_and_retention(
+    snap_compare, tmp_path, monkeypatch
+):
+    """The store's on-disk size varies with the sqlite build and page
+    layout, and its path is a fresh tmp_path each test run -- both are
+    pinned here (size via format_bytes, path by overwriting the app's
+    already-open Store's private _path field) so the baseline stays stable
+    across machines and runs; observation/run counts and retain_days come
+    straight from the fixed fixture below and need no pinning."""
+    monkeypatch.setattr("dbfresh.tui.screens.format_bytes", lambda n: "12.3 KB")
+    cfg_path, store_path = _build_fixture(tmp_path)
+    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
+
+    async def run_before(pilot):
+        await pilot.pause()
+        assert pilot.app.store is not None
+        pilot.app.store._path = Path("/config/dbfresh.db")
+        await pilot.press("s")
+        await pilot.pause()
+
+    assert snap_compare(app, run_before=run_before, terminal_size=_TERMINAL_SIZE)

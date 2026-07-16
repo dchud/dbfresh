@@ -9,7 +9,7 @@ from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, parse_expectation
 from dbfresh.config import StoreConfig
 from dbfresh.engine import Result, Status, evaluate_check
-from dbfresh.store import Store, capture_git_sha, resolve_store_path
+from dbfresh.store import Store, capture_git_sha, format_bytes, resolve_store_path
 
 
 def _result(**overrides) -> Result:
@@ -265,6 +265,72 @@ def test_prune_removes_orphaned_old_runs(tmp_path):
     remaining_runs = store._conn.execute("SELECT run_id FROM run").fetchall()
     assert remaining_runs == []
     store.close()
+
+
+def test_store_path_property_returns_constructor_path(tmp_path):
+    path = tmp_path / "obs.db"
+    store = Store(path)
+    assert store.path == path
+    store.close()
+
+
+def test_observation_count_reflects_seeded_rows(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    assert store.observation_count() == 0
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    store.record_observation(run_id, _result(check_id="b", value=2))
+    assert store.observation_count() == 2
+    store.close()
+
+
+def test_run_count_reflects_seeded_rows(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    assert store.run_count() == 0
+    store.start_run()
+    store.start_run()
+    assert store.run_count() == 2
+    store.close()
+
+
+def test_size_bytes_is_zero_for_in_memory_store():
+    store = Store(":memory:")
+    assert store.size_bytes() == 0
+    store.close()
+
+
+def test_size_bytes_is_positive_for_an_on_disk_store(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    assert store.size_bytes() > 0
+    store.close()
+
+
+def test_size_bytes_sums_main_file_and_wal_shm_sidecars(tmp_path):
+    path = tmp_path / "obs.db"
+    store = Store(path)
+    # WAL mode (see Store.__init__) means uncommitted-to-main-file writes
+    # can live in the -wal sidecar rather than the main file itself --
+    # without a checkpoint forcing a fold-back, the sidecar alone can carry
+    # real bytes that size_bytes must count, not just the main file.
+    run_id = store.start_run()
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    expected = path.stat().st_size
+    for suffix in ("-wal", "-shm"):
+        sidecar = path.with_name(path.name + suffix)
+        if sidecar.exists():
+            expected += sidecar.stat().st_size
+    assert store.size_bytes() == expected
+    store.close()
+
+
+def test_format_bytes_across_magnitudes():
+    assert format_bytes(0) == "0 B"
+    assert format_bytes(999) == "999 B"
+    assert format_bytes(1000) == "1.0 KB"
+    assert format_bytes(1_500_000) == "1.5 MB"
+    assert format_bytes(2_300_000_000) == "2.3 GB"
 
 
 def test_capture_git_sha_inside_repo_matches_head(tmp_path):

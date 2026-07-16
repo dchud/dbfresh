@@ -22,7 +22,7 @@ from textual.notifications import SeverityLevel
 from textual.widgets import DataTable, Footer, Header, Static
 from textual.worker import Worker, WorkerState
 
-from dbfresh.config import Config, load_config_tolerant
+from dbfresh.config import Config, StoreConfig, load_config_tolerant
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import (
@@ -110,6 +110,7 @@ class DbfreshApp(App):
         Binding("r", "run_checks", "Run"),
         Binding("c", "configure", "Configure"),
         Binding("p", "report", "Report"),
+        Binding("s", "store", "Store"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -382,6 +383,13 @@ class DbfreshApp(App):
 
         tz = display_timezone(self._require_config().calendar)
         self.push_screen(ReportScreen(self.last_run, self._require_store(), tz=tz))
+
+    def action_store(self) -> None:
+        from dbfresh.tui.screens import StoreScreen
+
+        config = self._require_config()
+        retain_days = (config.store or StoreConfig()).retain_days
+        self.push_screen(StoreScreen(self._require_store(), retain_days))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Selecting an object row opens its checks (ObjectDetailScreen).
