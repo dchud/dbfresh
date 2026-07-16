@@ -19,7 +19,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 from textual.notifications import SeverityLevel
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, StoreConfig, load_config_tolerant
@@ -28,6 +28,7 @@ from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
+    GridView,
     last_run_line,
     object_rows,
     populate_grid,
@@ -36,6 +37,7 @@ from dbfresh.tui.dashboard import (
 
 _GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
+_SEARCH_INPUT_ID = "grid-search"
 
 # configure/report/store push a screen on top of Home -- pressing the same
 # key again (or one of the other two) while that screen is still open would
@@ -46,7 +48,24 @@ _RUN_WORKER_GROUP = "run-checks"
 # ever pushes a screen, so neither has anything to stack, and both are
 # useful from anywhere -- e.g. re-running while a Report is on top refreshes
 # that same Report in place (see _refresh_topmost_screen).
-_HOME_ONLY_ACTIONS = frozenset({"configure", "report", "store"})
+#
+# The grid view controls (filter/search/sort) join them for a different
+# reason: they act on Home's own grid and search box specifically, and
+# App.query_one always resolves against the default screen (see
+# _refresh_topmost_screen's own note on this) -- so left enabled, one of
+# these firing while a different screen is on top would reach straight
+# through to Home's hidden, off-screen widgets instead of doing nothing.
+_HOME_ONLY_ACTIONS = frozenset(
+    {
+        "configure",
+        "report",
+        "store",
+        "toggle_non_ok_filter",
+        "toggle_search",
+        "close_search",
+        "toggle_worst_first",
+    }
+)
 
 # Toast label and severity for a completed run's status counts, in the same
 # worst-to-least-severe order the status legend reads -- a zero count is
@@ -72,6 +91,12 @@ _RUN_TOAST_SEVERITY: dict[Status, SeverityLevel] = {
 _EMPTY_STATE_MESSAGE = (
     "no checks configured yet -- press 'c' to configure a source and its checks"
 )
+
+# Shown instead of the grid when checks exist but the active filter/search
+# narrows them to nothing -- distinct from _EMPTY_STATE_MESSAGE above so a
+# filtered-to-empty grid never reads as "nothing configured" (which would
+# send the user toward Configure for a problem 'f'/'/' already explains).
+_NO_MATCHING_ROWS_MESSAGE = "no rows match the current filter or search"
 
 _MISSING_SECRETS_ID = "missing-secrets-banner"
 # Its own glyph, not dashboard.status_glyph(Status.WARN) -- this banner
@@ -124,6 +149,13 @@ class DbfreshApp(App):
         Binding("c", "configure", "Configure"),
         Binding("p", "report", "Report"),
         Binding("s", "store", "Store"),
+        Binding("f", "toggle_non_ok_filter", "Non-OK"),
+        Binding("slash", "toggle_search", "Search"),
+        Binding("o", "toggle_worst_first", "Sort"),
+        # Only meaningful while the search box is open (see
+        # action_close_search) -- not shown in the footer so it doesn't
+        # read as globally available when it isn't.
+        Binding("escape", "close_search", "Close search", show=False),
         Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
@@ -163,6 +195,7 @@ class DbfreshApp(App):
         self.store: Store | None = None
         self.last_run: RunResult | None = None
         self._rows_by_key: dict[str, GridRow] = {}
+        self._view = GridView()
         self.missing_secrets: tuple[str, ...] = tuple(
             sorted(set(missing_secrets or ()))
         )
@@ -179,6 +212,22 @@ class DbfreshApp(App):
         banner = Static(self._missing_secrets_text(), id=_MISSING_SECRETS_ID)
         banner.display = bool(self.missing_secrets)
         yield banner
+        # Out of the way (display hidden) until '/' reveals it
+        # (action_toggle_search); populated from self._view on reopen so
+        # it reflects an already-active search rather than always starting
+        # blank.
+        search_input = Input(
+            value=self._view.search,
+            placeholder="search source.object…",
+            id=_SEARCH_INPUT_ID,
+        )
+        search_input.display = False
+        # display alone doesn't drop it from the focus chain (Widget.
+        # focusable checks the "visibility" rule, not "display") -- without
+        # this, Textual's default auto-focus-on-mount would land on this
+        # hidden Input instead of the grid, since it's earlier in the DOM.
+        search_input.can_focus = False
+        yield search_input
         yield DrillDownTable(
             id=_GRID_ID,
             cursor_type="row",
@@ -192,16 +241,18 @@ class DbfreshApp(App):
             cursor_foreground_priority="renderable",
         )
         yield Static(status_legend(), id="status-legend")
+        yield Static("", id="view-status")
         yield Static("", id="last-run-line")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Disable (and, per Textual's own Footer, hide) configure/report/
-        store while a screen is already pushed on top of Home -- see
-        :data:`_HOME_ONLY_ACTIONS`. Every other action (run, reload, help,
-        quit, and whatever the topmost screen binds for itself) is
-        unaffected -- this only ever narrows those three.
+        """Disable (and, per Textual's own Footer, hide) every Home-only
+        action -- configure/report/store, plus the grid's filter/search/
+        sort controls -- while a screen is already pushed on top of Home;
+        see :data:`_HOME_ONLY_ACTIONS`. Every other action (run, reload,
+        help, quit, and whatever the topmost screen binds for itself) is
+        unaffected -- this only ever narrows that one set.
         """
         return not (action in _HOME_ONLY_ACTIONS and len(self.screen_stack) > 1)
 
@@ -269,11 +320,18 @@ class DbfreshApp(App):
         self.store = Store(store_path)
 
     def refresh_dashboard(self) -> None:
-        """Rebuild the dashboard grid from the current config and store.
+        """Rebuild the dashboard grid from the current config, store, and
+        active view controls (:attr:`_view`) -- the one place all three
+        (a run finishing, a config reload, and every filter/search/sort
+        toggle below) funnel through, so the grid always reflects the
+        view the user last set instead of silently resetting it.
 
         A config with no checks (or no sources to hang any on) has no rows
         at all -- rather than showing the grid's bare header row, swap in
-        an empty-state hint pointing at Configure.
+        an empty-state hint pointing at Configure. Checks exist but the
+        active filter/search narrows them to nothing is a different,
+        equally-empty-looking case with a different fix (relax the view,
+        not go configure something) -- see :data:`_NO_MATCHING_ROWS_MESSAGE`.
         """
         from dbfresh.report import display_timezone
 
@@ -283,13 +341,26 @@ class DbfreshApp(App):
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
         rows = object_rows(config, store, today, tz)
-        populate_grid(table, rows, today, label_header="object")
-        self._rows_by_key = {row.key: row for row in rows}
+        visible = self._view.apply(rows)
+        populate_grid(table, visible, today, label_header="object")
+        self._rows_by_key = {row.key: row for row in visible}
 
-        empty = not rows
+        if not rows:
+            message: str | None = _EMPTY_STATE_MESSAGE
+        elif not visible:
+            message = _NO_MATCHING_ROWS_MESSAGE
+        else:
+            message = None
+        empty = message is not None
         table.display = not empty
         self.query_one("#status-legend", Static).display = not empty
-        self.query_one("#empty-state", Static).display = empty
+        empty_widget = self.query_one("#empty-state", Static)
+        empty_widget.update(message or "")
+        empty_widget.display = empty
+
+        view_status = self.query_one("#view-status", Static)
+        view_status.update(self._view.status_text())
+        view_status.display = self._view.active
 
         last_run_widget = self.query_one("#last-run-line", Static)
         line = last_run_line(store, tz)
@@ -300,14 +371,95 @@ class DbfreshApp(App):
         banner.update(self._missing_secrets_text())
         banner.display = bool(self.missing_secrets)
 
+    # -- Home grid view controls: filter / search / sort -------------------
+    #
+    # All three toggle a field on self._view and call refresh_dashboard(),
+    # which funnels the whole rebuild -- rows, grid, empty-state, and the
+    # indicator below -- through GridView.apply() in one place (see its own
+    # docstring). Each is Home-only (see _HOME_ONLY_ACTIONS / check_action).
+
+    def action_toggle_non_ok_filter(self) -> None:
+        self._view.hide_ok = not self._view.hide_ok
+        self.refresh_dashboard()
+
+    def action_toggle_worst_first(self) -> None:
+        self._view.worst_first = not self._view.worst_first
+        self.refresh_dashboard()
+
+    def action_toggle_search(self) -> None:
+        """Reveal (and focus) the label substring-search box. Safe to press
+        again while it's already open -- just refocuses it."""
+        search_input = self.query_one(f"#{_SEARCH_INPUT_ID}", Input)
+        search_input.display = True
+        search_input.can_focus = True
+        search_input.focus()
+
+    def action_close_search(self) -> None:
+        """Escape while the search box is open: clear the search and hide
+        the box again, returning focus to the grid. A no-op when the box
+        isn't open, so binding this key globally on Home never does
+        anything surprising the rest of the time.
+
+        Unlike Enter (Input.Submitted, below), which leaves whatever was
+        typed in place -- this is the "cancel" of the pair, not just a
+        second way to close.
+        """
+        search_input = self.query_one(f"#{_SEARCH_INPUT_ID}", Input)
+        if not search_input.display:
+            return
+        search_input.value = ""
+        self._close_search(search_input)
+
+    def _close_search(self, search_input: Input) -> None:
+        search_input.display = False
+        search_input.can_focus = False  # see compose()'s note on this
+        self.query_one(f"#{_GRID_ID}", DataTable).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Live-filter the grid as the search box's text changes --
+        clearing it back to empty naturally restores every row, since
+        GridView.apply's own substring check is skipped for an empty
+        needle."""
+        if event.input.id != _SEARCH_INPUT_ID:
+            return
+        self._view.search = event.value
+        self.refresh_dashboard()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        """Enter in the search box: commit the current search (already
+        applied live by on_input_changed) and hide the box, same as
+        action_close_search except the typed text is kept rather than
+        cleared."""
+        if event.input.id != _SEARCH_INPUT_ID:
+            return
+        self._close_search(event.input)
+
     def action_run_checks(self) -> None:
         """Start a check run in a worker thread; the UI stays responsive."""
         self._run_checks_worker()
 
+    def run_object_checks(self, source: str, object_: str) -> None:
+        """Start a check run scoped to one object's checks -- the
+        ObjectDetailScreen affordance for running only what it's showing.
+
+        Shares :meth:`_run_checks_worker`'s exclusive worker group with a
+        full run, so the two can never write concurrently: either cancels
+        the other exactly like two overlapping full runs already do (see
+        ``on_worker_state_changed``), and a scoped run's completion is
+        picked up by that same handler -- dashboard refresh, whichever
+        screen is on top refreshing in place, and the completion toast --
+        with no separate copy of that plumbing needed here.
+        """
+        self._run_checks_worker(only=source, object_=object_)
+
     @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP, exit_on_error=False)
-    def _run_checks_worker(self) -> RunResult:
-        """Run every check, posting a :class:`RunProgress` message per
-        completed one along the way.
+    def _run_checks_worker(
+        self, only: str | None = None, object_: str | None = None
+    ) -> RunResult:
+        """Run every check (or, when ``only``/``object_`` are given, just
+        those scoped to that source/object -- see
+        ``dbfresh.runner.filter_checks``), posting a :class:`RunProgress`
+        message per completed one along the way.
 
         ``on_result`` (see ``dbfresh.runner.run_and_persist`` /
         ``dbfresh.engine.run_checks``) fires from whichever per-source
@@ -316,10 +468,10 @@ class DbfreshApp(App):
         reaches the UI via ``post_message`` rather than by touching a
         widget or reactive attribute from these threads directly.
         """
-        from dbfresh.runner import run_and_persist
+        from dbfresh.runner import filter_checks, run_and_persist
 
         config = self._require_config()
-        total = len(config.checks)
+        total = len(filter_checks(config.checks, only, object_))
         lock = threading.Lock()
         count = 0
 
@@ -339,7 +491,9 @@ class DbfreshApp(App):
         # and it keeps self.store touched only by the main thread.
         store = Store(self._require_store().path)
         try:
-            return run_and_persist(config, store, on_result=on_result)
+            return run_and_persist(
+                config, store, only=only, object_=object_, on_result=on_result
+            )
         finally:
             store.close()
 

@@ -264,6 +264,7 @@ class HistoryScreen(Screen):
 
 
 _DETAIL_GRID_ID = "object-detail-grid"
+_RUN_OBJECT_BUTTON_ID = "detail-run-object-btn"
 
 # An editable check's expect: operand gets an editing affordance only when
 # it's a shape this screen (and rewrite_check_expectation's callers) knows
@@ -303,7 +304,17 @@ class ObjectDetailScreen(Screen[bool]):
 
     TITLE = "Object detail"
 
-    BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
+    BINDINGS = [
+        Binding("escape", "dismiss_screen", "Back"),
+        Binding("O", "run_object", "Run this object"),
+    ]
+
+    # Textual's default auto-focus (App.AUTO_FOCUS = "*") lands on the
+    # first focusable widget in DOM order -- since the "Run this object"
+    # button above the grid (see compose()) is focusable too, without this
+    # it would steal initial focus from the grid instead, breaking Enter's
+    # row-drill-in as the screen's own opening behavior.
+    AUTO_FOCUS = f"#{_DETAIL_GRID_ID}"
 
     def __init__(
         self,
@@ -332,6 +343,7 @@ class ObjectDetailScreen(Screen[bool]):
         yield Header()
         yield Static("Object detail", classes="screen-heading")
         yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
+        yield Horizontal(Button("Run this object", id=_RUN_OBJECT_BUTTON_ID))
         yield DrillDownTable(
             id=_DETAIL_GRID_ID,
             cursor_type="row",
@@ -379,6 +391,23 @@ class ObjectDetailScreen(Screen[bool]):
         if row is None or row.check is None:
             return
         self.app.push_screen(HistoryScreen(self._store, row.check, tz=self._tz))
+
+    def action_run_object(self) -> None:
+        """Run only this object's checks (the "Run this object" button's
+        binding) -- distinct from the global 'r' (run every check), which
+        stays bound to ``DbfreshApp.action_run_checks`` and keeps working
+        unchanged from this screen.
+
+        Delegates to ``DbfreshApp.run_object_checks``, which shares
+        ``_run_checks_worker``'s exclusive worker group and its fresh-
+        ``Store`` handling with a full run -- this screen doesn't run
+        anything itself, it only asks the app to.
+        """
+        from dbfresh.tui.app import DbfreshApp
+
+        app = self.app
+        assert isinstance(app, DbfreshApp)
+        app.run_object_checks(self._source, self._object)
 
     async def _mount_edit_checks(self) -> None:
         """One row per this object's checks, each with a threshold-editing
@@ -486,7 +515,9 @@ class ObjectDetailScreen(Screen[bool]):
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
-        if button_id.startswith("detail-save-"):
+        if button_id == _RUN_OBJECT_BUTTON_ID:
+            self.action_run_object()
+        elif button_id.startswith("detail-save-"):
             await self._save_edit(int(button_id.removeprefix("detail-save-")))
         elif button_id.startswith("detail-delete-"):
             self._arm_delete(int(button_id.removeprefix("detail-delete-")))
@@ -751,9 +782,13 @@ Home only
   c        configure
   p        report
   s        store
+  f        toggle non-OK filter
+  /        search by object (escape clears, enter keeps it)
+  o        toggle worst-first sort
   enter    open the selected object
 
 Object detail
+  O        run this object's checks
   enter    open the selected check's history
 
 Any other screen
