@@ -64,7 +64,7 @@ Footer {
  */
 #dashboard-grid > .datatable--cursor,
 #object-detail-grid > .datatable--cursor {
-    background: $surface2 50%;
+    background: $surface2;
     color: $foreground;
 }
 
