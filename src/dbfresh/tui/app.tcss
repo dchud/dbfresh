@@ -248,6 +248,14 @@ ConfigureScreen Button {
     margin-right: 1;
 }
 
+/* Input's default width: 100% would claim the rest of an existing-check
+ * edit row and push its Save button past the right edge (the same clip
+ * the ObjectDetail edit rows guard against) -- keep the value box narrow
+ * so the label ahead of it and the Save button after it both fit. */
+ConfigureScreen #existing-checks Input {
+    width: 10;
+}
+
 .section-title {
     color: $subtext1;
     text-style: bold;
