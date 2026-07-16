@@ -10,7 +10,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static
 from textual.worker import Worker, WorkerState
 
@@ -25,6 +25,7 @@ from dbfresh.models import RunResult, Status
 from dbfresh.report import reconstruct_run, render_digest, render_history
 from dbfresh.store import Store, format_bytes
 from dbfresh.tui.dashboard import (
+    DrillDownTable,
     GridRow,
     check_label,
     check_rows,
@@ -75,6 +76,10 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
     The walk is defensive: if it ever falls out of step with the digest
     text -- a future change to ``render_digest``'s line format -- the
     affected line falls back to uncolored rather than raising.
+
+    ``render_digest``'s own first line (the "DATA CHECK REPORT — ..."
+    header, shared verbatim with the CLI's own digest) is bolded here on
+    the TUI side only -- the plain-text CLI output itself is untouched.
     """
     plain = render_digest(run, tz=tz)
     blocks = iter(
@@ -83,7 +88,10 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
         if result.status not in (Status.OK, Status.SKIPPED)
     )
     lines: list[Text] = []
-    for line in plain.split("\n"):
+    for i, line in enumerate(plain.split("\n")):
+        if i == 0:
+            lines.append(Text(line, style="bold"))
+            continue
         if line.startswith("✗ "):
             result = next(blocks, None)
             if result is not None:
@@ -168,6 +176,8 @@ class ReportScreen(Screen):
     shown.
     """
 
+    TITLE = "Report"
+
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(
@@ -183,6 +193,7 @@ class ReportScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("Report", classes="screen-heading")
         body = Static(self._render_body(), id="report-text", markup=False)
         yield VerticalScroll(body)
         yield Footer()
@@ -222,6 +233,8 @@ class HistoryScreen(Screen):
     :class:`~dbfresh.checks.Check` in hand.
     """
 
+    TITLE = "History"
+
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(self, store: Store, check: Check, tz: tzinfo | None = None) -> None:
@@ -242,6 +255,7 @@ class HistoryScreen(Screen):
         rows = self._store.history(cid)
         text = _colorized_history(candidate, rows, tz=self._tz)
         yield Header()
+        yield Static("History", classes="screen-heading")
         yield VerticalScroll(Static(text, id="history-text", markup=False))
         yield Footer()
 
@@ -287,6 +301,8 @@ class ObjectDetailScreen(Screen[bool]):
     otherwise.
     """
 
+    TITLE = "Object detail"
+
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(
@@ -314,8 +330,9 @@ class ObjectDetailScreen(Screen[bool]):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("Object detail", classes="screen-heading")
         yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
-        yield DataTable(
+        yield DrillDownTable(
             id=_DETAIL_GRID_ID,
             cursor_type="row",
             zebra_stripes=True,
@@ -602,6 +619,8 @@ class StoreScreen(Screen):
     app's own shared ``store`` connection -- see :meth:`_prune_worker`.
     """
 
+    TITLE = "Store"
+
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
     def __init__(self, store: Store, retain_days: int) -> None:
@@ -627,6 +646,7 @@ class StoreScreen(Screen):
             id="store-prune-confirm-row",
         )
         confirm_row.display = False
+        yield Static("Store", classes="screen-heading")
         yield Vertical(
             Static("Observation store", classes="section-title"),
             Static(self._info_text(), id="store-info"),
@@ -718,3 +738,47 @@ class StoreScreen(Screen):
 
     def action_dismiss_screen(self) -> None:
         self.app.pop_screen()
+
+
+_HELP_BINDINGS_TEXT = """\
+Global
+  r        run checks
+  R        reload config from disk
+  ?        toggle this help
+  q        quit
+
+Home only
+  c        configure
+  p        report
+  s        store
+  enter    open the selected object
+
+Object detail
+  enter    open the selected check's history
+
+Any other screen
+  escape   back -- Report, History, Object detail, Store
+  escape   cancel -- Configure (discards anything not yet accepted)\
+"""
+
+
+class HelpScreen(ModalScreen[None]):
+    """Every key binding plus the status-glyph legend, in one dismissible
+    overlay reachable from any screen -- the one place the app-level '?'
+    lives (see :meth:`~dbfresh.tui.app.DbfreshApp.action_help`).
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_help", "Close"),
+        Binding("question_mark", "dismiss_help", "Close"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="help-panel"):
+            yield Static("Help", classes="screen-heading")
+            yield Static(_HELP_BINDINGS_TEXT, id="help-bindings", markup=False)
+            yield Static(status_legend(), id="help-legend")
+            yield Static("escape or ? to close", classes="hint")
+
+    def action_dismiss_help(self) -> None:
+        self.dismiss(None)

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
 from rich.text import Text
+from textual.binding import Binding
 from textual.widgets import DataTable
 
 from dbfresh.checks import Check, check_id
@@ -205,6 +206,24 @@ def bucket_by_day(
         if observed_date in by_date:
             by_date[observed_date].append(Status(row["status"]))
     return {d: _worst_or_unknown(statuses) for d, statuses in by_date.items()}
+
+
+class DrillDownTable(DataTable):
+    """A status-grid ``DataTable`` whose Enter key is discoverable.
+
+    Plain ``DataTable`` already binds Enter to ``select_cursor`` (which is
+    what fires the ``RowSelected`` message both status grids drill into a
+    row on), but ships that binding with ``show=False`` -- Textual's own
+    default -- so the footer never mentioned it. Re-declaring the same key
+    with the same action and ``show=True`` only changes whether the footer
+    advertises it; the row-selection behavior itself is untouched. Used by
+    both the Home grid (drills into :class:`~dbfresh.tui.screens.
+    ObjectDetailScreen`) and the drill-in grid (drills into
+    :class:`~dbfresh.tui.screens.HistoryScreen`), so one shared label
+    ("Open") covers both destinations.
+    """
+
+    BINDINGS = [Binding("enter", "select_cursor", "Open", show=True)]
 
 
 @dataclass(frozen=True)

@@ -26,6 +26,7 @@ from dbfresh.config import Config, StoreConfig, load_config_tolerant
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import (
+    DrillDownTable,
     GridRow,
     last_run_line,
     object_rows,
@@ -35,6 +36,17 @@ from dbfresh.tui.dashboard import (
 
 _GRID_ID = "dashboard-grid"
 _RUN_WORKER_GROUP = "run-checks"
+
+# configure/report/store push a screen on top of Home -- pressing the same
+# key again (or one of the other two) while that screen is still open would
+# either stack a second copy of it or jump to a different destination
+# without going back through Home first, so all three only fire (and only
+# show in the footer -- see DbfreshApp.check_action) while Home is the one
+# and only screen on the stack. 'r' (run) and reload aren't here: neither
+# ever pushes a screen, so neither has anything to stack, and both are
+# useful from anywhere -- e.g. re-running while a Report is on top refreshes
+# that same Report in place (see _refresh_topmost_screen).
+_HOME_ONLY_ACTIONS = frozenset({"configure", "report", "store"})
 
 # Toast label and severity for a completed run's status counts, in the same
 # worst-to-least-severe order the status legend reads -- a zero count is
@@ -108,9 +120,11 @@ class DbfreshApp(App):
 
     BINDINGS = [
         Binding("r", "run_checks", "Run"),
+        Binding("R", "reload_config", "Reload"),
         Binding("c", "configure", "Configure"),
         Binding("p", "report", "Report"),
         Binding("s", "store", "Store"),
+        Binding("question_mark", "help", "Help"),
         Binding("q", "quit", "Quit"),
     ]
 
@@ -165,7 +179,7 @@ class DbfreshApp(App):
         banner = Static(self._missing_secrets_text(), id=_MISSING_SECRETS_ID)
         banner.display = bool(self.missing_secrets)
         yield banner
-        yield DataTable(
+        yield DrillDownTable(
             id=_GRID_ID,
             cursor_type="row",
             zebra_stripes=True,
@@ -182,6 +196,15 @@ class DbfreshApp(App):
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Disable (and, per Textual's own Footer, hide) configure/report/
+        store while a screen is already pushed on top of Home -- see
+        :data:`_HOME_ONLY_ACTIONS`. Every other action (run, reload, help,
+        quit, and whatever the topmost screen binds for itself) is
+        unaffected -- this only ever narrows those three.
+        """
+        return not (action in _HOME_ONLY_ACTIONS and len(self.screen_stack) > 1)
+
     def on_mount(self) -> None:
         if self.config is None:
             self._reload_config()
@@ -196,6 +219,34 @@ class DbfreshApp(App):
         # stuck behind a "reload failed" toast.
         self.config, missing = load_config_tolerant(self.config_path)
         self.missing_secrets = tuple(sorted(missing))
+
+    def action_reload_config(self) -> None:
+        """Re-read ``config_path`` from disk on demand.
+
+        Config is otherwise only ever (re)loaded at mount time and right
+        after a write this same session made (Configure's Accept, an
+        ObjectDetail edit/delete) -- an edit made in another window or by
+        hand is never picked up without this. A distinct key from 'r'
+        (Run) deliberately -- the two are easy to confuse by feel, and
+        this one never touches the store or starts a worker.
+        """
+        try:
+            self._reload_config()
+        except Exception as exc:
+            self.notify(
+                f"config reload failed: {exc}",
+                title="Reload failed",
+                severity="error",
+                timeout=10,
+            )
+            return
+        self.refresh_dashboard()
+        self.notify("config reloaded")
+
+    def action_help(self) -> None:
+        from dbfresh.tui.screens import HelpScreen
+
+        self.push_screen(HelpScreen())
 
     def _require_config(self) -> Config:
         """``self.config``, guaranteed set: every caller runs after ``on_mount``."""
