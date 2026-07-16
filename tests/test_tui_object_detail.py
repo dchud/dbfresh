@@ -9,10 +9,15 @@ from textual.widgets import Button, DataTable
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import load_config
+from dbfresh.models import Status
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.screens import ObjectDetailScreen
 
 _OBJECT_ROW_KEY = "s\x1ft"
+
+
+def _overall_glyph(table, row_key):
+    return table.get_cell(row_key, "overall").plain
 
 
 def _config(path, db):
@@ -64,6 +69,28 @@ async def _open_object_detail(pilot):
     await pilot.press("enter")
     await pilot.pause()
     assert isinstance(pilot.app.screen, ObjectDetailScreen)
+
+
+def _two_object_config(path, db):
+    """Two objects on one source -- "t" has a real (empty) table behind it
+    (see _seed_db); "u" does not, so touching it during a run always
+    errors. Used to prove a scoped run leaves an unrelated object
+    untouched, the same way test_runner.py's own only= tests prove it for
+    an unrelated source.
+    """
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [0, 1000] }\n"
+        "  - source: s\n"
+        "    object: u\n"
+        "    metric: row_count\n"
+        "    expect: { between: [0, 1000] }\n"
+    )
+    return path
 
 
 def test_object_detail_shows_save_and_delete_affordances(tmp_path):
@@ -398,5 +425,111 @@ def test_object_detail_dismiss_without_any_mutation_does_not_reload(tmp_path):
             # Nothing was edited or deleted -- Home's config object is the
             # exact same instance, not just an equal reload.
             assert app.config is config_before
+
+    asyncio.run(scenario())
+
+
+# -- "Run this object" (object-scoped run) -----------------------------------
+
+
+def test_object_detail_run_this_object_button_runs_only_this_objects_checks(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)  # creates table "t" only -- "u" has no table behind it
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)  # drills into s.t (first row)
+            detail_table = app.screen.query_one(DataTable)
+            row_count_id = check_id(Check(source="s", object="t", metric="row_count"))
+            assert _overall_glyph(detail_table, row_count_id) == "·"  # never observed
+
+            app.screen.query_one("#detail-run-object-btn", Button).press()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Only "t" ran -- "u" (no real table behind it) was never even
+            # touched, so the run stayed OK instead of ERROR.
+            assert app.last_run is not None
+            assert app.last_run.status == Status.OK
+            assert [r.object for r in app.last_run.results] == ["t"]
+
+            detail_table = app.screen.query_one(DataTable)
+            assert _overall_glyph(detail_table, row_count_id) == "✓"
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_run_this_object_also_refreshes_the_home_grid(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            app.screen.query_one("#detail-run-object-btn", Button).press()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            # Home's own grid is a different, non-topmost screen -- still
+            # picked up without popping back to it first.
+            home_table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(home_table, "s\x1ft") == "✓"
+            assert _overall_glyph(home_table, "s\x1fu") == "·"  # untouched
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_run_object_binding_matches_the_button(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            await pilot.press("O")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.last_run is not None
+            assert [r.object for r in app.last_run.results] == ["t"]
+
+    asyncio.run(scenario())
+
+
+def test_global_run_from_object_detail_still_runs_every_object(tmp_path):
+    """'r' (run everything) keeps working unscoped from ObjectDetailScreen
+    -- scoping only ever kicks in via the new 'O' binding / button, never
+    by way of the global run action."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+            assert app.last_run is not None
+            assert {r.object for r in app.last_run.results} == {"t", "u"}
+            # "u" has no real table behind it, unlike the scoped-run tests
+            # above -- touching it here is exactly the point.
+            assert app.last_run.status == Status.ERROR
 
     asyncio.run(scenario())

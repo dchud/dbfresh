@@ -1,10 +1,43 @@
 from datetime import UTC, datetime
 
 import dbfresh.runner
+from dbfresh.checks import Check
 from dbfresh.config import load_config
 from dbfresh.engine import Status
-from dbfresh.runner import run_and_persist
+from dbfresh.runner import filter_checks, run_and_persist
 from dbfresh.store import Store
+
+
+def _scoping_checks():
+    return [
+        Check(source="a", object="x", metric="row_count"),
+        Check(source="a", object="y", metric="row_count"),
+        Check(source="b", object="x", metric="row_count"),
+    ]
+
+
+def test_filter_checks_with_no_filters_returns_every_check():
+    checks = _scoping_checks()
+    assert filter_checks(checks) == checks
+
+
+def test_filter_checks_only_restricts_to_one_source():
+    filtered = filter_checks(_scoping_checks(), only="a")
+    assert {(c.source, c.object) for c in filtered} == {("a", "x"), ("a", "y")}
+
+
+def test_filter_checks_object_restricts_to_one_object_within_the_source():
+    filtered = filter_checks(_scoping_checks(), only="a", object_="x")
+    assert len(filtered) == 1
+    assert (filtered[0].source, filtered[0].object) == ("a", "x")
+
+
+def test_filter_checks_object_alone_matches_that_object_across_sources():
+    # object_ without only -- filter_checks supports it as a general
+    # sibling to only, even though every in-repo caller always pairs the
+    # two (only=<source>, object_=<object within it>).
+    filtered = filter_checks(_scoping_checks(), object_="x")
+    assert {c.source for c in filtered} == {"a", "b"}
 
 
 def test_run_and_persist_runs_checks_and_returns_run_result(
@@ -280,6 +313,64 @@ def test_run_and_persist_only_restricts_to_one_source(tmp_path, seed_row_count_d
     assert run.status == Status.OK
     assert len(run.results) == 1
     assert run.results[0].source == "ok"
+
+
+def test_run_and_persist_object_restricts_to_one_object_within_the_source(
+    tmp_path, seed_row_count_db
+):
+    # "other" targets a table that doesn't exist in the seeded db -- would
+    # error were it ever touched -- object_ excludes it from the run
+    # entirely, the same way only excludes an unrelated source above.
+    db = tmp_path / "data.db"
+    seed_row_count_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: s\n"
+        "    object: other\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    config = load_config(cfg)
+
+    run = run_and_persist(config, store=None, only="s", object_="t")
+
+    assert run.status == Status.OK
+    assert len(run.results) == 1
+    assert run.results[0].object == "t"
+
+
+def test_run_and_persist_object_scoped_run_persists_only_that_objects_observation(
+    tmp_path, seed_row_count_db
+):
+    db = tmp_path / "data.db"
+    seed_row_count_db(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: s\n"
+        "    object: other\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    config = load_config(cfg)
+    store = Store(tmp_path / "obs.db")
+
+    run_and_persist(config, store=store, only="s", object_="t")
+
+    rows = store._conn.execute("SELECT object FROM observation").fetchall()
+    assert [row["object"] for row in rows] == ["t"]
+    store.close()
 
 
 def test_run_and_persist_on_result_invoked_per_check(

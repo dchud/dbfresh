@@ -11,6 +11,8 @@ from dbfresh.config import Config
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
 from dbfresh.tui.dashboard import (
+    GridRow,
+    GridView,
     bucket_by_day,
     check_label,
     check_rows,
@@ -449,3 +451,99 @@ def test_populate_grid_row_key_matches_grid_row_key():
             assert row_keys == {row.key for row in rows}
 
     asyncio.run(scenario())
+
+
+# -- GridView (Home grid filter/search/sort) -------------------------------
+
+
+def _view_row(label: str, overall: Status | None) -> GridRow:
+    source, obj = label.split(".", 1)
+    return GridRow(key=f"{source}\x1f{obj}", label=label, overall=overall, days=[])
+
+
+def _view_rows() -> list[GridRow]:
+    return [
+        _view_row("s.a", Status.OK),
+        _view_row("s.b", Status.WARN),
+        _view_row("s.c", Status.FAIL),
+        _view_row("t.d", Status.ERROR),
+        _view_row("t.e", Status.SKIPPED),
+        _view_row("t.f", None),
+    ]
+
+
+def test_grid_view_default_returns_rows_unchanged():
+    rows = _view_rows()
+    assert GridView().apply(rows) == rows
+
+
+def test_grid_view_default_is_not_active():
+    assert not GridView().active
+
+
+def test_grid_view_hide_ok_drops_only_ok_rows():
+    rows = _view_rows()
+    visible = GridView(hide_ok=True).apply(rows)
+    assert [r.label for r in visible] == ["s.b", "s.c", "t.d", "t.e", "t.f"]
+
+
+def test_grid_view_search_matches_label_substring_case_insensitively():
+    rows = [_view_row("s.orders", Status.OK), _view_row("s.items", Status.OK)]
+    visible = GridView(search="ORD").apply(rows)
+    assert [r.label for r in visible] == ["s.orders"]
+
+
+def test_grid_view_search_whitespace_only_is_treated_as_no_search():
+    rows = _view_rows()
+    assert GridView(search="   ").apply(rows) == rows
+    assert not GridView(search="   ").active
+
+
+def test_grid_view_search_matching_nothing_returns_empty():
+    rows = _view_rows()
+    assert GridView(search="nonexistent").apply(rows) == []
+
+
+def test_grid_view_worst_first_orders_error_fail_warn_ok_then_skipped_then_unknown():
+    rows = _view_rows()
+    visible = GridView(worst_first=True).apply(rows)
+    assert [r.label for r in visible] == ["t.d", "s.c", "s.b", "s.a", "t.e", "t.f"]
+
+
+def test_grid_view_worst_first_ties_fall_back_to_incoming_order():
+    rows = [
+        _view_row("t.second", Status.FAIL),
+        _view_row("s.first", Status.FAIL),
+    ]
+    visible = GridView(worst_first=True).apply(rows)
+    # Both FAIL -- the incoming (source/object) order breaks the tie rather
+    # than an unstable or alphabetical one.
+    assert [r.label for r in visible] == ["t.second", "s.first"]
+
+
+def test_grid_view_combines_filter_search_and_sort():
+    rows = [
+        _view_row("s.orders", Status.OK),
+        _view_row("s.order_items", Status.ERROR),
+        _view_row("s.other", Status.WARN),
+    ]
+    view = GridView(hide_ok=True, search="order", worst_first=True)
+    visible = view.apply(rows)
+    assert [r.label for r in visible] == ["s.order_items"]
+
+
+def test_grid_view_active_true_when_any_control_is_set():
+    assert GridView(hide_ok=True).active
+    assert GridView(search="x").active
+    assert GridView(worst_first=True).active
+
+
+def test_grid_view_status_text_empty_when_inactive():
+    assert GridView().status_text() == ""
+
+
+def test_grid_view_status_text_lists_each_active_control():
+    text = GridView(hide_ok=True, search="abc", worst_first=True).status_text()
+    assert "non-OK only" in text
+    assert "abc" in text
+    assert "worst-first" in text

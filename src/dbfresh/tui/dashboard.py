@@ -301,6 +301,83 @@ def object_rows(
     return rows
 
 
+# Where worst-first sort places each status, low to high (lower sorts
+# first -- i.e. more severe). Mirrors dbfresh.models.worst_status's own
+# OK/SKIPPED < WARN < FAIL < ERROR severity ordering (models._SEVERITY),
+# reversed so the most severe row rises to the top. SKIPPED and never-
+# observed are not severity outcomes (a SKIPPED or unobserved check never
+# failed anything) -- both sort after every real status, in the same
+# relative order status_legend() already lists them in, rather than being
+# ranked among OK/WARN/FAIL/ERROR.
+_SORT_SEVERITY: dict[Status | None, int] = {
+    Status.ERROR: 0,
+    Status.FAIL: 1,
+    Status.WARN: 2,
+    Status.OK: 3,
+    Status.SKIPPED: 4,
+    None: 5,
+}
+
+
+@dataclass
+class GridView:
+    """The Home grid's active view controls -- held on the app
+    (``DbfreshApp._view``) and funneled through :meth:`apply` every time
+    the grid is (re)built (``refresh_dashboard``, and each toggle/keystroke
+    that changes one of these), so a run or a config reload always
+    re-renders through the same filter/search/sort the user last set
+    rather than silently resetting it.
+    """
+
+    hide_ok: bool = False
+    search: str = ""
+    worst_first: bool = False
+
+    @property
+    def active(self) -> bool:
+        """Whether any control is narrowing or reordering the default
+        view -- callers use this to decide whether to show an indicator
+        alongside the grid."""
+        return self.hide_ok or bool(self.search.strip()) or self.worst_first
+
+    def apply(self, rows: list[GridRow]) -> list[GridRow]:
+        """``rows`` (:func:`object_rows`'s own source/object order),
+        filtered and/or reordered per the current controls. Filtering runs
+        first, narrowing the candidates; sorting then reorders whatever's
+        left. Every control at its default returns ``rows`` unchanged, in
+        ``object_rows``'s own order -- computing the rows themselves is
+        untouched by this, it only ever narrows or reorders that output.
+        """
+        visible = rows
+        if self.hide_ok:
+            visible = [row for row in visible if row.overall != Status.OK]
+        needle = self.search.strip().lower()
+        if needle:
+            visible = [row for row in visible if needle in row.label.lower()]
+        if self.worst_first:
+            # enumerate before sorting so ties fall back to the incoming
+            # (source, object) order rather than an unstable/arbitrary one.
+            ranked = sorted(
+                enumerate(visible),
+                key=lambda pair: (_SORT_SEVERITY[pair[1].overall], pair[0]),
+            )
+            visible = [row for _, row in ranked]
+        return visible
+
+    def status_text(self) -> str:
+        """A short "what's active" summary for the Home footer/status line
+        -- empty when :attr:`active` is ``False``, so the caller can hide
+        the indicator entirely rather than show a blank one."""
+        parts = []
+        if self.hide_ok:
+            parts.append("non-OK only")
+        if self.search.strip():
+            parts.append(f"search {self.search.strip()!r}")
+        if self.worst_first:
+            parts.append("worst-first")
+        return " · ".join(parts)
+
+
 def check_rows(
     source: str,
     object_: str,

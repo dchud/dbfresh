@@ -85,6 +85,16 @@ Footer {
     padding: 0 1;
 }
 
+/* The label substring-search box (DbfreshApp.action_toggle_search) --
+ * narrow rather than Input's own default full-width, since it only ever
+ * holds a short "source.object" substring. Hidden (display in app.py)
+ * until '/' reveals it.
+ */
+#grid-search {
+    width: 40;
+    margin: 1 1 0 1;
+}
+
 #dashboard-grid {
     margin: 1 1 0 1;
 }
@@ -92,6 +102,16 @@ Footer {
 #status-legend {
     color: $subtext0;
     margin: 1 1 0 1;
+}
+
+/* What's currently narrowing/reordering the grid (GridView.status_text) --
+ * same muted metadata tone as the legend and last-run-line below it, not a
+ * status color. Hidden (display in app.py) whenever no filter/search/sort
+ * is active, so it never sits there blank.
+ */
+#view-status {
+    color: $subtext0;
+    margin: 0 1 0 1;
 }
 
 /* Same muted metadata tone as the legend above, not a status color --

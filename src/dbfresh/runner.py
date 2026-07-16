@@ -23,11 +23,25 @@ from dbfresh.store import Store, capture_git_sha
 log = structlog.get_logger(__name__)
 
 
-def filter_checks(checks: list[Check], only: str | None) -> list[Check]:
-    """Every check, or only those on source ``only`` when given."""
-    if only is None:
-        return checks
-    return [check for check in checks if check.source == only]
+def filter_checks(
+    checks: list[Check], only: str | None = None, object_: str | None = None
+) -> list[Check]:
+    """Every check, or only those on source ``only`` when given, further
+    narrowed to a single ``object`` within that source when ``object_`` is
+    also given.
+
+    ``object_`` mirrors ``only``'s shape one level down -- it's how the
+    TUI's "run this object" affordance
+    (:class:`~dbfresh.tui.screens.ObjectDetailScreen`) scopes a run to
+    exactly the checks shown on that screen. The CLI's own ``--only`` flag
+    never sets it, so ``dbfresh run --only``'s existing source-scoped
+    behavior is unchanged.
+    """
+    if only is not None:
+        checks = [check for check in checks if check.source == only]
+    if object_ is not None:
+        checks = [check for check in checks if check.object == object_]
+    return checks
 
 
 def run_and_persist(
@@ -35,6 +49,7 @@ def run_and_persist(
     store: Store | None,
     now: datetime | None = None,
     only: str | None = None,
+    object_: str | None = None,
     on_result: Callable[[Result], None] | None = None,
 ) -> RunResult:
     """Run every check in ``config`` and persist its results to ``store``.
@@ -50,7 +65,8 @@ def run_and_persist(
     ``only``, when given, restricts the run to a single source's checks --
     every other source is filtered out before adapters are built, so an
     unrelated source is never even connected to, not merely excluded from
-    the results.
+    the results. ``object_``, when also given, narrows that further to one
+    object within ``only`` (see :func:`filter_checks`).
 
     Builds one adapter per source actually referenced by the (possibly
     ``only``-filtered) checks (never every configured source -- an
@@ -73,7 +89,7 @@ def run_and_persist(
     from dbfresh.adapters.factory import create_adapter
 
     now = now or datetime.now(UTC)
-    checks = filter_checks(config.checks, only)
+    checks = filter_checks(config.checks, only, object_)
 
     referenced = {check.source for check in checks}
     adapters: dict[str, Adapter] = {}

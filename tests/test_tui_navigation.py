@@ -159,7 +159,19 @@ def test_home_footer_shows_its_own_nav_keys_and_the_drill_in_hint(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             keys = _bound_keys(app.screen)
-            assert {"r", "R", "c", "p", "s", "question_mark", "q", "enter"} <= keys
+            assert {
+                "r",
+                "R",
+                "c",
+                "p",
+                "s",
+                "f",
+                "slash",
+                "o",
+                "question_mark",
+                "q",
+                "enter",
+            } <= keys
 
     asyncio.run(scenario())
 
@@ -167,7 +179,8 @@ def test_home_footer_shows_its_own_nav_keys_and_the_drill_in_hint(tmp_path):
 def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
     """Configure/Report/Store never show up on a screen other than Home --
     once any screen is pushed, only Run/Reload/Help/Quit (plus whatever
-    that screen binds for itself) remain."""
+    that screen binds for itself) remain. The grid's own view controls
+    (filter/search/sort) are Home-only for the same reason."""
 
     async def scenario():
         app = _app(tmp_path)
@@ -179,7 +192,7 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
                 await pilot.pause()
                 assert isinstance(app.screen, expect_type)
                 keys = _bound_keys(app.screen)
-                assert not ({"c", "p", "s"} & keys)
+                assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
                 assert {"r", "R", "question_mark", "q", "escape"} <= keys
                 await pilot.press("escape")
                 await pilot.pause()
@@ -188,7 +201,7 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
             await pilot.pause()
             assert isinstance(app.screen, ConfigureScreen)
             keys = _bound_keys(app.screen)
-            assert not ({"c", "p", "s"} & keys)
+            assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
             assert {"r", "R", "question_mark", "q", "escape"} <= keys
 
     asyncio.run(scenario())
@@ -203,8 +216,8 @@ def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(tmp_p
             await pilot.pause()
             assert isinstance(app.screen, ObjectDetailScreen)
             keys = _bound_keys(app.screen)
-            assert not ({"c", "p", "s"} & keys)
-            assert {"enter", "escape", "r", "R", "question_mark", "q"} <= keys
+            assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
+            assert {"enter", "escape", "r", "R", "O", "question_mark", "q"} <= keys
 
     asyncio.run(scenario())
 
@@ -322,6 +335,10 @@ def test_help_overlay_opens_from_home_with_bindings_and_status_legend(tmp_path):
             bindings_text = str(app.screen.query_one("#help-bindings").render())
             assert "run checks" in bindings_text
             assert "reload config" in bindings_text
+            assert "non-OK filter" in bindings_text
+            assert "search by object" in bindings_text
+            assert "worst-first sort" in bindings_text
+            assert "run this object" in bindings_text
             legend_text = str(app.screen.query_one("#help-legend").render())
             assert "ok" in legend_text and "never observed" in legend_text
 

@@ -54,6 +54,50 @@ def _overall_glyph(table, row_key):
     return table.get_cell(row_key, "overall").plain
 
 
+def _multi_object_config(path):
+    """Three objects on one source, no real DB behind any of them -- these
+    scenarios only ever seed the store directly and never press 'r', so no
+    adapter connection is ever attempted."""
+    path.write_text(
+        'sources:\n  s: { type: sqlite, database: "unused.db" }\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: orders\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: s\n"
+        "    object: items\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: s\n"
+        "    object: archive\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    return path
+
+
+def _seed_status(store, object_, status):
+    check = Check(source="s", object=object_, metric="row_count")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        Result(
+            object=object_,
+            metric="row_count",
+            status=status,
+            source="s",
+            value=1,
+            check_id=check_id(check),
+        ),
+    )
+    store.finish_run(run_id, status)
+
+
+def _row_order(table):
+    return [row.key.value for row in table.ordered_rows]
+
+
 def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
@@ -347,10 +391,14 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
         release = threading.Event()
         real_run_and_persist = runner.run_and_persist
 
-        def blocking_run_and_persist(config, store, now=None, on_result=None):
+        def blocking_run_and_persist(
+            config, store, now=None, only=None, object_=None, on_result=None
+        ):
             started.set()
             assert release.wait(timeout=2), "test never released the run"
-            return real_run_and_persist(config, store, now=now, on_result=on_result)
+            return real_run_and_persist(
+                config, store, now=now, only=only, object_=object_, on_result=on_result
+            )
 
         monkeypatch.setattr(runner, "run_and_persist", blocking_run_and_persist)
 
@@ -389,7 +437,9 @@ def test_run_action_error_notifies_and_leaves_app_alive(tmp_path, monkeypatch):
         cfg = _config(tmp_path / "config.yaml", db)
         store_path = tmp_path / "obs.db"
 
-        def raising_run_and_persist(config, store, now=None, on_result=None):
+        def raising_run_and_persist(
+            config, store, now=None, only=None, object_=None, on_result=None
+        ):
             raise RuntimeError("store locked")
 
         monkeypatch.setattr(runner, "run_and_persist", raising_run_and_persist)
@@ -483,12 +533,16 @@ def test_run_action_second_press_cancels_first_with_a_notice(tmp_path, monkeypat
         blocked_once.set()
         real_run_and_persist = runner.run_and_persist
 
-        def maybe_blocking_run_and_persist(config, store, now=None, on_result=None):
+        def maybe_blocking_run_and_persist(
+            config, store, now=None, only=None, object_=None, on_result=None
+        ):
             if blocked_once.is_set():
                 blocked_once.clear()
                 started.set()
                 assert release.wait(timeout=2), "test never released the first run"
-            return real_run_and_persist(config, store, now=now, on_result=on_result)
+            return real_run_and_persist(
+                config, store, now=now, only=only, object_=object_, on_result=on_result
+            )
 
         monkeypatch.setattr(runner, "run_and_persist", maybe_blocking_run_and_persist)
 
@@ -891,5 +945,221 @@ def test_status_grids_keep_cell_colors_on_the_cursor_row(tmp_path):
             await pilot.pause()
             detail_table = app.screen.query_one(DataTable)
             assert detail_table.cursor_foreground_priority == "renderable"
+
+    asyncio.run(scenario())
+
+
+# -- Home grid view controls: filter / search / sort ------------------------
+
+
+def _multi_object_app(tmp_path):
+    cfg = _multi_object_config(tmp_path / "config.yaml")
+    store_path = tmp_path / "obs.db"
+    store = Store(store_path)
+    _seed_status(store, "orders", Status.OK)
+    _seed_status(store, "items", Status.FAIL)
+    # "archive" is left unobserved -- never-observed ("unknown").
+    store.close()
+    return DbfreshApp(config_path=cfg, store_path=str(store_path))
+
+
+def test_toggle_non_ok_filter_hides_ok_rows_and_restores_on_second_press(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert table.row_count == 3
+
+            await pilot.press("f")
+            await pilot.pause()
+            # orders is OK -- hidden; items (FAIL) and archive (unobserved)
+            # stay, since only exact-OK is dropped.
+            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert table.row_count == 3
+
+    asyncio.run(scenario())
+
+
+def test_search_filters_rows_live_as_text_changes(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            await pilot.press("slash")
+            await pilot.pause()
+            search = app.query_one("#grid-search")
+            assert search.display
+            assert app.focused is search
+
+            search.value = "item"
+            await pilot.pause()
+            assert _row_order(table) == ["s\x1fitems"]
+
+            search.value = ""
+            await pilot.pause()
+            assert table.row_count == 3
+
+    asyncio.run(scenario())
+
+
+def test_search_enter_commits_and_hides_box_keeping_the_filter(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            await pilot.press("slash")
+            await pilot.pause()
+            search = app.query_one("#grid-search")
+            search.value = "item"
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert not search.display
+            # The filter is still applied -- only closed, not cancelled.
+            assert _row_order(table) == ["s\x1fitems"]
+            assert app.focused is table
+
+    asyncio.run(scenario())
+
+
+def test_search_escape_clears_the_filter_and_hides_the_box(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            await pilot.press("slash")
+            await pilot.pause()
+            search = app.query_one("#grid-search")
+            search.value = "item"
+            await pilot.pause()
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert not search.display
+            assert search.value == ""
+            assert table.row_count == 3
+            assert app.focused is table
+
+    asyncio.run(scenario())
+
+
+def test_escape_before_search_is_opened_does_nothing(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert table.row_count == 3
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert table.row_count == 3
+
+    asyncio.run(scenario())
+
+
+def test_toggle_worst_first_sorts_by_severity_then_restores_default_order(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            # Default order: source/object, i.e. archive, items, orders.
+            assert _row_order(table) == ["s\x1farchive", "s\x1fitems", "s\x1forders"]
+
+            await pilot.press("o")
+            await pilot.pause()
+            # FAIL (items) outranks OK (orders); never-observed (archive)
+            # is a non-severity state, sorted after every real status.
+            assert _row_order(table) == ["s\x1fitems", "s\x1forders", "s\x1farchive"]
+
+            await pilot.press("o")
+            await pilot.pause()
+            assert _row_order(table) == ["s\x1farchive", "s\x1fitems", "s\x1forders"]
+
+    asyncio.run(scenario())
+
+
+def test_view_status_indicator_reflects_active_controls_and_hides_when_inactive(
+    tmp_path,
+):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            indicator = app.query_one("#view-status", Static)
+            assert not indicator.display
+
+            await pilot.press("f")
+            await pilot.pause()
+            assert indicator.display
+            assert "non-OK" in str(indicator.render())
+
+            await pilot.press("o")
+            await pilot.pause()
+            assert "worst-first" in str(indicator.render())
+
+            await pilot.press("f")
+            await pilot.press("o")
+            await pilot.pause()
+            assert not indicator.display
+
+    asyncio.run(scenario())
+
+
+def test_search_matching_nothing_shows_no_matching_rows_not_the_empty_state(tmp_path):
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("slash")
+            await pilot.pause()
+            search = app.query_one("#grid-search")
+            search.value = "nonexistent"
+            await pilot.pause()
+
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert not table.display
+            empty_state = app.query_one("#empty-state", Static)
+            assert empty_state.display
+            text = str(empty_state.render())
+            assert "no rows match" in text
+            assert "press 'c'" not in text  # not the zero-checks message
+
+    asyncio.run(scenario())
+
+
+def test_active_view_survives_a_dashboard_refresh(tmp_path):
+    """A run (or a reload) rebuilds the grid through refresh_dashboard --
+    the active filter/search/sort must still be applied afterward rather
+    than silently resetting."""
+
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f")
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
+
+            app.refresh_dashboard()
+            await pilot.pause()
+
+            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
 
     asyncio.run(scenario())
