@@ -6,11 +6,13 @@ from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 
 from rich.text import Text
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static
+from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import Check, check_id, parse_duration
 from dbfresh.config import Config, load_config_tolerant
@@ -21,7 +23,7 @@ from dbfresh.configurator import (
 )
 from dbfresh.models import RunResult, Status
 from dbfresh.report import reconstruct_run, render_digest, render_history
-from dbfresh.store import Store
+from dbfresh.store import Store, format_bytes
 from dbfresh.tui.dashboard import (
     GridRow,
     check_label,
@@ -580,3 +582,139 @@ class ObjectDetailScreen(Screen[bool]):
 
     def action_dismiss_screen(self) -> None:
         self.dismiss(self._config_changed)
+
+
+_PRUNE_WORKER_GROUP = "store-prune"
+
+
+class StoreScreen(Screen):
+    """Observation-store size, retention, and a confirm-gated prune.
+
+    The TUI's view onto ``dbfresh prune`` (``cli._prune_command``): shows
+    the store's path, on-disk size, observation/run counts, and its
+    configured ``retain_days`` (display only -- editing retention is out of
+    scope here, see ``dbfresh.config.StoreConfig``), plus a "Prune now"
+    button gated behind the same two-press confirm
+    :class:`ObjectDetailScreen`'s delete-check uses.
+
+    The prune itself runs on a worker thread against a *fresh* short-lived
+    :class:`~dbfresh.store.Store` opened on ``store.path``, never on the
+    app's own shared ``store`` connection -- see :meth:`_prune_worker`.
+    """
+
+    BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
+
+    def __init__(self, store: Store, retain_days: int) -> None:
+        super().__init__()
+        self._store = store
+        self._retain_days = retain_days
+
+    def _info_text(self) -> str:
+        return (
+            f"path: {self._store.path}\n"
+            f"size: {format_bytes(self._store.size_bytes())}\n"
+            f"observations: {self._store.observation_count()}\n"
+            f"runs: {self._store.run_count()}\n"
+            f"retention: {self._retain_days} days"
+        )
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        confirm_row = Horizontal(
+            Label("prune observations older than retention?", classes="hint"),
+            Button("Confirm prune", id="store-prune-confirm-btn"),
+            Button("Cancel", id="store-prune-cancel-btn"),
+            id="store-prune-confirm-row",
+        )
+        confirm_row.display = False
+        yield Vertical(
+            Static("Observation store", classes="section-title"),
+            Static(self._info_text(), id="store-info"),
+            Horizontal(Button("Prune now", id="store-prune-btn")),
+            confirm_row,
+            Static("", id="store-prune-result"),
+            id="store-panel",
+            classes="panel",
+        )
+        yield Footer()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "store-prune-btn":
+            self._arm_prune()
+        elif button_id == "store-prune-confirm-btn":
+            self._confirm_prune()
+        elif button_id == "store-prune-cancel-btn":
+            self._cancel_prune()
+
+    def _arm_prune(self) -> None:
+        """First press of "Prune now": reveal the confirm/cancel row rather
+        than pruning outright -- a stray click must never drop observations
+        (mirrors ``ObjectDetailScreen``'s delete-check confirm)."""
+        self.query_one("#store-prune-confirm-row", Horizontal).display = True
+
+    def _cancel_prune(self) -> None:
+        self.query_one("#store-prune-confirm-row", Horizontal).display = False
+
+    def _confirm_prune(self) -> None:
+        self.query_one("#store-prune-confirm-row", Horizontal).display = False
+        self.query_one("#store-prune-btn", Button).disabled = True
+        self._prune_worker(self._store.path, self._retain_days)
+
+    @work(thread=True, exclusive=True, group=_PRUNE_WORKER_GROUP, exit_on_error=False)
+    def _prune_worker(self, store_path: Path, retain_days: int) -> int:
+        """Delete observations older than ``retain_days``, off the UI
+        thread and off the app's own shared store connection.
+
+        A check run started from Home writes to the app's ``self._store``
+        connection from its own worker thread (see
+        ``DbfreshApp._run_checks_worker``); pruning on that same connection
+        from a second, concurrently-running worker would be two threads
+        writing one sqlite3 connection at once. Opening a brand-new
+        :class:`~dbfresh.store.Store` here instead -- its own connection,
+        same file -- sidesteps that race entirely: WAL journaling plus the
+        busy-timeout pragma (see ``Store.__init__``) already make two
+        separate connections to the same store file safe to write from
+        concurrently, exactly as they make two overlapping ``dbfresh run``
+        processes safe today. Returns the deleted count; the main thread
+        picks it up via :meth:`on_worker_state_changed`.
+        """
+        fresh = Store(store_path)
+        try:
+            return fresh.prune(retain_days)
+        finally:
+            fresh.close()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker.group != _PRUNE_WORKER_GROUP:
+            return
+        if event.state == WorkerState.RUNNING:
+            self.sub_title = "pruning…"
+            return
+        if event.state not in (
+            WorkerState.SUCCESS,
+            WorkerState.ERROR,
+            WorkerState.CANCELLED,
+        ):
+            return
+
+        self.sub_title = None
+        self.query_one("#store-prune-btn", Button).disabled = False
+
+        if event.state == WorkerState.CANCELLED:
+            return
+        if event.state == WorkerState.ERROR:
+            self.notify(f"prune failed: {event.worker.error}", severity="error")
+            return
+
+        deleted = event.worker.result
+        assert deleted is not None
+        self.query_one("#store-info", Static).update(self._info_text())
+        result_text = (
+            f"pruned {deleted} observation(s) older than {self._retain_days} days"
+        )
+        self.query_one("#store-prune-result", Static).update(result_text)
+        self.notify(result_text)
+
+    def action_dismiss_screen(self) -> None:
+        self.app.pop_screen()

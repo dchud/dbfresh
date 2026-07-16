@@ -140,6 +140,29 @@ ObjectDetailScreen #detail-edit-checks Input {
     padding: 1 2;
 }
 
+/* Store */
+
+#store-panel {
+    margin: 1 2 0 2;
+}
+
+StoreScreen Horizontal {
+    height: auto;
+    margin-bottom: 1;
+}
+
+StoreScreen Button {
+    margin-right: 1;
+}
+
+#store-info {
+    margin-bottom: 1;
+}
+
+#store-prune-result {
+    color: $subtext0;
+}
+
 /* Configure screen */
 
 ConfigureScreen #propose-section,

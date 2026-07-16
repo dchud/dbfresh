@@ -81,3 +81,10 @@ column derived from consecutive numeric values.
 with no remaining observations) older than the configured retention; it
 does not run automatically, so schedule it separately (e.g. weekly) if the
 store should stay bounded in size.
+
+Prune deletes rows but does not compact the file: SQLite keeps the freed
+pages and reuses them for later observations, so the store settles at a
+roughly steady size rather than shrinking, and the `dbfresh.db` size can
+stay flat even as the observation count drops. Returning that space to the
+operating system would take a full `VACUUM` -- a whole-file rewrite that
+contends with concurrent runs -- which prune intentionally does not do.

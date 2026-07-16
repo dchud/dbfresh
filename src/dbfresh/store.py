@@ -128,6 +128,33 @@ def _to_utc(value: datetime | None) -> datetime:
     return value.astimezone(UTC)
 
 
+# Sidecar files WAL mode creates beside the main store file -- their bytes
+# are part of the store's real on-disk footprint (uncheckpointed writes
+# live in -wal until a checkpoint folds them back into the main file), so
+# Store.size_bytes sums all three rather than just the main file's st_size.
+_WAL_SUFFIXES = ("-wal", "-shm")
+
+_BYTE_UNITS = ("B", "KB", "MB", "GB", "TB")
+
+
+def format_bytes(n: int) -> str:
+    """A human-readable rendering of ``n`` bytes, e.g. ``"1.2 MB"``.
+
+    Decimal (1000-based) units, one decimal place from KB up -- plain byte
+    counts render as a bare integer with no decimal point.
+    """
+    if n < 1000:
+        return f"{n} B"
+    value = float(n)
+    unit = _BYTE_UNITS[0]
+    for candidate in _BYTE_UNITS[1:]:
+        value /= 1000
+        unit = candidate
+        if value < 1000:
+            break
+    return f"{value:.1f} {unit}"
+
+
 class Store:
     """A local SQLite observation store, separate from the source adapters."""
 
@@ -449,6 +476,44 @@ class Store:
         )
         self._conn.commit()
         return deleted
+
+    @property
+    def path(self) -> Path:
+        """The store file's path, as given to the constructor. Read-only --
+        a store's backing file never moves once opened."""
+        return self._path
+
+    def observation_count(self) -> int:
+        """Total rows currently in ``observation``, pruned or not."""
+        row = self._conn.execute("SELECT COUNT(*) FROM observation").fetchone()
+        return int(row[0])
+
+    def run_count(self) -> int:
+        """Total rows currently in ``run``, pruned or not."""
+        row = self._conn.execute("SELECT COUNT(*) FROM run").fetchone()
+        return int(row[0])
+
+    def size_bytes(self) -> int:
+        """The store's on-disk footprint: the main file plus its ``-wal``
+        and ``-shm`` sidecars (see :data:`_WAL_SUFFIXES`), when present.
+
+        ``0`` for an in-memory store (``:memory:`` never touches disk) or
+        for a path that hasn't been created yet -- both read as "nothing on
+        disk" rather than raising. Reads a file's size via ``stat``, so
+        this is safe to call from any thread, unlike a write.
+        """
+        if str(self._path) == ":memory:":
+            return 0
+        sidecars = [
+            self._path.with_name(self._path.name + suffix) for suffix in _WAL_SUFFIXES
+        ]
+        total = 0
+        for candidate in (self._path, *sidecars):
+            try:
+                total += candidate.stat().st_size
+            except FileNotFoundError:
+                continue
+        return total
 
     def close(self) -> None:
         self._conn.close()
