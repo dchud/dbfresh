@@ -26,6 +26,15 @@ _DIALECTS: dict[str, type[Dialect]] = {
 }
 
 
+def supported_types() -> list[str]:
+    """The source type strings the factory can build an adapter for,
+    sorted -- what a UI offers as the full set of valid choices (e.g. the
+    TUI's new-source type dropdown) rather than a hard-coded, easily
+    stale copy of :data:`_ADAPTERS`'s keys.
+    """
+    return sorted(_ADAPTERS)
+
+
 def adapter_class_for(type_: str) -> type[Adapter]:
     """The adapter class registered for ``type_``, without constructing it.
 

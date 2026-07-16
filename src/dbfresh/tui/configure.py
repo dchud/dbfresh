@@ -32,6 +32,7 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from dbfresh.adapters.base import Column
+from dbfresh.adapters.factory import supported_types
 from dbfresh.checks import Check, check_id, parse_duration
 from dbfresh.config import Config, SourceConfig
 from dbfresh.configurator import (
@@ -269,8 +270,12 @@ class ConfigureScreen(Screen[bool]):
             yield Static("Add a new source", id="new-source-heading")
             yield Label("Source name")
             yield Input(id="new-source-name-input")
-            yield Label("Source type (e.g. sqlite)")
-            yield Input(id="new-source-type-input")
+            yield Label("Source type")
+            yield Select(
+                [(t, t) for t in supported_types()],
+                id="new-source-type-select",
+                prompt="Select a source type",
+            )
             yield Label(
                 "Connection params, one key=value per line (blank lines ignored)"
             )
@@ -365,7 +370,12 @@ class ConfigureScreen(Screen[bool]):
             name_input = self.query_one("#new-source-name-input", Input)
             name_input.value = ""
             name_input.disabled = False
-            self.query_one("#new-source-type-input", Input).value = ""
+            type_select = self.query_one("#new-source-type-select", Select)
+            # Reset to exactly the factory's supported types -- clears any
+            # extra legacy-type option _edit_selected_source may have
+            # appended for a prior edit session (see there).
+            type_select.set_options((t, t) for t in supported_types())
+            type_select.value = Select.NULL
             self.query_one("#new-source-params", TextArea).text = ""
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -599,7 +609,18 @@ class ConfigureScreen(Screen[bool]):
         name_input = self.query_one("#new-source-name-input", Input)
         name_input.value = name
         name_input.disabled = True
-        self.query_one("#new-source-type-input", Input).value = type_
+        type_select = self.query_one("#new-source-type-select", Select)
+        if type_ not in supported_types():
+            # A hand-written or legacy type the factory doesn't (or no
+            # longer) recognize -- surface it as an extra option instead
+            # of silently blanking out a working source's type, or
+            # crashing on a value Select doesn't consider legal. Probing
+            # it will still fail as "unknown source type" if left as-is,
+            # same as before this dropdown existed.
+            type_select.set_options(
+                [(t, t) for t in supported_types()] + [(type_, type_)]
+            )
+        type_select.value = type_
         self.query_one("#new-source-params", TextArea).text = _params_to_text(params)
 
     def _arm_remove_source(self) -> None:
@@ -658,7 +679,7 @@ class ConfigureScreen(Screen[bool]):
         :meth:`_edit_selected_source`.
         """
         name = self.query_one("#new-source-name-input", Input).value.strip()
-        type_ = self.query_one("#new-source-type-input", Input).value.strip()
+        type_select = self.query_one("#new-source-type-select", Select)
         params_text = self.query_one("#new-source-params", TextArea).text
         edit_name = self._source_form_edit_name
 
@@ -668,9 +689,10 @@ class ConfigureScreen(Screen[bool]):
         if edit_name is None and name in self._config.sources:
             self.notify(f"source already exists: {name!r}", severity="error")
             return
-        if not type_:
-            self.notify("enter a source type", severity="error")
+        if type_select.value is Select.NULL:
+            self.notify("select a source type", severity="error")
             return
+        type_ = str(type_select.value)
 
         params = _parse_params_text(params_text)
         self.query_one("#new-source-add-btn", Button).disabled = True
