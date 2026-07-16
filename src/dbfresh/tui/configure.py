@@ -182,6 +182,8 @@ class ConfigureScreen(Screen[bool]):
     the config and refreshes the dashboard), ``False`` otherwise.
     """
 
+    TITLE = "Configure"
+
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     def __init__(self, config_path: str | Path, config: Config) -> None:
@@ -206,6 +208,7 @@ class ConfigureScreen(Screen[bool]):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("Configure", classes="screen-heading")
         with Vertical(id="propose-section"):
             yield Label("Source name")
             with Horizontal():

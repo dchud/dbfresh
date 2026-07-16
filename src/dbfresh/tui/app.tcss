@@ -33,6 +33,21 @@ Footer {
     background: $mantle;
 }
 
+/* Every pushed screen's own bold, mixed-case page heading ("Report",
+ * "History", "Configure", "Object detail", "Store", "Help") -- see each
+ * screen's compose(). Distinct from .section-title (a smaller sub-section
+ * label within a panel, e.g. "Existing checks for this object") and from
+ * each screen's own Screen.TITLE (what the Header widget shows instead of
+ * the app's "dbfresh" while that screen is active) -- the two normally
+ * read the same text, but the heading is part of the scrollable body
+ * where the Header is not.
+ */
+.screen-heading {
+    color: $foreground;
+    text-style: bold;
+    padding: 1 1 0 1;
+}
+
 /* Both status grids share one cursor treatment: the default block cursor
  * (Textual's DataTable) floods the whole row with $primary (mauve) and
  * forces every cell's foreground to match it, which erases the
@@ -100,10 +115,13 @@ Footer {
 
 /* Object detail drill-in */
 
+/* The source.object identifier, directly under the screen's own
+ * ".screen-heading" ("Object detail") -- a plain subtitle rather than a
+ * second bold heading of its own.
+ */
 #object-detail-heading {
-    color: $foreground;
-    text-style: bold;
-    padding: 1 1 0 1;
+    color: $subtext1;
+    padding: 0 1 1 1;
 }
 
 #object-detail-grid {
@@ -160,6 +178,28 @@ StoreScreen Button {
 }
 
 #store-prune-result {
+    color: $subtext0;
+}
+
+/* Help overlay */
+
+HelpScreen {
+    align: center middle;
+}
+
+#help-panel {
+    width: 64;
+    background: $mantle;
+    border: round $surface2;
+    padding: 1 2;
+}
+
+#help-bindings {
+    margin-top: 1;
+}
+
+#help-legend {
+    margin-top: 1;
     color: $subtext0;
 }
 
