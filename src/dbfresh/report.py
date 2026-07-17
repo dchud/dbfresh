@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import sys
 import threading
@@ -49,9 +50,6 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
     return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
 
 
-_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-
-
 def format_timestamp_friendly(when: datetime, tz: tzinfo | None = None) -> str:
     """A human-scannable timestamp for the History view -- ISO date, 12-hour
     local time to the minute, and a weekday abbreviation, e.g.
@@ -61,17 +59,22 @@ def format_timestamp_friendly(when: datetime, tz: tzinfo | None = None) -> str:
     JSON output, where an unambiguous machine- and copy-friendly form
     matters), this trades the numeric offset and seconds for easier
     scanning: the time is shown in ``tz`` (the app's display timezone,
-    local by default) with no printed offset. The weekday and AM/PM are
-    built from fixed tables rather than ``strftime``'s ``%a``/``%p`` so the
-    output is identical regardless of the machine's locale.
+    local by default) with no printed offset.
+
+    The weekday and AM/PM come from the standard library
+    (:data:`calendar.day_abbr` and ``strftime('%p')``) rather than
+    hardcoded literals. dbfresh never calls :func:`locale.setlocale`, so
+    both resolve in the process's default "C" locale -- English, and
+    independent of the ``LC_*`` environment -- which keeps the output
+    stable across machines and in tests; they localize only if the app
+    ever opts in via ``setlocale``.
     """
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
     when = when.astimezone(tz if tz is not None else UTC)
     hour12 = when.hour % 12 or 12
-    meridiem = "AM" if when.hour < 12 else "PM"
-    weekday = _WEEKDAYS[when.weekday()]
-    return f"{when:%Y-%m-%d} {hour12}:{when:%M} {meridiem} ({weekday})"
+    weekday = calendar.day_abbr[when.weekday()]
+    return f"{when:%Y-%m-%d} {hour12}:{when:%M} {when:%p} ({weekday})"
 
 
 def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:
