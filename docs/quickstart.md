@@ -21,6 +21,20 @@ uv run dbfresh --version
 The rest of this page uses `uv run dbfresh ...`; drop the `uv run` prefix
 once `dbfresh` is installed as a standalone tool.
 
+**SQL Server** and **Databricks** sources need their database driver, which
+ships as an optional extra rather than a core dependency -- so a sqlite-only
+install isn't forced to build the native `pymssql` or Databricks driver.
+Install with the matching extra:
+
+```bash
+uv tool install "dbfresh[sqlserver]"    # SQL Server (pymssql)
+uv tool install "dbfresh[databricks]"   # Databricks
+```
+
+From a checkout, add `--extra sqlserver` (or `--extra databricks`) to
+`uv sync`. Without the extra, adding such a source fails with a hint that
+names the extra to install.
+
 ## A minimal config
 
 A config is one YAML file: `sources:` (where to connect) and `checks:` (what
