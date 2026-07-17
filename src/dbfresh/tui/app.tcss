@@ -212,6 +212,38 @@ ObjectDetailScreen #detail-edit-checks Input {
     width: 10;
 }
 
+/* Each edit row's own three columns: label, value, buttons -- see
+ * ObjectDetailScreen._build_edit_widgets. Both widths are fixed rather
+ * than auto so every row's value area and buttons start at the same x
+ * regardless of how long that row's own label or operator text is.
+ * .edit-label is sized to the longest label + operator suffix dbfresh's
+ * own fixtures produce ("freshness (modified_at) (max_lag):", 34 chars),
+ * plus a couple of columns of breathing room before the value column.
+ * .edit-value is sized to the widest value shape any row builds -- a
+ * between row's two 10-wide Inputs plus the "and" Label between them (23
+ * cells) -- so a between row's own value area exactly fills the column
+ * and every narrower row's (a single Input, a read-only describe()
+ * string, or nothing at all) leaves blank space before the buttons
+ * instead of shifting them.
+ */
+ObjectDetailScreen #detail-edit-checks .edit-label {
+    width: 36;
+}
+
+/* The generic "ObjectDetailScreen Horizontal { height: auto; margin-
+ * bottom: 1; }" rule above also matches this nested Horizontal (its
+ * selector isn't scoped to top-level rows) -- without overriding
+ * margin-bottom back to 0 here, the value cell would carry its own
+ * trailing gap on top of the edit row's, growing the row's auto height
+ * and pushing its Save/Delete buttons out of vertical alignment with the
+ * label beside them.
+ */
+ObjectDetailScreen #detail-edit-checks .edit-value {
+    width: 23;
+    height: 1;
+    margin-bottom: 0;
+}
+
 /* Report / History */
 
 #report-text,
