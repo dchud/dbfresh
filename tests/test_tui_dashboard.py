@@ -580,7 +580,7 @@ def test_populate_grid_day_cell_renders_latest_glyph_plus_marker():
             orders_key = next(r for r in rows if r.object == "orders").key
             marked_day = date(2026, 7, 10).isoformat()
             cell = table.get_cell(orders_key, marked_day)
-            assert cell.plain == "✓✗"  # latest glyph (OK) + fail marker
+            assert cell.plain == " ✓✗"  # centered glyph, marker to its right
 
     asyncio.run(scenario())
 
