@@ -451,16 +451,34 @@ class ObjectDetailScreen(Screen[bool]):
         ``Horizontal { height: auto; }`` rule in app.tcss, the same rule
         Configure's per-check rows already rely on.
 
+        Each row is four fixed-width columns -- label, value, a Save slot,
+        and Delete -- so a short label (``schema:``) and a long one
+        (``freshness (modified_at) (max_lag):``) still leave every row's
+        inputs and both buttons starting at the same x. The label is a
+        ``Label`` with the ``edit-label`` class (a fixed width in app.tcss,
+        sized to the longest realistic label); the value is always a nested
+        ``Horizontal`` with the ``edit-value`` class (also fixed-width,
+        sized to the widest case -- a ``between`` row's two Inputs plus the
+        "and" between them), holding whichever value widget(s) the row's
+        operator calls for, a single read-only ``Label`` for a non-editable
+        operator, or nothing at all for a check with no editable operand.
+        Save is always wrapped in a fixed-width ``edit-save`` slot -- empty
+        on the rows that have no Save -- so Delete always lands in the same
+        rightmost column instead of shifting left into the Save position;
+        the two buttons therefore read as two aligned columns. Row text
+        uses ``Label``,
+        not ``Static`` -- plain ``Static`` declares no width of its own,
+        and inside a ``Horizontal`` that leaves Textual sizing it to the
+        *rest* of the row's available space instead of to its own content,
+        which would push every widget after it out past the row's
+        overflow-hidden bounds. ``Label`` (a ``Static`` subclass) declares
+        ``width: auto`` explicitly, which sizes it to content as intended
+        -- the ``edit-label``/``edit-value`` classes then pin that content
+        width to a shared fixed column width instead.
+
         Always ends with a Delete button and a hidden confirm/cancel row --
         every check is deletable regardless of whether its expectation has
-        an editable operand. Row text uses ``Label``, not ``Static`` --
-        plain ``Static`` declares no width of its own, and inside a
-        ``Horizontal`` that leaves Textual sizing it to the *rest* of the
-        row's available space instead of to its own content, which would
-        push every widget after it (Input, Save, Delete) out past the
-        row's overflow-hidden bounds. ``Label`` (a ``Static`` subclass)
-        declares ``width: auto`` explicitly, which sizes it to content as
-        intended.
+        an editable operand.
         """
         label = check_label(check)
         confirm_row = Horizontal(
@@ -476,7 +494,10 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_lo_inputs.append(None)
             self._edit_hi_inputs.append(None)
             edit_row = Horizontal(
-                Label(label), Button("Delete", id=f"detail-delete-{i}")
+                Label(label, classes="edit-label"),
+                Horizontal(classes="edit-value"),
+                Horizontal(classes="edit-save"),
+                Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator == "between":
             lo, hi = check.expect.operand
@@ -486,11 +507,9 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_lo_inputs.append(lo_input)
             self._edit_hi_inputs.append(hi_input)
             edit_row = Horizontal(
-                Label(f"{label} (between):"),
-                lo_input,
-                Label("and"),
-                hi_input,
-                Button("Save", id=f"detail-save-{i}"),
+                Label(f"{label} (between):", classes="edit-label"),
+                Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
+                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator in _NON_EDITABLE_OPERATORS:
@@ -498,7 +517,9 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_lo_inputs.append(None)
             self._edit_hi_inputs.append(None)
             edit_row = Horizontal(
-                Label(f"{label}: {check.expect.describe()}"),
+                Label(f"{label}:", classes="edit-label"),
+                Horizontal(Label(check.expect.describe()), classes="edit-value"),
+                Horizontal(classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         else:
@@ -509,9 +530,9 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_lo_inputs.append(None)
             self._edit_hi_inputs.append(None)
             edit_row = Horizontal(
-                Label(f"{label} ({check.expect.operator}):"),
-                value_input,
-                Button("Save", id=f"detail-save-{i}"),
+                Label(f"{label} ({check.expect.operator}):", classes="edit-label"),
+                Horizontal(value_input, classes="edit-value"),
+                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
 
