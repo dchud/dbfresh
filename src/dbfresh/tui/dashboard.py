@@ -18,6 +18,7 @@ from datetime import date, datetime, timedelta, tzinfo
 
 from rich.text import Text
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable
 
 from dbfresh.checks import Check, check_id
@@ -262,8 +263,29 @@ def bucket_by_day(
     return result
 
 
+# Sentinel prefix for a Home-grid source header row's key. "\x00" can never
+# appear in a source name (config parsing wouldn't accept it) and never
+# starts a real GridRow.key (either "source\x1fobject" or a check_id hash),
+# so a header row's key can never collide with, or be mistaken for, an
+# actual selectable row.
+_HEADER_KEY_PREFIX = "\x00hdr\x1f"
+
+
+def header_key(source: str) -> str:
+    """The row key :func:`populate_grid` gives ``source``'s header row when
+    grouping the Home grid -- distinct from any object row's own key."""
+    return f"{_HEADER_KEY_PREFIX}{source}"
+
+
+def is_header_key(key: str | None) -> bool:
+    """Whether ``key`` (a ``DataTable`` row key's ``.value``) names a source
+    header row rather than a selectable object/check row."""
+    return key is not None and key.startswith(_HEADER_KEY_PREFIX)
+
+
 class DrillDownTable(DataTable):
-    """A status-grid ``DataTable`` whose Enter key is discoverable.
+    """A status-grid ``DataTable`` whose Enter key is discoverable, and
+    whose row cursor never lands on a source header row.
 
     Plain ``DataTable`` already binds Enter to ``select_cursor`` (which is
     what fires the ``RowSelected`` message both status grids drill into a
@@ -275,9 +297,44 @@ class DrillDownTable(DataTable):
     ObjectDetailScreen`) and the drill-in grid (drills into
     :class:`~dbfresh.tui.screens.HistoryScreen`), so one shared label
     ("Open") covers both destinations.
+
+    Only the Home grid ever populates header rows (:func:`populate_grid`'s
+    ``group_headers``); the up/down cursor-skip below is a no-op on the
+    drill-in grid, which has none.
     """
 
     BINDINGS = [Binding("enter", "select_cursor", "Open", show=True)]
+
+    def action_cursor_down(self) -> None:
+        self._move_cursor_skipping_headers(1)
+
+    def action_cursor_up(self) -> None:
+        self._move_cursor_skipping_headers(-1)
+
+    def _move_cursor_skipping_headers(self, step: int) -> None:
+        """Move the row cursor by ``step`` (+1 down, -1 up), stepping past
+        any source header row it would otherwise land on -- a header is a
+        label, not a selectable row. Keeps moving in the same direction
+        until it finds a non-header row; if the grid's edge is reached
+        first, the cursor is left exactly where it was rather than parked
+        on a header or run off the end.
+        """
+        if not (self.show_cursor and self.cursor_type in ("cell", "row")):
+            if step > 0:
+                super().action_cursor_down()
+            else:
+                super().action_cursor_up()
+            return
+        self._set_hover_cursor(False)
+        candidate = self.cursor_coordinate.row + step
+        while 0 <= candidate < self.row_count:
+            key = self.coordinate_to_cell_key(Coordinate(candidate, 0)).row_key.value
+            if not is_header_key(key):
+                self.cursor_coordinate = Coordinate(
+                    candidate, self.cursor_coordinate.column
+                )
+                return
+            candidate += step
 
 
 @dataclass(frozen=True)
@@ -371,52 +428,34 @@ def object_rows(
     return rows
 
 
-# Where worst-first sort places each status, low to high (lower sorts
-# first -- i.e. more severe). Mirrors dbfresh.models.worst_status's own
-# OK/SKIPPED < WARN < FAIL < ERROR severity ordering (models._SEVERITY),
-# reversed so the most severe row rises to the top. SKIPPED and never-
-# observed are not severity outcomes (a SKIPPED or unobserved check never
-# failed anything) -- both sort after every real status, in the same
-# relative order status_legend() already lists them in, rather than being
-# ranked among OK/WARN/FAIL/ERROR.
-_SORT_SEVERITY: dict[Status | None, int] = {
-    Status.ERROR: 0,
-    Status.FAIL: 1,
-    Status.WARN: 2,
-    Status.OK: 3,
-    Status.SKIPPED: 4,
-    None: 5,
-}
-
-
 @dataclass
 class GridView:
     """The Home grid's active view controls -- held on the app
     (``DbfreshApp._view``) and funneled through :meth:`apply` every time
     the grid is (re)built (``refresh_dashboard``, and each toggle/keystroke
     that changes one of these), so a run or a config reload always
-    re-renders through the same filter/search/sort the user last set
-    rather than silently resetting it.
+    re-renders through the same filter/search the user last set rather
+    than silently resetting it.
     """
 
     hide_ok: bool = False
     search: str = ""
-    worst_first: bool = False
 
     @property
     def active(self) -> bool:
-        """Whether any control is narrowing or reordering the default
-        view -- callers use this to decide whether to show an indicator
-        alongside the grid."""
-        return self.hide_ok or bool(self.search.strip()) or self.worst_first
+        """Whether any control is narrowing the default view -- callers
+        use this to decide whether to show an indicator alongside the
+        grid."""
+        return self.hide_ok or bool(self.search.strip())
 
     def apply(self, rows: list[GridRow]) -> list[GridRow]:
         """``rows`` (:func:`object_rows`'s own source/object order),
-        filtered and/or reordered per the current controls. Filtering runs
-        first, narrowing the candidates; sorting then reorders whatever's
-        left. Every control at its default returns ``rows`` unchanged, in
-        ``object_rows``'s own order -- computing the rows themselves is
-        untouched by this, it only ever narrows or reorders that output.
+        filtered per the current controls. Every control at its default
+        returns ``rows`` unchanged, in ``object_rows``'s own order --
+        computing the rows themselves is untouched by this, it only ever
+        narrows that output. The (source, object) order is never
+        reordered -- :func:`populate_grid` groups the surviving rows by
+        source, which depends on that order staying intact.
         """
         visible = rows
         if self.hide_ok:
@@ -424,14 +463,6 @@ class GridView:
         needle = self.search.strip().lower()
         if needle:
             visible = [row for row in visible if needle in row.label.lower()]
-        if self.worst_first:
-            # enumerate before sorting so ties fall back to the incoming
-            # (source, object) order rather than an unstable/arbitrary one.
-            ranked = sorted(
-                enumerate(visible),
-                key=lambda pair: (_SORT_SEVERITY[pair[1].overall], pair[0]),
-            )
-            visible = [row for _, row in ranked]
         return visible
 
     def status_text(self) -> str:
@@ -443,8 +474,6 @@ class GridView:
             parts.append("non-OK only")
         if self.search.strip():
             parts.append(f"search {self.search.strip()!r}")
-        if self.worst_first:
-            parts.append("worst-first")
         return " · ".join(parts)
 
 
@@ -523,7 +552,11 @@ def _day_cell(latest: Status | None, marker: Status | None) -> Text:
 
 
 def populate_grid(
-    table: DataTable, rows: list[GridRow], today: date, label_header: str
+    table: DataTable,
+    rows: list[GridRow],
+    today: date,
+    label_header: str,
+    group_headers: bool = False,
 ) -> None:
     """(Re)populate ``table`` from ``rows``. Safe to call repeatedly: clears
     both rows and columns first, since the trailing-day column headers
@@ -532,6 +565,17 @@ def populate_grid(
     ``label_header`` names the first column -- "object" at the Home scope,
     "check" at the drill-in scope -- since the two share this one renderer
     but the label column holds a different kind of thing at each scope.
+
+    ``group_headers`` (the Home scope only) inserts a bold source-name
+    header row (:func:`header_key`) ahead of each source's first object
+    row -- ``rows`` is assumed already sorted by source, as
+    :func:`object_rows` returns it, so one source's rows are never split
+    across two headers. Under grouping, an object row's label cell holds
+    just ``row.object`` rather than the combined ``row.label``, since the
+    header above it already names the source. Off (the default, the
+    drill-in scope, where rows have no ``source``), rows render exactly as
+    given -- one row per GridRow, labeled with ``row.label`` -- unchanged
+    from before grouping existed.
     """
     table.clear(columns=True)
     table.add_column(label_header, key="label")
@@ -544,7 +588,18 @@ def populate_grid(
     table.add_column("overall", key="overall", width=7)
     for day in trailing_dates(today):
         table.add_column(day.strftime("%a"), key=day.isoformat(), width=3)
+    previous_source: str | None = None
     for row in rows:
-        cells = [row.label, _status_cell(row.overall)]
+        source = row.source
+        if group_headers and source is not None and source != previous_source:
+            table.add_row(
+                Text(source, style="bold"),
+                "",
+                *([""] * len(row.days)),
+                key=header_key(source),
+            )
+            previous_source = source
+        label = row.object if group_headers and row.object is not None else row.label
+        cells = [label, _status_cell(row.overall)]
         cells.extend(_day_cell(latest, marker) for latest, marker in row.days)
         table.add_row(*cells, key=row.key)

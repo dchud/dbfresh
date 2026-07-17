@@ -863,7 +863,6 @@ Home only
   s        store
   f        toggle non-OK filter
   /        search by object (escape clears, enter keeps it)
-  o        toggle worst-first sort
   enter    open the selected object
 
 Object detail
