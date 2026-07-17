@@ -500,13 +500,25 @@ def _marker_glyph_and_style(marker: Status) -> tuple[str, str]:
 def _day_cell(latest: Status | None, marker: Status | None) -> Text:
     """One trailing-day grid cell: the day's latest status glyph, plus a
     trailing marker glyph when the day also saw something worse (see
-    :func:`_day_marker`). The day column is a fixed width of 3, so the
-    2-character glyph+marker case still fits."""
-    text = Text(status_glyph(latest), style=status_style(latest))
-    if marker is not None:
-        glyph, style = _marker_glyph_and_style(marker)
-        text.append(glyph, style=style)
-    text.justify = "center"
+    :func:`_day_marker`).
+
+    The day column is a fixed width of 3. A marker-less cell is a single
+    centered glyph, like the ``overall`` column. When a marker is present, a
+    leading space keeps the primary glyph at that same center (position 1)
+    and lets the marker sit to its right -- centering the two-character
+    ``glyph+marker`` pair instead would pull the primary glyph left of
+    center and break its vertical alignment with the marker-less cells above
+    and below it.
+    """
+    if marker is None:
+        text = Text(status_glyph(latest), style=status_style(latest))
+        text.justify = "center"
+        return text
+    text = Text(" ")
+    text.append(status_glyph(latest), style=status_style(latest))
+    glyph, style = _marker_glyph_and_style(marker)
+    text.append(glyph, style=style)
+    text.justify = "left"
     return text
 
 
