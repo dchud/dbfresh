@@ -274,9 +274,12 @@ _RUN_OBJECT_BUTTON_ID = "detail-run-object-btn"
 # it's a shape this screen (and rewrite_check_expectation's callers) knows
 # how to build a form for: one scalar Input, or -- unlike Configure's own
 # in-Propose editing (dbfresh.tui.configure._NON_EDITABLE_OPERATORS) -- a
-# between's [lo, hi] pair via two Inputs. vs_previous (a nested guard
-# mapping) and schema's unchanged (no operand at all) still show read-only;
-# a bespoke form for either is out of scope here.
+# between's [lo, hi] pair via two Inputs, or a vs_previous check whose
+# ratio guard is fully set (both min_ratio and max_ratio) via that same
+# two-Input shape. schema's unchanged (no operand at all), and a
+# vs_previous check that isn't using a full ratio guard (delta-only, or a
+# one-sided ratio), still show read-only; a bespoke form for either is out
+# of scope here.
 _NON_EDITABLE_OPERATORS = frozenset({"unchanged", "vs_previous"})
 
 
@@ -476,6 +479,12 @@ class ObjectDetailScreen(Screen[bool]):
         -- the ``edit-label``/``edit-value`` classes then pin that content
         width to a shared fixed column width instead.
 
+        A ``vs_previous`` check mirrors the ``between`` row's two-Input
+        shape for its ratio guard, but only when both ``min_ratio`` and
+        ``max_ratio`` are set -- a delta-only or one-sided ratio guard has
+        no form here and falls through to the read-only branch below like
+        the rest of ``_NON_EDITABLE_OPERATORS``.
+
         Always ends with a Delete button and a hidden confirm/cancel row --
         every check is deletable regardless of whether its expectation has
         an editable operand.
@@ -508,6 +517,22 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_hi_inputs.append(hi_input)
             edit_row = Horizontal(
                 Label(f"{label} (between):", classes="edit-label"),
+                Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
+                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
+                Button("Delete", id=f"detail-delete-{i}"),
+            )
+        elif check.expect.operator == "vs_previous" and (
+            check.expect.operand["min_ratio"] is not None
+            and check.expect.operand["max_ratio"] is not None
+        ):
+            operand = check.expect.operand
+            lo_input = Input(value=str(operand["min_ratio"]), id=f"detail-lo-{i}")
+            hi_input = Input(value=str(operand["max_ratio"]), id=f"detail-hi-{i}")
+            self._edit_value_inputs.append(None)
+            self._edit_lo_inputs.append(lo_input)
+            self._edit_hi_inputs.append(hi_input)
+            edit_row = Horizontal(
+                Label(f"{label} (ratio):", classes="edit-label"),
                 Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
                 Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
@@ -608,13 +633,42 @@ class ObjectDetailScreen(Screen[bool]):
             return None, f"between requires lo <= hi, got [{lo}, {hi}]"
         return {"between": [lo, hi]}, None
 
+    def _parse_vs_previous_ratio_edit(
+        self, check: Check, raw_lo: str, raw_hi: str
+    ) -> tuple[dict | None, str | None]:
+        """Parse a vs_previous ratio row's two Inputs into a new
+        ``{vs_previous: {...}}`` dict -- only ``min_ratio``/``max_ratio``
+        are editable here, so every other operand key (``baseline``, the
+        delta guard, ``on_missing``) is carried over from ``check.expect``
+        unchanged. A guard that's unset stays out of the emitted mapping,
+        matching how :func:`~dbfresh.checks._parse_vs_previous` itself
+        never writes a null guard back out."""
+        assert check.expect is not None
+        try:
+            min_ratio = float(raw_lo.strip())
+            max_ratio = float(raw_hi.strip())
+        except ValueError:
+            return None, f"ratio requires two numbers, got {raw_lo!r} and {raw_hi!r}"
+        if min_ratio > max_ratio:
+            return None, f"ratio requires min <= max, got [{min_ratio}, {max_ratio}]"
+        operand = dict(check.expect.operand)
+        operand["min_ratio"] = min_ratio
+        operand["max_ratio"] = max_ratio
+        operand = {k: v for k, v in operand.items() if v is not None}
+        return {"vs_previous": operand}, None
+
     async def _save_edit(self, i: int) -> None:
         check = self._edit_checks[i]
         assert check.expect is not None
 
         lo_input = self._edit_lo_inputs[i]
         hi_input = self._edit_hi_inputs[i]
-        if lo_input is not None and hi_input is not None:
+        if check.expect.operator == "vs_previous":
+            assert lo_input is not None and hi_input is not None
+            new_expect, error = self._parse_vs_previous_ratio_edit(
+                check, lo_input.value, hi_input.value
+            )
+        elif lo_input is not None and hi_input is not None:
             new_expect, error = self._parse_between_edit(lo_input.value, hi_input.value)
         else:
             value_input = self._edit_value_inputs[i]

@@ -177,6 +177,63 @@ def test_rewrite_check_expectation_between_preserves_other_checks(tmp_path):
     assert data["checks"][1]["expect"] == {"max": 0.05}  # untouched
 
 
+def test_rewrite_check_expectation_updates_vs_previous_ratio_bounds(tmp_path):
+    """The nested vs_previous mapping is a shape _replace_nested_key_value
+    can still splice in place (block style, not inline/flow) -- either
+    way, updating min_ratio/max_ratio must leave baseline, on_missing, and
+    an unrelated delta guard untouched."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "sources:\n  s: { type: sqlite, database: ':memory:' }\n"
+        "checks:\n"
+        "- source: s\n"
+        "  object: t\n"
+        "  metric: row_count\n"
+        "  expect:\n"
+        "    vs_previous:\n"
+        "      baseline: last_same_weekday\n"
+        "      min_ratio: 0.75\n"
+        "      max_ratio: 1.25\n"
+        "      max_delta: 500\n"
+        "      on_missing: warn\n"
+    )
+    check = build_check(
+        "s",
+        "t",
+        "row_count",
+        expect={
+            "vs_previous": {
+                "baseline": "last_same_weekday",
+                "min_ratio": 0.75,
+                "max_ratio": 1.25,
+                "max_delta": 500,
+                "on_missing": "warn",
+            }
+        },
+    )
+    cid = check_id_of_block(check)
+    new_expect = {
+        "vs_previous": {
+            "baseline": "last_same_weekday",
+            "min_ratio": 0.5,
+            "max_ratio": 1.5,
+            "max_delta": 500,
+            "on_missing": "warn",
+        }
+    }
+
+    ok = rewrite_check_expectation(cfg, cid, new_expect)
+
+    assert ok is True
+    data = yaml.safe_load(cfg.read_text())
+    vs_previous = data["checks"][0]["expect"]["vs_previous"]
+    assert vs_previous["min_ratio"] == 0.5
+    assert vs_previous["max_ratio"] == 1.5
+    assert vs_previous["baseline"] == "last_same_weekday"  # preserved
+    assert vs_previous["max_delta"] == 500  # preserved
+    assert vs_previous["on_missing"] == "warn"  # preserved
+
+
 def test_rewrite_check_expectation_between_works_on_included_file(tmp_path):
     (tmp_path / "checks").mkdir()
     a = tmp_path / "checks" / "a.yaml"
