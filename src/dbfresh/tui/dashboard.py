@@ -4,8 +4,11 @@ Two scopes share one row shape (:class:`GridRow`) and one renderer
 (:func:`populate_grid`): the Home screen's rows are one per source.object;
 the drill-in (``ObjectDetailScreen``) rows are one per check within a
 single object. Each row carries an "overall" (latest observation) status
-plus a trailing 7-day trend, bucketed to the worst status observed each
-calendar day.
+plus a trailing 7-day trend, bucketed to the latest status observed each
+calendar day -- the same "latest, not worst" rule ``overall`` already
+uses -- so a same-day recovery never contradicts ``overall``. A day that
+also saw a worse status earlier gets a small trailing marker rather than
+losing that information outright.
 """
 
 from __future__ import annotations
@@ -84,7 +87,10 @@ def status_style(status: Status | None) -> str:
 def status_legend() -> Text:
     """A compact glyph legend, one entry per status plus never-observed --
     the same order the grid's own severity reads worst to least severe,
-    with the two non-severity states (skipped, never observed) last."""
+    with the two non-severity states (skipped, never observed) last. A
+    trailing line explains the day cells' own marker (see
+    :func:`_day_marker`), which this per-status legend doesn't otherwise
+    cover."""
     order = [
         Status.OK,
         Status.WARN,
@@ -99,6 +105,10 @@ def status_legend() -> Text:
             text.append("   ")
         text.append(status_glyph(status), style=status_style(status))
         text.append(f" {_STATUS_LABEL[status]}")
+    text.append("\n")
+    text.append(
+        "a trailing ✗/!/· marks a worse status earlier that day (fail / warn / error)"
+    )
     return text
 
 
@@ -183,6 +193,40 @@ def _worst_or_unknown(statuses: list[Status]) -> Status | None:
     return worst_status(statuses)
 
 
+# Priority order for _day_marker when a day's statuses qualify more than
+# one candidate: FAIL outranks WARN outranks ERROR, deliberately not the
+# same order as worst_status's own severity (where ERROR outranks FAIL).
+# FAIL is a real data failure (the check ran and the value failed); WARN a
+# softer data issue; ERROR is usually a config mistake, an unreachable
+# source, or a comparison check's first run with no baseline yet -- not a
+# data failure -- so it reads neutral and loses priority to either.
+_MARKER_PRIORITY = (Status.FAIL, Status.WARN, Status.ERROR)
+
+
+def _day_marker(latest: Status | None, all_statuses: list[Status]) -> Status | None:
+    """Whether ``all_statuses`` (every status a day saw) contains something
+    strictly worse than ``latest`` (the day's current, latest-observed
+    status) -- and if so, which one to flag when more than one qualifies.
+
+    "Worse" is decided by :func:`~dbfresh.models.worst_status`, but the
+    candidate returned on a tie between multiple qualifying statuses
+    follows ``_MARKER_PRIORITY``, not raw severity -- see its own
+    docstring. A day that never got worse than where it ended up (an
+    unbroken OK day, or a still-failing day whose worst status equals its
+    latest one) has no marker.
+    """
+    if latest is None:
+        return None
+    for candidate in _MARKER_PRIORITY:
+        if (
+            candidate in all_statuses
+            and candidate != latest
+            and worst_status([candidate, latest]) == candidate
+        ):
+            return candidate
+    return None
+
+
 def trailing_dates(today: date, days: int = _TRAILING_DAYS) -> list[date]:
     """The last ``days`` calendar dates ending on (and including) ``today``,
     oldest first -- so the grid reads left (past) to right (present)."""
@@ -191,21 +235,31 @@ def trailing_dates(today: date, days: int = _TRAILING_DAYS) -> list[date]:
 
 def bucket_by_day(
     rows: list[dict], dates: list[date], tz: tzinfo | None
-) -> dict[date, Status | None]:
-    """The worst status observed on each of ``dates``, from
-    :meth:`~dbfresh.store.Store.history` rows. A date among ``dates`` with
-    no matching observation maps to ``None``. ``rows`` outside ``dates``
-    (older than the trailing window) are ignored, not an error -- callers
-    fetch a generous history limit to comfortably cover the window even at
-    several runs/day, which routinely includes older rows too.
+) -> dict[date, tuple[Status | None, list[Status]]]:
+    """Each of ``dates`` mapped to (latest-of-day status, every status seen
+    that day), from :meth:`~dbfresh.store.Store.history` rows. "Latest" is
+    decided by each row's own ``observed_at``, not the order ``rows``
+    arrives in -- callers don't guarantee any particular order. A date
+    among ``dates`` with no matching observation maps to ``(None, [])``.
+    ``rows`` outside ``dates`` (older than the trailing window) are
+    ignored, not an error -- callers fetch a generous history limit to
+    comfortably cover the window even at several runs/day, which routinely
+    includes older rows too.
     """
-    by_date: dict[date, list[Status]] = {d: [] for d in dates}
+    by_date: dict[date, list[tuple[datetime, Status]]] = {d: [] for d in dates}
     for row in rows:
         when = datetime.fromisoformat(row["observed_at"])
         observed_date = when.astimezone(tz).date() if tz else when.date()
         if observed_date in by_date:
-            by_date[observed_date].append(Status(row["status"]))
-    return {d: _worst_or_unknown(statuses) for d, statuses in by_date.items()}
+            by_date[observed_date].append((when, Status(row["status"])))
+    result: dict[date, tuple[Status | None, list[Status]]] = {}
+    for d, entries in by_date.items():
+        if not entries:
+            result[d] = (None, [])
+            continue
+        latest = max(entries, key=lambda entry: entry[0])[1]
+        result[d] = (latest, [status for _, status in entries])
+    return result
 
 
 class DrillDownTable(DataTable):
@@ -234,12 +288,15 @@ class GridRow:
     what :class:`~dbfresh.tui.screens.ObjectDetailScreen` drills into on
     selection. ``check`` is set for a check-scope row (the drill-in) --
     what ``HistoryScreen`` opens on selection. A row never has both.
+
+    Each entry in ``days`` is (latest-of-day status, marker status) -- see
+    :func:`bucket_by_day` and :func:`_day_marker`.
     """
 
     key: str
     label: str
     overall: Status | None
-    days: list[Status | None]
+    days: list[tuple[Status | None, Status | None]]
     source: str | None = None
     object: str | None = None
     check: Check | None = None
@@ -247,13 +304,22 @@ class GridRow:
 
 def _rollup(
     checks: list[Check], store: Store, dates: list[date], tz: tzinfo | None
-) -> tuple[Status | None, list[Status | None]]:
-    """Overall (latest) and per-day (trailing history) rollup across
-    ``checks`` -- a single-check list (the drill-in scope) rolls up to
-    exactly that check's own statuses; a multi-check list (the Home scope)
-    rolls up across all of an object's checks."""
+) -> tuple[Status | None, list[tuple[Status | None, Status | None]]]:
+    """Overall (latest) and per-day (latest-of-day plus marker) rollup
+    across ``checks`` -- a single-check list (the drill-in scope) rolls up
+    to exactly that check's own statuses; a multi-check list (the Home
+    scope) rolls up across all of an object's checks.
+
+    Each day's tuple is (latest-of-day, marker): latest-of-day is the
+    worst of each check's own latest-of-day status, i.e. the object's
+    current state that day; marker is computed from that value plus every
+    status any of ``checks`` saw that day, so a same-day recovery on one
+    check still surfaces as a marker even though it no longer moves
+    latest-of-day itself.
+    """
     overall_statuses: list[Status] = []
-    day_buckets: list[list[Status]] = [[] for _ in dates]
+    day_latest_buckets: list[list[Status]] = [[] for _ in dates]
+    day_all_buckets: list[list[Status]] = [[] for _ in dates]
     for check in checks:
         cid = check_id(check)
         latest = store.latest_observation(cid)
@@ -262,11 +328,15 @@ def _rollup(
         history = store.history(cid, limit=_HISTORY_FETCH_LIMIT)
         per_day = bucket_by_day(history, dates, tz)
         for i, day in enumerate(dates):
-            status = per_day[day]
-            if status is not None:
-                day_buckets[i].append(status)
+            day_latest, day_statuses = per_day[day]
+            if day_latest is not None:
+                day_latest_buckets[i].append(day_latest)
+            day_all_buckets[i].extend(day_statuses)
     overall = _worst_or_unknown(overall_statuses)
-    days = [_worst_or_unknown(bucket) for bucket in day_buckets]
+    days: list[tuple[Status | None, Status | None]] = []
+    for i in range(len(dates)):
+        day_latest = _worst_or_unknown(day_latest_buckets[i])
+        days.append((day_latest, _day_marker(day_latest, day_all_buckets[i])))
     return overall, days
 
 
@@ -412,6 +482,34 @@ def _status_cell(status: Status | None) -> Text:
     return text
 
 
+def _marker_glyph_and_style(marker: Status) -> tuple[str, str]:
+    """The (glyph, style) a day cell's trailing marker renders with.
+
+    FAIL and WARN reuse their own status glyph/style verbatim -- a marker
+    for either is exactly as alarming as the status itself. ERROR instead
+    borrows the never-observed glyph/style (a muted "·", not ERROR's own
+    blue "⊘"): here it's usually a config mistake, an unreachable source,
+    or a comparison check's first run with no baseline -- not a data
+    failure -- so it deliberately reads as neutral rather than alarming.
+    """
+    if marker == Status.ERROR:
+        return status_glyph(None), status_style(None)
+    return status_glyph(marker), status_style(marker)
+
+
+def _day_cell(latest: Status | None, marker: Status | None) -> Text:
+    """One trailing-day grid cell: the day's latest status glyph, plus a
+    trailing marker glyph when the day also saw something worse (see
+    :func:`_day_marker`). The day column is a fixed width of 3, so the
+    2-character glyph+marker case still fits."""
+    text = Text(status_glyph(latest), style=status_style(latest))
+    if marker is not None:
+        glyph, style = _marker_glyph_and_style(marker)
+        text.append(glyph, style=style)
+    text.justify = "center"
+    return text
+
+
 def populate_grid(
     table: DataTable, rows: list[GridRow], today: date, label_header: str
 ) -> None:
@@ -426,14 +524,15 @@ def populate_grid(
     table.clear(columns=True)
     table.add_column(label_header, key="label")
     # Explicit widths (content width, before cell_padding is added on top
-    # by the table) rather than auto-sizing to the header text -- both
-    # columns only ever hold a single glyph, so auto-sizing them to their
-    # own 3-7 character headers left just the table's cell_padding as
+    # by the table) rather than auto-sizing to the header text -- the
+    # overall column only ever holds a single glyph, and a day column at
+    # most a glyph plus a one-character marker, so auto-sizing either to
+    # its own 3-7 character header left just the table's cell_padding as
     # breathing room around the glyph.
     table.add_column("overall", key="overall", width=7)
     for day in trailing_dates(today):
         table.add_column(day.strftime("%a"), key=day.isoformat(), width=3)
     for row in rows:
         cells = [row.label, _status_cell(row.overall)]
-        cells.extend(_status_cell(status) for status in row.days)
+        cells.extend(_day_cell(latest, marker) for latest, marker in row.days)
         table.add_row(*cells, key=row.key)
