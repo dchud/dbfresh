@@ -244,6 +244,17 @@ ObjectDetailScreen #detail-edit-checks .edit-value {
     margin-bottom: 0;
 }
 
+/* A fixed-width slot for the Save button, present but empty on rows that
+ * have no Save (a non-editable operator, or a delete-only check), so the
+ * Delete button always lands in the same rightmost column instead of
+ * shifting left into the Save position on Save-less rows. Sized to the
+ * compact Save button plus its margin. */
+ObjectDetailScreen #detail-edit-checks .edit-save {
+    width: 8;
+    height: 1;
+    margin-bottom: 0;
+}
+
 /* Report / History */
 
 #report-text,

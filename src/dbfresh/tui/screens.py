@@ -451,18 +451,22 @@ class ObjectDetailScreen(Screen[bool]):
         ``Horizontal { height: auto; }`` rule in app.tcss, the same rule
         Configure's per-check rows already rely on.
 
-        Each row is three columns -- label, value, buttons -- so a short
-        label (``schema:``) and a long one (``freshness (modified_at)
-        (max_lag):``) still leave every row's inputs and buttons starting
-        at the same x. The label is a ``Label`` with the ``edit-label``
-        class (a fixed width in app.tcss, sized to the longest realistic
-        label); the value is always a nested ``Horizontal`` with the
-        ``edit-value`` class (also fixed-width, sized to the widest case --
-        a ``between`` row's two Inputs plus the "and" between them),
-        holding whichever value widget(s) the row's operator calls for, a
-        single read-only ``Label`` for a non-editable operator, or nothing
-        at all for a check with no editable operand -- so the buttons
-        after it always start at the same x too. Row text uses ``Label``,
+        Each row is four fixed-width columns -- label, value, a Save slot,
+        and Delete -- so a short label (``schema:``) and a long one
+        (``freshness (modified_at) (max_lag):``) still leave every row's
+        inputs and both buttons starting at the same x. The label is a
+        ``Label`` with the ``edit-label`` class (a fixed width in app.tcss,
+        sized to the longest realistic label); the value is always a nested
+        ``Horizontal`` with the ``edit-value`` class (also fixed-width,
+        sized to the widest case -- a ``between`` row's two Inputs plus the
+        "and" between them), holding whichever value widget(s) the row's
+        operator calls for, a single read-only ``Label`` for a non-editable
+        operator, or nothing at all for a check with no editable operand.
+        Save is always wrapped in a fixed-width ``edit-save`` slot -- empty
+        on the rows that have no Save -- so Delete always lands in the same
+        rightmost column instead of shifting left into the Save position;
+        the two buttons therefore read as two aligned columns. Row text
+        uses ``Label``,
         not ``Static`` -- plain ``Static`` declares no width of its own,
         and inside a ``Horizontal`` that leaves Textual sizing it to the
         *rest* of the row's available space instead of to its own content,
@@ -492,6 +496,7 @@ class ObjectDetailScreen(Screen[bool]):
             edit_row = Horizontal(
                 Label(label, classes="edit-label"),
                 Horizontal(classes="edit-value"),
+                Horizontal(classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator == "between":
@@ -504,7 +509,7 @@ class ObjectDetailScreen(Screen[bool]):
             edit_row = Horizontal(
                 Label(f"{label} (between):", classes="edit-label"),
                 Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
-                Button("Save", id=f"detail-save-{i}"),
+                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator in _NON_EDITABLE_OPERATORS:
@@ -514,6 +519,7 @@ class ObjectDetailScreen(Screen[bool]):
             edit_row = Horizontal(
                 Label(f"{label}:", classes="edit-label"),
                 Horizontal(Label(check.expect.describe()), classes="edit-value"),
+                Horizontal(classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         else:
@@ -526,7 +532,7 @@ class ObjectDetailScreen(Screen[bool]):
             edit_row = Horizontal(
                 Label(f"{label} ({check.expect.operator}):", classes="edit-label"),
                 Horizontal(value_input, classes="edit-value"),
-                Button("Save", id=f"detail-save-{i}"),
+                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
 
