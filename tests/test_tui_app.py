@@ -787,7 +787,7 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
 
             assert isinstance(app.screen, HistoryScreen)
             text = str(app.screen.query_one("#history-text").content)
-            assert "2026-07-08 8:00 AM (Wed)" in text
+            assert "2026-07-08  8:00 AM (Wed)" in text
 
     asyncio.run(scenario())
 

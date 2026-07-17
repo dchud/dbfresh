@@ -53,7 +53,8 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
 def format_timestamp_friendly(when: datetime, tz: tzinfo | None = None) -> str:
     """A human-scannable timestamp for the History view -- ISO date, 12-hour
     local time to the minute, and a weekday abbreviation, e.g.
-    ``2026-07-17 2:12 PM (Tue)``.
+    ``2026-07-17  2:12 PM (Tue)``. The hour is space-padded to two digits so
+    a single-digit hour lines up under a two-digit one down a column.
 
     Unlike :func:`format_timestamp`'s ISO 8601 (kept for the digest and the
     JSON output, where an unambiguous machine- and copy-friendly form
@@ -74,7 +75,7 @@ def format_timestamp_friendly(when: datetime, tz: tzinfo | None = None) -> str:
     when = when.astimezone(tz if tz is not None else UTC)
     hour12 = when.hour % 12 or 12
     weekday = calendar.day_abbr[when.weekday()]
-    return f"{when:%Y-%m-%d} {hour12}:{when:%M} {when:%p} ({weekday})"
+    return f"{when:%Y-%m-%d} {hour12:>2}:{when:%M} {when:%p} ({weekday})"
 
 
 def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:

@@ -33,7 +33,7 @@ def test_converts_across_a_date_boundary():
 
 def test_friendly_shows_date_12h_time_and_weekday():
     when = datetime(2026, 7, 17, 14, 12, 0, tzinfo=UTC)
-    assert format_timestamp_friendly(when) == "2026-07-17 2:12 PM (Fri)"
+    assert format_timestamp_friendly(when) == "2026-07-17  2:12 PM (Fri)"
 
 
 def test_friendly_midnight_is_12_am_and_noon_is_12_pm():

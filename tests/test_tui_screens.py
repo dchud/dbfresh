@@ -149,7 +149,7 @@ def test_colorized_history_freshness_row_stays_aligned():
     candidate = {**_CANDIDATE, "metric": "freshness", "label": "freshness"}
     rows = [_row("2026-07-14T12:44:27+00:00", "FAIL", 464533.484447)]
     text = _colorized_history(candidate, rows, tz=None)
-    assert "5d 9h stale (last update: 2026-07-09 3:42 AM (Thu))" in text.plain
+    assert "5d 9h stale (last update: 2026-07-09  3:42 AM (Thu))" in text.plain
 
     style = status_style(Status.FAIL)
     glyph = status_glyph(Status.FAIL)
