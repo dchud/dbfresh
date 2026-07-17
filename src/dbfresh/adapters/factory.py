@@ -25,6 +25,28 @@ _DIALECTS: dict[str, type[Dialect]] = {
     "databricks": DatabricksDialect,
 }
 
+# Source types whose driver is an optional extra, not a core dependency:
+# type -> (import module, pip/uv extra name). Kept out of the base install
+# on purpose -- neither pymssql's native FreeTDS build nor the Databricks
+# connector should be forced on a sqlite-only user -- so when one is missing
+# create_adapter rewords the raw "No module named ..." into a pointer at the
+# extra to add.
+_DRIVER_EXTRAS: dict[str, tuple[str, str]] = {
+    "sqlserver": ("pymssql", "sqlserver"),
+    "databricks": ("databricks", "databricks"),
+}
+
+
+class MissingDriverError(RuntimeError):
+    """A source type's optional driver package isn't installed.
+
+    Raised by :func:`create_adapter` when connecting a source whose driver
+    -- ``pymssql`` for SQL Server, ``databricks-sql-connector`` for
+    Databricks -- was never installed, carrying a message that names the
+    extra to add rather than leaving the caller with a bare
+    ``ModuleNotFoundError``.
+    """
+
 
 def supported_types() -> list[str]:
     """The source type strings the factory can build an adapter for,
@@ -66,7 +88,22 @@ def create_adapter(
     # ``self``.
     if timeout is not None and "timeout" in inspect.signature(cls).parameters:
         kwargs["timeout"] = timeout
-    return cls(**kwargs)
+    try:
+        return cls(**kwargs)
+    except ModuleNotFoundError as exc:
+        # The driver import is deferred to connect time (create_engine is
+        # lazy), so a missing optional driver surfaces here rather than at
+        # import. Reword it into an actionable hint; anything else (an
+        # unrelated missing module) propagates unchanged.
+        driver = _DRIVER_EXTRAS.get(type_)
+        if driver is not None and exc.name == driver[0]:
+            module, extra = driver
+            raise MissingDriverError(
+                f"{type_!r} sources need the optional '{module}' driver, which "
+                f"is not installed. Add the '{extra}' extra, e.g. "
+                f"uv add 'dbfresh[{extra}]' (or pip install 'dbfresh[{extra}]')."
+            ) from exc
+        raise
 
 
 def dialect_for_type(type_: str) -> Dialect:
