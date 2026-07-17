@@ -17,6 +17,7 @@ from pathlib import Path
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.notifications import SeverityLevel
 from textual.widgets import DataTable, Footer, Header, Input, Static
@@ -29,6 +30,7 @@ from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
     GridView,
+    is_header_key,
     last_run_line,
     object_rows,
     populate_grid,
@@ -49,8 +51,8 @@ _SEARCH_INPUT_ID = "grid-search"
 # useful from anywhere -- e.g. re-running while a Report is on top refreshes
 # that same Report in place (see _refresh_topmost_screen).
 #
-# The grid view controls (filter/search/sort) join them for a different
-# reason: they act on Home's own grid and search box specifically, and
+# The grid view controls (filter/search) join them for a different reason:
+# they act on Home's own grid and search box specifically, and
 # App.query_one always resolves against the default screen (see
 # _refresh_topmost_screen's own note on this) -- so left enabled, one of
 # these firing while a different screen is on top would reach straight
@@ -63,7 +65,6 @@ _HOME_ONLY_ACTIONS = frozenset(
         "toggle_non_ok_filter",
         "toggle_search",
         "close_search",
-        "toggle_worst_first",
     }
 )
 
@@ -151,7 +152,6 @@ class DbfreshApp(App):
         Binding("s", "store", "Store"),
         Binding("f", "toggle_non_ok_filter", "Non-OK"),
         Binding("slash", "toggle_search", "Search"),
-        Binding("o", "toggle_worst_first", "Sort"),
         # Only meaningful while the search box is open (see
         # action_close_search) -- not shown in the footer so it doesn't
         # read as globally available when it isn't.
@@ -248,10 +248,10 @@ class DbfreshApp(App):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         """Disable (and, per Textual's own Footer, hide) every Home-only
-        action -- configure/report/store, plus the grid's filter/search/
-        sort controls -- while a screen is already pushed on top of Home;
-        see :data:`_HOME_ONLY_ACTIONS`. Every other action (run, reload,
-        help, quit, and whatever the topmost screen binds for itself) is
+        action -- configure/report/store, plus the grid's filter/search
+        controls -- while a screen is already pushed on top of Home; see
+        :data:`_HOME_ONLY_ACTIONS`. Every other action (run, reload, help,
+        quit, and whatever the topmost screen binds for itself) is
         unaffected -- this only ever narrows that one set.
         """
         return not (action in _HOME_ONLY_ACTIONS and len(self.screen_stack) > 1)
@@ -322,9 +322,9 @@ class DbfreshApp(App):
     def refresh_dashboard(self) -> None:
         """Rebuild the dashboard grid from the current config, store, and
         active view controls (:attr:`_view`) -- the one place all three
-        (a run finishing, a config reload, and every filter/search/sort
-        toggle below) funnel through, so the grid always reflects the
-        view the user last set instead of silently resetting it.
+        (a run finishing, a config reload, and every filter/search toggle
+        below) funnel through, so the grid always reflects the view the
+        user last set instead of silently resetting it.
 
         A config with no checks (or no sources to hang any on) has no rows
         at all -- rather than showing the grid's bare header row, swap in
@@ -342,8 +342,9 @@ class DbfreshApp(App):
         today = datetime.now(tz).date()
         rows = object_rows(config, store, today, tz)
         visible = self._view.apply(rows)
-        populate_grid(table, visible, today, label_header="object")
+        populate_grid(table, visible, today, label_header="object", group_headers=True)
         self._rows_by_key = {row.key: row for row in visible}
+        self._skip_leading_header_cursor(table)
 
         if not rows:
             message: str | None = _EMPTY_STATE_MESSAGE
@@ -371,19 +372,39 @@ class DbfreshApp(App):
         banner.update(self._missing_secrets_text())
         banner.display = bool(self.missing_secrets)
 
-    # -- Home grid view controls: filter / search / sort -------------------
+    def _skip_leading_header_cursor(self, table: DataTable) -> None:
+        """After a grouped (re)populate, row 0 is always a source header --
+        ``DataTable.clear`` resets the cursor to ``(0, 0)`` and
+        ``populate_grid`` never moves it, so left alone it would start
+        parked on a label instead of a selectable object row. Advances the
+        cursor to the first object row when that's the case; a no-op once
+        the grid already has a non-header row under the cursor, and when
+        the grid has no rows at all.
+
+        ``DrillDownTable``'s own cursor-skip only fires on the up/down
+        actions themselves, not on this programmatic reset, so the initial
+        position needs this separate nudge.
+        """
+        if table.row_count == 0:
+            return
+        leading_key = table.coordinate_to_cell_key(Coordinate(0, 0)).row_key.value
+        if not is_header_key(leading_key):
+            return
+        for row_index in range(1, table.row_count):
+            key = table.coordinate_to_cell_key(Coordinate(row_index, 0)).row_key.value
+            if not is_header_key(key):
+                table.cursor_coordinate = Coordinate(row_index, 0)
+                return
+
+    # -- Home grid view controls: filter / search ---------------------------
     #
-    # All three toggle a field on self._view and call refresh_dashboard(),
-    # which funnels the whole rebuild -- rows, grid, empty-state, and the
+    # Both toggle a field on self._view and call refresh_dashboard(), which
+    # funnels the whole rebuild -- rows, grid, empty-state, and the
     # indicator below -- through GridView.apply() in one place (see its own
     # docstring). Each is Home-only (see _HOME_ONLY_ACTIONS / check_action).
 
     def action_toggle_non_ok_filter(self) -> None:
         self._view.hide_ok = not self._view.hide_ok
-        self.refresh_dashboard()
-
-    def action_toggle_worst_first(self) -> None:
-        self._view.worst_first = not self._view.worst_first
         self.refresh_dashboard()
 
     def action_toggle_search(self) -> None:

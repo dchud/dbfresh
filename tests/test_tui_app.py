@@ -12,6 +12,7 @@ from dbfresh.config import load_config_tolerant
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp
+from dbfresh.tui.dashboard import header_key, is_header_key
 from dbfresh.tui.screens import HistoryScreen, ObjectDetailScreen, ReportScreen
 
 _OBJECT_ROW_KEY = "s\x1ft"  # source "s", object "t" -- matches GridRow.key's shape
@@ -78,8 +79,8 @@ def _multi_object_config(path):
     return path
 
 
-def _seed_status(store, object_, status):
-    check = Check(source="s", object=object_, metric="row_count")
+def _seed_status(store, object_, status, source="s"):
+    check = Check(source=source, object=object_, metric="row_count")
     run_id = store.start_run()
     store.record_observation(
         run_id,
@@ -87,7 +88,7 @@ def _seed_status(store, object_, status):
             object=object_,
             metric="row_count",
             status=status,
-            source="s",
+            source=source,
             value=1,
             check_id=check_id(check),
         ),
@@ -136,9 +137,9 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            # One row for s.t (object-scope), rolled up to the worst of its
-            # two checks.
-            assert table.row_count == 1
+            # A source header row for "s", plus one object row for s.t
+            # (object-scope), rolled up to the worst of its two checks.
+            assert table.row_count == 2
             assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # FAIL
 
             await pilot.press("enter")
@@ -1000,7 +1001,7 @@ def test_status_grids_keep_cell_colors_on_the_cursor_row(tmp_path):
     asyncio.run(scenario())
 
 
-# -- Home grid view controls: filter / search / sort ------------------------
+# -- Home grid view controls: filter / search --------------------------------
 
 
 def _multi_object_app(tmp_path):
@@ -1020,17 +1021,22 @@ def test_toggle_non_ok_filter_hides_ok_rows_and_restores_on_second_press(tmp_pat
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            assert table.row_count == 3
+            assert table.row_count == 4  # header("s") + archive/items/orders
 
             await pilot.press("f")
             await pilot.pause()
             # orders is OK -- hidden; items (FAIL) and archive (unobserved)
-            # stay, since only exact-OK is dropped.
-            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
+            # stay, since only exact-OK is dropped -- source "s" still has
+            # visible objects, so its header stays too.
+            assert set(_row_order(table)) == {
+                header_key("s"),
+                "s\x1fitems",
+                "s\x1farchive",
+            }
 
             await pilot.press("f")
             await pilot.pause()
-            assert table.row_count == 3
+            assert table.row_count == 4
 
     asyncio.run(scenario())
 
@@ -1050,11 +1056,11 @@ def test_search_filters_rows_live_as_text_changes(tmp_path):
 
             search.value = "item"
             await pilot.pause()
-            assert _row_order(table) == ["s\x1fitems"]
+            assert _row_order(table) == [header_key("s"), "s\x1fitems"]
 
             search.value = ""
             await pilot.pause()
-            assert table.row_count == 3
+            assert table.row_count == 4
 
     asyncio.run(scenario())
 
@@ -1077,7 +1083,7 @@ def test_search_enter_commits_and_hides_box_keeping_the_filter(tmp_path):
 
             assert not search.display
             # The filter is still applied -- only closed, not cancelled.
-            assert _row_order(table) == ["s\x1fitems"]
+            assert _row_order(table) == [header_key("s"), "s\x1fitems"]
             assert app.focused is table
 
     asyncio.run(scenario())
@@ -1101,7 +1107,7 @@ def test_search_escape_clears_the_filter_and_hides_the_box(tmp_path):
 
             assert not search.display
             assert search.value == ""
-            assert table.row_count == 3
+            assert table.row_count == 4
             assert app.focused is table
 
     asyncio.run(scenario())
@@ -1113,34 +1119,12 @@ def test_escape_before_search_is_opened_does_nothing(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            assert table.row_count == 3
+            assert table.row_count == 4
 
             await pilot.press("escape")
             await pilot.pause()
 
-            assert table.row_count == 3
-
-    asyncio.run(scenario())
-
-
-def test_toggle_worst_first_sorts_by_severity_then_restores_default_order(tmp_path):
-    async def scenario():
-        app = _multi_object_app(tmp_path)
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            table = app.query_one("#dashboard-grid", DataTable)
-            # Default order: source/object, i.e. archive, items, orders.
-            assert _row_order(table) == ["s\x1farchive", "s\x1fitems", "s\x1forders"]
-
-            await pilot.press("o")
-            await pilot.pause()
-            # FAIL (items) outranks OK (orders); never-observed (archive)
-            # is a non-severity state, sorted after every real status.
-            assert _row_order(table) == ["s\x1fitems", "s\x1forders", "s\x1farchive"]
-
-            await pilot.press("o")
-            await pilot.pause()
-            assert _row_order(table) == ["s\x1farchive", "s\x1fitems", "s\x1forders"]
+            assert table.row_count == 4
 
     asyncio.run(scenario())
 
@@ -1160,12 +1144,7 @@ def test_view_status_indicator_reflects_active_controls_and_hides_when_inactive(
             assert indicator.display
             assert "non-OK" in str(indicator.render())
 
-            await pilot.press("o")
-            await pilot.pause()
-            assert "worst-first" in str(indicator.render())
-
             await pilot.press("f")
-            await pilot.press("o")
             await pilot.pause()
             assert not indicator.display
 
@@ -1196,8 +1175,8 @@ def test_search_matching_nothing_shows_no_matching_rows_not_the_empty_state(tmp_
 
 def test_active_view_survives_a_dashboard_refresh(tmp_path):
     """A run (or a reload) rebuilds the grid through refresh_dashboard --
-    the active filter/search/sort must still be applied afterward rather
-    than silently resetting."""
+    the active filter/search must still be applied afterward rather than
+    silently resetting."""
 
     async def scenario():
         app = _multi_object_app(tmp_path)
@@ -1206,11 +1185,155 @@ def test_active_view_survives_a_dashboard_refresh(tmp_path):
             await pilot.press("f")
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
+            assert set(_row_order(table)) == {
+                header_key("s"),
+                "s\x1fitems",
+                "s\x1farchive",
+            }
 
             app.refresh_dashboard()
             await pilot.pause()
 
-            assert set(_row_order(table)) == {"s\x1fitems", "s\x1farchive"}
+            assert set(_row_order(table)) == {
+                header_key("s"),
+                "s\x1fitems",
+                "s\x1farchive",
+            }
+
+    asyncio.run(scenario())
+
+
+# -- Home grid grouping: source headers and cursor skip ----------------------
+
+
+def _two_source_config(path):
+    """Two sources, one object each -- "s" -> "orders", "t" -> "items" --
+    so a Pilot arrow-key traversal actually crosses a header row sitting
+    between two objects (the single-source _multi_object_app above never
+    puts a header anywhere but the very top)."""
+    path.write_text(
+        "sources:\n"
+        '  s: { type: sqlite, database: "unused.db" }\n'
+        '  t: { type: sqlite, database: "unused.db" }\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: orders\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+        "  - source: t\n"
+        "    object: items\n"
+        "    metric: row_count\n"
+        "    expect: { between: [1, 10] }\n"
+    )
+    return path
+
+
+def _two_source_app(tmp_path):
+    cfg = _two_source_config(tmp_path / "config.yaml")
+    store_path = tmp_path / "obs.db"
+    store = Store(store_path)
+    _seed_status(store, "orders", Status.OK, source="s")
+    _seed_status(store, "items", Status.FAIL, source="t")
+    store.close()
+    return DbfreshApp(config_path=cfg, store_path=str(store_path))
+
+
+def test_home_grid_groups_objects_under_a_header_row_per_source(tmp_path):
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _row_order(table) == [
+                header_key("s"),
+                "s\x1forders",
+                header_key("t"),
+                "t\x1fitems",
+            ]
+            assert table.get_cell("s\x1forders", "label") == "orders"
+            assert table.get_cell("t\x1fitems", "label") == "items"
+
+    asyncio.run(scenario())
+
+
+def test_home_grid_initial_cursor_skips_the_leading_header(tmp_path):
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            assert row_key.value == "s\x1forders"
+
+    asyncio.run(scenario())
+
+
+def test_home_grid_cursor_down_skips_a_header_row_between_two_sources(tmp_path):
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            # Starts on s.orders (row 1); row 2 is header("t") -- down must
+            # skip straight to t.items (row 3), not land on the header.
+            await pilot.press("down")
+            await pilot.pause()
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            assert row_key.value == "t\x1fitems"
+            assert not is_header_key(row_key.value)
+
+    asyncio.run(scenario())
+
+
+def test_home_grid_cursor_up_skips_a_header_row_between_two_sources(tmp_path):
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            await pilot.press("down")  # s.orders -> t.items (skips header("t"))
+            await pilot.pause()
+            await pilot.press("up")  # t.items -> s.orders (skips header("t"))
+            await pilot.pause()
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            assert row_key.value == "s\x1forders"
+
+    asyncio.run(scenario())
+
+
+def test_home_grid_cursor_up_at_the_first_object_row_does_not_move_to_the_header(
+    tmp_path,
+):
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            await pilot.press("up")  # already on s.orders -- header("s") is above
+            await pilot.pause()
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            assert row_key.value == "s\x1forders"
+
+    asyncio.run(scenario())
+
+
+def test_toggle_non_ok_filter_drops_a_sources_header_when_all_its_objects_hide(
+    tmp_path,
+):
+    """The 'f' filter narrows rows before populate_grid groups them -- a
+    source with nothing left visible contributes no header at all, rather
+    than an orphaned header over zero objects."""
+
+    async def scenario():
+        app = _two_source_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            await pilot.press("f")
+            await pilot.pause()
+            # s.orders is OK -- hidden, and with it source "s"'s header;
+            # t.items (FAIL) and its header stay.
+            assert _row_order(table) == [header_key("t"), "t\x1fitems"]
 
     asyncio.run(scenario())

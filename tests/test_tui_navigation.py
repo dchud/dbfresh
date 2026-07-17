@@ -167,7 +167,6 @@ def test_home_footer_shows_its_own_nav_keys_and_the_drill_in_hint(tmp_path):
                 "s",
                 "f",
                 "slash",
-                "o",
                 "question_mark",
                 "q",
                 "enter",
@@ -180,7 +179,7 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
     """Configure/Report/Store never show up on a screen other than Home --
     once any screen is pushed, only Run/Reload/Help/Quit (plus whatever
     that screen binds for itself) remain. The grid's own view controls
-    (filter/search/sort) are Home-only for the same reason."""
+    (filter/search) are Home-only for the same reason."""
 
     async def scenario():
         app = _app(tmp_path)
@@ -192,7 +191,7 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
                 await pilot.pause()
                 assert isinstance(app.screen, expect_type)
                 keys = _bound_keys(app.screen)
-                assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
+                assert not ({"c", "p", "s", "f", "slash"} & keys)
                 assert {"r", "R", "question_mark", "q", "escape"} <= keys
                 await pilot.press("escape")
                 await pilot.pause()
@@ -201,7 +200,7 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
             await pilot.pause()
             assert isinstance(app.screen, ConfigureScreen)
             keys = _bound_keys(app.screen)
-            assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
+            assert not ({"c", "p", "s", "f", "slash"} & keys)
             assert {"r", "R", "question_mark", "q", "escape"} <= keys
 
     asyncio.run(scenario())
@@ -216,7 +215,7 @@ def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(tmp_p
             await pilot.pause()
             assert isinstance(app.screen, ObjectDetailScreen)
             keys = _bound_keys(app.screen)
-            assert not ({"c", "p", "s", "f", "slash", "o"} & keys)
+            assert not ({"c", "p", "s", "f", "slash"} & keys)
             assert {"enter", "escape", "r", "R", "O", "question_mark", "q"} <= keys
 
     asyncio.run(scenario())
@@ -338,7 +337,6 @@ def test_help_overlay_opens_from_home_with_bindings_and_status_legend(tmp_path):
             assert "reload config" in bindings_text
             assert "non-OK filter" in bindings_text
             assert "search by object" in bindings_text
-            assert "worst-first sort" in bindings_text
             assert "run this object" in bindings_text
             legend_text = str(app.screen.query_one("#help-legend").render())
             assert "ok" in legend_text and "never observed" in legend_text
@@ -400,7 +398,7 @@ def test_reload_config_picks_up_an_edit_made_outside_the_session(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid")
-            assert table.row_count == 1
+            assert table.row_count == 2  # header("s") + s.t
 
             # Simulate an edit made in another window/editor while the TUI
             # is already running -- config is otherwise only ever (re)read
@@ -415,7 +413,7 @@ def test_reload_config_picks_up_an_edit_made_outside_the_session(tmp_path):
             await pilot.pause()
 
             table = app.query_one("#dashboard-grid")
-            assert table.row_count == 2
+            assert table.row_count == 3  # header("s") + s.t + s.u
             messages = [n.message for n in app._notifications]
             assert any("config reloaded" in m for m in messages)
 
@@ -438,6 +436,6 @@ def test_reload_config_failure_is_caught_not_crashed(tmp_path):
             # The app survived -- the dashboard is still queryable and
             # still reflects the last-known-good config.
             table = app.query_one("#dashboard-grid")
-            assert table.row_count == 1
+            assert table.row_count == 2  # header("s") + s.t
 
     asyncio.run(scenario())

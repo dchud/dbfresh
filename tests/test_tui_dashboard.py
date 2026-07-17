@@ -16,6 +16,8 @@ from dbfresh.tui.dashboard import (
     bucket_by_day,
     check_label,
     check_rows,
+    header_key,
+    is_header_key,
     last_run_line,
     object_rows,
     populate_grid,
@@ -620,7 +622,111 @@ def test_populate_grid_overall_column_never_carries_a_marker():
     asyncio.run(scenario())
 
 
-# -- GridView (Home grid filter/search/sort) -------------------------------
+def test_populate_grid_ungrouped_label_is_full_source_dot_object():
+    # group_headers off (the default, the drill-in scope) -- unchanged from
+    # before grouping existed: the label cell holds the row's own row.label.
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            orders_key = next(r for r in rows if r.object == "orders").key
+            assert table.get_cell(orders_key, "label") == "s.orders"
+
+    asyncio.run(scenario())
+
+
+# -- populate_grid(group_headers=True) -- the Home grid's source grouping --
+
+
+def test_populate_grid_grouped_inserts_one_header_row_per_source():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)  # sources s, t
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(
+                table, rows, _TODAY, label_header="object", group_headers=True
+            )
+            assert table.row_count == len(rows) + 2  # one header per source
+            row_keys = [key.value for key in table.rows]
+            assert row_keys == [
+                header_key("s"),
+                "s\x1forders",
+                header_key("t"),
+                "t\x1fitems",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_grouped_object_row_label_is_object_only():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(
+                table, rows, _TODAY, label_header="object", group_headers=True
+            )
+            # Not "s.orders" -- the header row above it already names the
+            # source.
+            assert table.get_cell("s\x1forders", "label") == "orders"
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_grouped_header_row_label_is_bold_source_name():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(
+                table, rows, _TODAY, label_header="object", group_headers=True
+            )
+            cell = table.get_cell(header_key("s"), "label")
+            assert cell.plain == "s"
+            assert cell.style == "bold"
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_grouped_header_row_overall_and_day_cells_are_blank():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(
+                table, rows, _TODAY, label_header="object", group_headers=True
+            )
+            assert table.get_cell(header_key("s"), "overall") == ""
+            assert table.get_cell(header_key("s"), _TODAY.isoformat()) == ""
+
+    asyncio.run(scenario())
+
+
+# -- header_key / is_header_key ---------------------------------------------
+
+
+def test_header_key_is_distinct_from_a_real_object_row_key():
+    assert header_key("s") != "s\x1forders"
+
+
+def test_is_header_key_true_only_for_a_header_key():
+    assert is_header_key(header_key("s"))
+    assert not is_header_key("s\x1forders")
+    assert not is_header_key(None)
+
+
+# -- GridView (Home grid filter/search) --------------------------------------
 
 
 def _view_row(label: str, overall: Status | None) -> GridRow:
@@ -671,30 +777,21 @@ def test_grid_view_search_matching_nothing_returns_empty():
     assert GridView(search="nonexistent").apply(rows) == []
 
 
-def test_grid_view_worst_first_orders_error_fail_warn_ok_then_skipped_then_unknown():
+def test_grid_view_never_reorders_the_incoming_source_object_order():
+    # populate_grid's grouping depends on rows staying in (source, object)
+    # order -- filtering must only ever narrow that order, never reorder it.
     rows = _view_rows()
-    visible = GridView(worst_first=True).apply(rows)
-    assert [r.label for r in visible] == ["t.d", "s.c", "s.b", "s.a", "t.e", "t.f"]
+    visible = GridView(hide_ok=True).apply(rows)
+    assert visible == [row for row in rows if row.overall != Status.OK]
 
 
-def test_grid_view_worst_first_ties_fall_back_to_incoming_order():
-    rows = [
-        _view_row("t.second", Status.FAIL),
-        _view_row("s.first", Status.FAIL),
-    ]
-    visible = GridView(worst_first=True).apply(rows)
-    # Both FAIL -- the incoming (source/object) order breaks the tie rather
-    # than an unstable or alphabetical one.
-    assert [r.label for r in visible] == ["t.second", "s.first"]
-
-
-def test_grid_view_combines_filter_search_and_sort():
+def test_grid_view_combines_filter_and_search():
     rows = [
         _view_row("s.orders", Status.OK),
         _view_row("s.order_items", Status.ERROR),
         _view_row("s.other", Status.WARN),
     ]
-    view = GridView(hide_ok=True, search="order", worst_first=True)
+    view = GridView(hide_ok=True, search="order")
     visible = view.apply(rows)
     assert [r.label for r in visible] == ["s.order_items"]
 
@@ -702,7 +799,6 @@ def test_grid_view_combines_filter_search_and_sort():
 def test_grid_view_active_true_when_any_control_is_set():
     assert GridView(hide_ok=True).active
     assert GridView(search="x").active
-    assert GridView(worst_first=True).active
 
 
 def test_grid_view_status_text_empty_when_inactive():
@@ -710,7 +806,13 @@ def test_grid_view_status_text_empty_when_inactive():
 
 
 def test_grid_view_status_text_lists_each_active_control():
-    text = GridView(hide_ok=True, search="abc", worst_first=True).status_text()
+    text = GridView(hide_ok=True, search="abc").status_text()
     assert "non-OK only" in text
     assert "abc" in text
-    assert "worst-first" in text
+
+
+def test_grid_view_has_no_worst_first_field():
+    # Grouping (populate_grid's group_headers) is incompatible with a
+    # global severity sort -- retired in favor of the non-OK filter ('f')
+    # for triage.
+    assert "worst_first" not in GridView.__dataclass_fields__
