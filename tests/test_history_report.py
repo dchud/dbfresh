@@ -63,8 +63,39 @@ def test_render_history_shows_header_and_rows():
     assert "10000" in text
     assert "12000" in text
     assert "FAIL" in text
-    assert "▲" in text  # 10000 -> 12000 rises
-    assert "▼" in text  # 12000 -> 500 falls
+    # no trend column -- value direction is redundant with status + value.
+    assert "▲" not in text
+    assert "▼" not in text
+    assert "trend" not in text
+
+
+def test_render_history_renders_rows_in_the_order_given():
+    """render_history doesn't reorder ``rows`` -- it's the caller's job
+    (:meth:`~dbfresh.store.Store.history` for both the CLI and the TUI) to
+    hand rows in the order that should appear on screen, newest first."""
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "row_count",
+        "label": "row_count",
+    }
+    rows = [
+        {
+            "observed_at": "2026-07-10T00:00:00+00:00",
+            "status": "FAIL",
+            "value": 500.0,
+            "value_text": None,
+        },
+        {
+            "observed_at": "2026-07-08T00:00:00+00:00",
+            "status": "OK",
+            "value": 10000.0,
+            "value_text": None,
+        },
+    ]
+    text = render_history(candidate, rows)
+    assert text.index("2026-07-10") < text.index("2026-07-08")
 
 
 def test_render_history_row_count_shown_as_plain_integer():
@@ -108,7 +139,7 @@ def test_render_history_null_rate_shown_as_percentage():
     assert "4.0%" in text
 
 
-def test_render_history_freshness_shown_as_duration_without_parenthetical():
+def test_render_history_freshness_shown_as_duration_with_reconstructed_timestamp():
     candidate = {
         "check_id": "aaa111222333",
         "source": "warehouse",
@@ -125,10 +156,29 @@ def test_render_history_freshness_shown_as_duration_without_parenthetical():
         },
     ]
     text = render_history(candidate, rows)
-    assert "5d 9h stale" in text
-    # history rows stay compact -- the reconstructed absolute timestamp is
-    # digest-only, where a full line is available instead of a fixed-width
-    # table column.
+    # Same reconstruction _format_freshness_observed does for the digest --
+    # this row's own observed_at (464533.484447s before it) is the "now"
+    # that produced the lag, so it stands in for run.started_at here.
+    assert "5d 9h stale (last update: 2026-07-09T03:42:13Z)" in text
+
+
+def test_render_history_non_freshness_rows_omit_last_update():
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "row_count",
+        "label": "row_count",
+    }
+    rows = [
+        {
+            "observed_at": "2026-07-08T00:00:00+00:00",
+            "status": "OK",
+            "value": 10000.0,
+            "value_text": None,
+        },
+    ]
+    text = render_history(candidate, rows)
     assert "last update" not in text
 
 
@@ -227,7 +277,10 @@ def test_render_history_tolerates_rows_without_expected_or_error_keys():
     assert "10000" in text
 
 
-def test_render_history_falls_back_to_value_text():
+def test_render_history_summarizes_schema_fingerprint():
+    # A schema check's value lives in value_text (value is None), and the
+    # full column fingerprint would dwarf the table -- so it renders as a
+    # column count rather than the raw "name:type|..." string.
     candidate = {
         "check_id": "aaa111222333",
         "source": "warehouse",
@@ -240,11 +293,20 @@ def test_render_history_falls_back_to_value_text():
             "observed_at": "2026-07-10T00:00:00+00:00",
             "status": "OK",
             "value": None,
-            "value_text": "fingerprint-xyz",
+            "value_text": "id:INTEGER|email:TEXT|amount:REAL",
         },
     ]
     text = render_history(candidate, rows)
-    assert "fingerprint-xyz" in text
+    assert "3 cols" in text
+    assert "id:INTEGER" not in text
+
+
+def test_summarize_fingerprint_counts_and_pluralizes():
+    from dbfresh.report import _summarize_fingerprint
+
+    assert _summarize_fingerprint("") == "0 cols"
+    assert _summarize_fingerprint("id:INTEGER") == "1 col"
+    assert _summarize_fingerprint("id:INTEGER|email:TEXT") == "2 cols"
 
 
 def test_render_history_collapses_a_multiline_error_onto_one_row():

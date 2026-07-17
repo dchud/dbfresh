@@ -195,7 +195,7 @@ def test_record_observation_uses_explicit_label_for_assertions(tmp_path):
     store.close()
 
 
-def test_history_returns_recent_observations_oldest_first(tmp_path):
+def test_history_returns_recent_observations_newest_first(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     for day, value in [(1, 10), (2, 20), (3, 30)]:
@@ -205,7 +205,7 @@ def test_history_returns_recent_observations_oldest_first(tmp_path):
             observed_at=datetime(2026, 7, day, tzinfo=UTC),
         )
     rows = store.history("abc123def456", limit=30)
-    assert [r["value"] for r in rows] == [10.0, 20.0, 30.0]
+    assert [r["value"] for r in rows] == [30.0, 20.0, 10.0]
     store.close()
 
 
@@ -219,7 +219,7 @@ def test_history_limits_to_n_most_recent(tmp_path):
             observed_at=datetime(2026, 7, day, tzinfo=UTC),
         )
     rows = store.history("abc123def456", limit=2)
-    assert [r["value"] for r in rows] == [20.0, 30.0]
+    assert [r["value"] for r in rows] == [30.0, 20.0]
     store.close()
 
 

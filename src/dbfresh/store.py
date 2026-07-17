@@ -427,13 +427,13 @@ class Store:
         return None
 
     def history(self, check_id: str, limit: int = 30) -> list[dict]:
-        """A check's most recent observations, oldest first."""
+        """A check's most recent observations, newest first."""
         rows = self._conn.execute(
             "SELECT * FROM observation WHERE check_id = ? "
             "ORDER BY observed_at DESC LIMIT ?",
             (check_id, limit),
         ).fetchall()
-        return [dict(row) for row in reversed(rows)]
+        return [dict(row) for row in rows]
 
     def find_checks(
         self,

@@ -127,3 +127,35 @@ def test_colorized_history_aligns_the_value_column_including_skipped():
     )[-2:]
     assert "OK" in ok_line and "SKIPPED" in skipped_line
     assert ok_line.index("10000") == skipped_line.index("10000")
+
+
+def test_colorized_history_has_no_trend_column():
+    rows = [
+        _row("2026-07-08T00:00:00+00:00", "OK", 10000.0),
+        _row("2026-07-09T00:00:00+00:00", "OK", 12000.0),
+        _row("2026-07-10T00:00:00+00:00", "FAIL", 500.0),
+    ]
+    text = _colorized_history(_CANDIDATE, rows, tz=None).plain
+    assert "▲" not in text
+    assert "▼" not in text
+    assert "trend" not in text
+
+
+def test_colorized_history_freshness_row_stays_aligned():
+    """A freshness row's value ("<duration> stale (last update: <ts>)") is
+    far wider than a plain number, but the status field -- which
+    ``_colorized_history`` locates by fixed offset -- sits ahead of it, so
+    recoloring still lands on the right slice of each line."""
+    candidate = {**_CANDIDATE, "metric": "freshness", "label": "freshness"}
+    rows = [_row("2026-07-14T12:44:27+00:00", "FAIL", 464533.484447)]
+    text = _colorized_history(candidate, rows, tz=None)
+    assert "5d 9h stale (last update: 2026-07-09T03:42:13Z)" in text.plain
+
+    style = status_style(Status.FAIL)
+    glyph = status_glyph(Status.FAIL)
+    segments = [
+        text.plain[span.start : span.end] for span in text.spans if span.style == style
+    ]
+    assert any(
+        segment.strip().startswith(glyph) and "FAIL" in segment for segment in segments
+    )
