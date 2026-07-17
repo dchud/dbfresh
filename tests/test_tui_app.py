@@ -1,6 +1,7 @@
 import asyncio
 import re
 import threading
+from datetime import UTC, datetime
 
 from textual.widgets import DataTable, Static
 
@@ -756,7 +757,11 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
         store_path = tmp_path / "obs.db"
         store = Store(store_path)
         cid = check_id(_row_count_check())
-        run_id = store.start_run()
+        # Noon UTC is 8:00 AM in New York (EDT), so a friendly History
+        # timestamp of "8:00 AM" proves the calendar timezone -- not UTC --
+        # was applied.
+        observed_at = datetime(2026, 7, 8, 12, 0, 0, tzinfo=UTC)
+        run_id = store.start_run(started_at=observed_at)
         store.record_observation(
             run_id,
             Result(
@@ -767,8 +772,9 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
                 value=3,
                 check_id=cid,
             ),
+            observed_at=observed_at,
         )
-        store.finish_run(run_id, Status.OK)
+        store.finish_run(run_id, Status.OK, finished_at=observed_at)
         store.close()
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
@@ -781,7 +787,7 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
 
             assert isinstance(app.screen, HistoryScreen)
             text = str(app.screen.query_one("#history-text").content)
-            assert _OFFSET_TIMESTAMP.search(text)
+            assert "2026-07-08  8:00 AM (Wed)" in text
 
     asyncio.run(scenario())
 

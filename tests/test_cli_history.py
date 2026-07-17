@@ -166,7 +166,7 @@ def test_history_uses_calendar_timezone(tmp_path, capsys, seed_observations):
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert "2026-07-08T08:00:00-04:00" in out
+    assert "2026-07-08  8:00 AM (Wed)" in out
 
 
 def test_history_reads_dotenv_beside_config_for_interpolation(

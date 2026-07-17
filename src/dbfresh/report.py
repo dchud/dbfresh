@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import sys
 import threading
@@ -47,6 +48,34 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
     when = when.astimezone(tz if tz is not None else UTC).replace(microsecond=0)
     text = when.isoformat()
     return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
+
+
+def format_timestamp_friendly(when: datetime, tz: tzinfo | None = None) -> str:
+    """A human-scannable timestamp for the History view -- ISO date, 12-hour
+    local time to the minute, and a weekday abbreviation, e.g.
+    ``2026-07-17  2:12 PM (Tue)``. The hour is space-padded to two digits so
+    a single-digit hour lines up under a two-digit one down a column.
+
+    Unlike :func:`format_timestamp`'s ISO 8601 (kept for the digest and the
+    JSON output, where an unambiguous machine- and copy-friendly form
+    matters), this trades the numeric offset and seconds for easier
+    scanning: the time is shown in ``tz`` (the app's display timezone,
+    local by default) with no printed offset.
+
+    The weekday and AM/PM come from the standard library
+    (:data:`calendar.day_abbr` and ``strftime('%p')``) rather than
+    hardcoded literals. dbfresh never calls :func:`locale.setlocale`, so
+    both resolve in the process's default "C" locale -- English, and
+    independent of the ``LC_*`` environment -- which keeps the output
+    stable across machines and in tests; they localize only if the app
+    ever opts in via ``setlocale``.
+    """
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    when = when.astimezone(tz if tz is not None else UTC)
+    hour12 = when.hour % 12 or 12
+    weekday = calendar.day_abbr[when.weekday()]
+    return f"{when:%Y-%m-%d} {hour12:>2}:{when:%M} {when:%p} ({weekday})"
 
 
 def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:
@@ -112,7 +141,10 @@ def _format_observed(metric: str | None, value: Any) -> str:
 
 
 def _format_freshness_observed(
-    lag_seconds: float, reference: datetime | None, tz: tzinfo | None
+    lag_seconds: float,
+    reference: datetime | None,
+    tz: tzinfo | None,
+    formatter: Callable[[datetime, tzinfo | None], str] = format_timestamp,
 ) -> str:
     """'<duration> stale', plus the reconstructed absolute last-update time
     when a reference instant is available.
@@ -122,12 +154,16 @@ def _format_freshness_observed(
     the source's last-update timestamp exactly, not approximately: runner.py
     resolves ``now`` once per run and reuses that same value both for the
     lag computation and (elsewhere) as the persisted ``observed_at``.
+
+    ``formatter`` renders that absolute time -- the ISO
+    :func:`format_timestamp` by default (the digest), or
+    :func:`format_timestamp_friendly` when the History view passes it.
     """
     duration = _format_duration(lag_seconds)
     if reference is None:
         return f"{duration} stale"
     last_update = reference - timedelta(seconds=lag_seconds)
-    return f"{duration} stale (last update: {format_timestamp(last_update, tz)})"
+    return f"{duration} stale (last update: {formatter(last_update, tz)})"
 
 
 def render_digest(
@@ -298,14 +334,17 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
         observed_at = row["observed_at"]
-        observed = format_timestamp(datetime.fromisoformat(observed_at), tz)
+        observed = format_timestamp_friendly(datetime.fromisoformat(observed_at), tz)
         if metric == "freshness" and isinstance(value, (int, float)):
             # The reconstructed absolute last-update time the digest also
             # shows (_format_freshness_observed): this row's own observed_at
             # is the "now" that produced this lag, the role run.started_at
-            # plays there.
+            # plays there. The History view renders it in the same friendly
+            # form as the observed_at column, not the digest's ISO.
             reference = datetime.fromisoformat(observed_at)
-            display = _format_freshness_observed(value, reference, tz)
+            display = _format_freshness_observed(
+                value, reference, tz, format_timestamp_friendly
+            )
         elif metric == "schema" and isinstance(value, str) and value:
             display = _summarize_fingerprint(value)
         else:

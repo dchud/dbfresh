@@ -59,7 +59,7 @@ def test_render_history_shows_header_and_rows():
     text = render_history(candidate, rows)
     assert "warehouse.dbo.fct_sales" in text
     assert "aaa111222333" in text
-    assert "2026-07-08T00:00:00Z" in text
+    assert "2026-07-08 12:00 AM (Wed)" in text
     assert "10000" in text
     assert "12000" in text
     assert "FAIL" in text
@@ -159,7 +159,7 @@ def test_render_history_freshness_shown_as_duration_with_reconstructed_timestamp
     # Same reconstruction _format_freshness_observed does for the digest --
     # this row's own observed_at (464533.484447s before it) is the "now"
     # that produced the lag, so it stands in for run.started_at here.
-    assert "5d 9h stale (last update: 2026-07-09T03:42:13Z)" in text
+    assert "5d 9h stale (last update: 2026-07-09  3:42 AM (Thu))" in text
 
 
 def test_render_history_non_freshness_rows_omit_last_update():
@@ -199,7 +199,7 @@ def test_render_history_uses_configured_display_timezone():
         },
     ]
     text = render_history(candidate, rows, tz=ZoneInfo("America/New_York"))
-    assert "2026-07-08T08:00:00-04:00" in text
+    assert "2026-07-08  8:00 AM (Wed)" in text
 
 
 def test_render_history_handles_no_observations():
