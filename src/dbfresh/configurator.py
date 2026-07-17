@@ -470,6 +470,38 @@ def check_bearing_files(config_path: str | Path) -> list[Path]:
     return unique
 
 
+def _read_config_text(path: Path) -> tuple[str, str]:
+    """A config file's text with universal-newline translation, plus the
+    newline style to restore when writing it back.
+
+    Every splice in this module works on ``\\n``-terminated lines, so the
+    editing logic never special-cases line endings. Pairing the text with
+    the file's detected newline lets :func:`_write_config_text` put the
+    original style back -- editing one check in a CRLF-terminated file must
+    not rewrite every other line to LF, which would turn a one-line edit
+    into a whole-file diff on repos that keep CRLF. A file mixing endings
+    normalizes to its first-seen style; an empty or LF file is ``\\n``.
+    """
+    raw = path.read_bytes()
+    if b"\r\n" in raw:
+        newline = "\r\n"
+    elif b"\r" in raw:
+        newline = "\r"
+    else:
+        newline = "\n"
+    text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    return text, newline
+
+
+def _write_config_text(path: Path, text: str, newline: str = "\n") -> None:
+    """Write config ``text`` (``\\n``-terminated lines) to ``path``,
+    translating each ``\\n`` to ``newline`` so the file keeps the ending
+    style :func:`_read_config_text` detected. A freshly created file has no
+    prior style, so it takes the ``\\n`` default and is written verbatim.
+    """
+    path.write_text(text, encoding="utf-8", newline=newline)
+
+
 def _find_top_level_key(lines: list[str], key: str) -> int | None:
     """The line index of a column-0 ``key:`` line, or ``None`` if absent."""
     pattern = re.compile(rf"^{re.escape(key)}:(.*)$")
@@ -576,10 +608,10 @@ def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> 
         # explicit type across the whole function rather than one pinned
         # to this branch's literal shape.
         raw: dict[str, Any] = {"sources": {name: entry}, "checks": []}
-        config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False))
         return
 
-    text = config_path.read_text()
+    text, newline = _read_config_text(config_path)
     raw = yaml.safe_load(text) or {}
     rendered = yaml.safe_dump({name: entry}, sort_keys=False)
     spliced = _append_into_block(text, "sources", rendered, default_indent=2)
@@ -589,13 +621,13 @@ def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> 
         sources[name] = entry
         raw["sources"] = sources
         raw.setdefault("checks", [])
-        config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
         return
     if "checks" not in raw:
         if not spliced.endswith("\n"):
             spliced += "\n"
         spliced += "checks: []\n"
-    config_path.write_text(spliced)
+    _write_config_text(config_path, spliced, newline)
 
 
 def _raw_checks_in(path: Path) -> list[dict]:
@@ -690,26 +722,28 @@ def _write_new_checks(target_path: Path, blocks: list[dict]) -> None:
     empty file (nothing to preserve) or an unsplice-able shape.
     """
     if not target_path.exists() or not target_path.read_text().strip():
-        target_path.write_text(yaml.safe_dump({"checks": blocks}, sort_keys=False))
+        _write_config_text(
+            target_path, yaml.safe_dump({"checks": blocks}, sort_keys=False)
+        )
         return
 
-    text = target_path.read_text()
+    text, newline = _read_config_text(target_path)
     raw = yaml.safe_load(text)
     rendered = yaml.safe_dump(blocks, sort_keys=False)
 
     if isinstance(raw, list):
         if not text.endswith("\n"):
             text += "\n"
-        target_path.write_text(text + rendered)
+        _write_config_text(target_path, text + rendered, newline)
         return
 
     spliced = _append_into_block(text, "checks", rendered)
     if spliced is None:
         raw = dict(raw)
         raw["checks"] = list(raw.get("checks") or []) + blocks
-        target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+        _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
         return
-    target_path.write_text(spliced)
+    _write_config_text(target_path, spliced, newline)
 
 
 def find_check_file(config_path: str | Path, check_id_: str) -> Path | None:
@@ -906,7 +940,7 @@ def rewrite_check_expectation(
     ``False`` when no check with that id exists in this file.
     """
     target_path = Path(target_path)
-    text = target_path.read_text()
+    text, newline = _read_config_text(target_path)
     raw = yaml.safe_load(text)
     is_bare_list = isinstance(raw, list)
     checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
@@ -929,14 +963,14 @@ def rewrite_check_expectation(
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
         spliced = _replace_nested_key_value(lines, start, end, "expect", new_expect)
         if spliced is not None:
-            target_path.write_text("".join(spliced))
+            _write_config_text(target_path, "".join(spliced), newline)
             return True
 
     if is_bare_list:
         raw[index]["expect"] = new_expect
     else:
         raw["checks"][index]["expect"] = new_expect
-    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
     return True
 
 
@@ -989,7 +1023,7 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
     if target_path is None:
         raise ValueError(f"check not found: {check_id_!r}")
 
-    text = target_path.read_text()
+    text, newline = _read_config_text(target_path)
     raw = yaml.safe_load(text)
     is_bare_list = isinstance(raw, list)
     checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
@@ -1005,7 +1039,7 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
     if index < len(bounds):
         start, end = bounds[index]
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
-        target_path.write_text("".join(lines[:start] + lines[end:]))
+        _write_config_text(target_path, "".join(lines[:start] + lines[end:]), newline)
         return
 
     if is_bare_list:
@@ -1016,7 +1050,7 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
         checks = list(raw.get("checks") or [])
         del checks[index]
         raw["checks"] = checks
-    target_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
 
 
 def raw_source(config_path: str | Path, name: str) -> tuple[str, dict[str, str]]:
@@ -1071,7 +1105,7 @@ def rewrite_source(
     Raises :class:`ValueError` when ``name`` isn't a configured source.
     """
     config_path = Path(config_path)
-    text = config_path.read_text()
+    text, newline = _read_config_text(config_path)
     raw = yaml.safe_load(text) or {}
     sources = raw.get("sources") or {}
     if name not in sources:
@@ -1086,8 +1120,10 @@ def rewrite_source(
         indent = len(lines[start]) - len(lines[start].lstrip(" "))
         rendered = yaml.safe_dump({name: entry}, sort_keys=False)
         new_lines = _reindent(rendered, indent)
-        config_path.write_text(
-            "".join(lines[:start]) + new_lines + "".join(lines[core_end:])
+        _write_config_text(
+            config_path,
+            "".join(lines[:start]) + new_lines + "".join(lines[core_end:]),
+            newline,
         )
         return
 
@@ -1095,7 +1131,7 @@ def rewrite_source(
     sources = dict(raw.get("sources") or {})
     sources[name] = entry
     raw["sources"] = sources
-    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
 
 
 def remove_source(config_path: str | Path, name: str) -> None:
@@ -1133,7 +1169,7 @@ def remove_source(config_path: str | Path, name: str) -> None:
             f"{referencing} check(s) still reference source {name!r}; remove them first"
         )
 
-    text = config_path.read_text()
+    text, newline = _read_config_text(config_path)
     raw = yaml.safe_load(text) or {}
     sources = raw.get("sources") or {}
     if name not in sources:
@@ -1144,11 +1180,11 @@ def remove_source(config_path: str | Path, name: str) -> None:
     if bounds is not None:
         start, end = bounds
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
-        config_path.write_text("".join(lines[:start] + lines[end:]))
+        _write_config_text(config_path, "".join(lines[:start] + lines[end:]), newline)
         return
 
     raw = dict(raw)
     sources = dict(raw.get("sources") or {})
     del sources[name]
     raw["sources"] = sources
-    config_path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
