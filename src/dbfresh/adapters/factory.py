@@ -101,7 +101,7 @@ def create_adapter(
             raise MissingDriverError(
                 f"{type_!r} sources need the optional '{module}' driver, which "
                 f"is not installed. Add the '{extra}' extra, e.g. "
-                f"pip install 'dbfresh[{extra}]' (or uv add 'dbfresh[{extra}]')."
+                f"uv add 'dbfresh[{extra}]' (or pip install 'dbfresh[{extra}]')."
             ) from exc
         raise
 
