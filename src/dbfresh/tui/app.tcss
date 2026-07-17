@@ -33,6 +33,23 @@ Footer {
     background: $mantle;
 }
 
+/* Textual's default Button is deliberately chunky: min-width 16 plus a
+ * tall raised border top and bottom make every button three rows tall and
+ * wide regardless of its label. Across dbfresh's panels (object-detail
+ * edit rows, Store prune, Configure) that reads as oversized, so flatten
+ * the border to a single row and let the width hug the label. Applies to
+ * every button in the app; the per-screen rules below only add
+ * inter-button spacing (margin), not size. App CSS overrides the widget's
+ * own DEFAULT_CSS by origin, so no !important is needed to beat Textual's
+ * more specific -style-default border rules.
+ */
+Button {
+    min-width: 6;
+    height: 1;
+    border-top: none;
+    border-bottom: none;
+}
+
 /* Every pushed screen's own bold, mixed-case page heading ("Report",
  * "History", "Configure", "Object detail", "Store", "Help") -- see each
  * screen's compose(). Distinct from .section-title (a smaller sub-section
@@ -54,18 +71,20 @@ Footer {
  * OK/WARN/FAIL/ERROR/SKIPPED encoding on exactly the row under focus.
  * cursor_foreground_priority="renderable" (set on both DataTable widgets
  * in app.py / screens.py) keeps a status cell's own color, so this rule
- * softens the background from mauve to a neutral surface tone. The label
- * column carries no color of its own, so on the cursor row it falls back
- * to this rule's foreground -- set to $foreground rather than the theme's
- * near-black block-cursor foreground so the object/check name stays
- * legible on the surface tint. ID selectors (not a shared class) so this
- * beats the default CSS's own :focus-scoped rule regardless of focus
- * state.
+ * only recolors the row background to a neutral tone -- a light overlay
+ * grey ($overlay1), bright enough against the base background to track
+ * clearly while arrowing through the list (a darker surface tone read as
+ * too subtle). The label column carries no color of its own, so on the
+ * cursor row it falls back to this rule's foreground -- set to the dark
+ * $crust so the name reads as an inverted selection against the light
+ * bar. Neutral palette tones only: the status colors stay reserved for
+ * the glyphs. ID selectors (not a shared class) so this beats the default
+ * CSS's own :focus-scoped rule regardless of focus state.
  */
 #dashboard-grid > .datatable--cursor,
 #object-detail-grid > .datatable--cursor {
-    background: $surface2;
-    color: $foreground;
+    background: $overlay1;
+    color: $crust;
 }
 
 /* Home dashboard */
