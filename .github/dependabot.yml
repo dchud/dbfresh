@@ -17,3 +17,11 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    ignore:
+      # pytest-textual-snapshot 1.1.0 pins syrupy 4.8.0, which requires
+      # pytest<9 -- incompatible with this project's pytest>=9.1.1, so the
+      # bump is unresolvable and the update job fails every run. Ignore
+      # 1.1.0+ until upstream relaxes its pytest ceiling; drop this once it
+      # does.
+      - dependency-name: "pytest-textual-snapshot"
+        versions: [">=1.1.0"]
