@@ -43,6 +43,17 @@ def _config(checks):
 
 
 def _seed(store, check, status, observed_date, value=None):
+    observed_at = datetime(
+        observed_date.year, observed_date.month, observed_date.day, 12, tzinfo=UTC
+    )
+    _seed_at(store, check, status, observed_at, value=value)
+
+
+def _seed_at(store, check, status, observed_at, value=None):
+    """Like :func:`_seed`, but at an exact timestamp rather than noon on a
+    given date -- lets a test put more than one observation for the same
+    check on the same calendar day, at different times, to exercise the
+    day cell's latest-vs-worse-earlier-that-day marker."""
     run_id = store.start_run()
     result = Result(
         object=check.object,
@@ -51,9 +62,6 @@ def _seed(store, check, status, observed_date, value=None):
         source=check.source,
         value=value,
         check_id=check_id(check),
-    )
-    observed_at = datetime(
-        observed_date.year, observed_date.month, observed_date.day, 12, tzinfo=UTC
     )
     store.record_observation(run_id, result, observed_at=observed_at)
     store.finish_run(run_id, status)
@@ -80,30 +88,46 @@ def test_trailing_dates_respects_days_param():
 # -- bucket_by_day --------------------------------------------------------
 
 
-def test_bucket_by_day_maps_each_date_to_its_status():
+def test_bucket_by_day_maps_each_date_to_its_latest_status():
     rows = [{"observed_at": "2026-07-14T09:00:00+00:00", "status": "OK"}]
-    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
-    assert result[_TODAY] == Status.OK
+    latest, all_statuses = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    assert latest == Status.OK
+    assert all_statuses == [Status.OK]
 
 
-def test_bucket_by_day_date_with_no_observation_is_none():
+def test_bucket_by_day_date_with_no_observation_is_none_and_empty():
     result = bucket_by_day([], trailing_dates(_TODAY), tz=None)
-    assert all(status is None for status in result.values())
+    assert all(entry == (None, []) for entry in result.values())
 
 
-def test_bucket_by_day_multiple_runs_same_day_take_the_worst():
+def test_bucket_by_day_same_day_takes_the_latest_not_the_worst():
+    # The bug this fixes: a FAIL at 11:49 recovering to OK at 11:51 the
+    # same day must read OK, not FAIL -- the worst status is still visible
+    # in all_statuses, just not as the leading glyph.
     rows = [
-        {"observed_at": "2026-07-14T01:00:00+00:00", "status": "OK"},
-        {"observed_at": "2026-07-14T09:00:00+00:00", "status": "FAIL"},
+        {"observed_at": "2026-07-14T11:49:00+00:00", "status": "FAIL"},
+        {"observed_at": "2026-07-14T11:51:00+00:00", "status": "OK"},
     ]
-    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
-    assert result[_TODAY] == Status.FAIL
+    latest, all_statuses = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    assert latest == Status.OK
+    assert set(all_statuses) == {Status.FAIL, Status.OK}
+
+
+def test_bucket_by_day_latest_is_by_observed_at_not_row_order():
+    # The later observation is listed first -- "latest" must still follow
+    # observed_at, not input order.
+    rows = [
+        {"observed_at": "2026-07-14T11:51:00+00:00", "status": "OK"},
+        {"observed_at": "2026-07-14T11:49:00+00:00", "status": "FAIL"},
+    ]
+    latest, _ = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    assert latest == Status.OK
 
 
 def test_bucket_by_day_skipped_only_rolls_up_to_skipped_not_ok():
     rows = [{"observed_at": "2026-07-14T09:00:00+00:00", "status": "SKIPPED"}]
-    result = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)
-    assert result[_TODAY] == Status.SKIPPED
+    latest, _ = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    assert latest == Status.SKIPPED
 
 
 def test_bucket_by_day_buckets_by_the_given_timezone():
@@ -113,9 +137,9 @@ def test_bucket_by_day_buckets_by_the_given_timezone():
     dates = trailing_dates(_TODAY)
     result_utc = bucket_by_day(rows, dates, tz=None)
     result_ny = bucket_by_day(rows, dates, tz=ZoneInfo("America/New_York"))
-    assert result_utc[date(2026, 7, 14)] == Status.OK
-    assert result_ny[date(2026, 7, 13)] == Status.OK
-    assert result_ny[date(2026, 7, 14)] is None
+    assert result_utc[date(2026, 7, 14)][0] == Status.OK
+    assert result_ny[date(2026, 7, 13)][0] == Status.OK
+    assert result_ny[date(2026, 7, 14)][0] is None
 
 
 # -- object_rows ------------------------------------------------------------
@@ -138,7 +162,7 @@ def test_object_rows_with_no_observations_has_no_overall_or_days():
     rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
     orders = rows[0]
     assert orders.overall is None
-    assert all(status is None for status in orders.days)
+    assert all(day == (None, None) for day in orders.days)
 
 
 def test_object_rows_overall_is_worst_of_the_objects_latest_checks():
@@ -159,7 +183,21 @@ def test_object_rows_day_column_rolls_up_across_the_objects_checks():
     rows = object_rows(_config(checks), store, _TODAY, tz=None)
     orders = next(r for r in rows if r.object == "orders")
     day_index = trailing_dates(_TODAY).index(date(2026, 7, 10))
-    assert orders.days[day_index] == Status.WARN
+    assert orders.days[day_index] == (Status.WARN, None)
+
+
+def test_object_rows_day_marker_flags_a_same_day_recovery_on_one_check():
+    # The bug this fixes, at the Home (multi-check) scope: null_rate FAILs
+    # then recovers to OK later the same day -- the day cell should lead
+    # with OK (matching overall) and carry a FAIL marker, not read FAIL.
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC))
+    _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+    rows = object_rows(_config(checks), store, _TODAY, tz=None)
+    orders = next(r for r in rows if r.object == "orders")
+    day_index = trailing_dates(_TODAY).index(date(2026, 7, 10))
+    assert orders.days[day_index] == (Status.OK, Status.FAIL)
 
 
 def test_object_rows_carries_source_and_object_for_drill_in():
@@ -209,6 +247,79 @@ def test_check_rows_overall_reflects_that_checks_own_latest_status():
     schema_row = next(r for r in rows if r.label == "schema")
     assert row_count_row.overall == Status.OK
     assert schema_row.overall is None
+
+
+# -- day marker (single-check, drill-in scope) -----------------------------
+#
+# The drill-in (check_rows) is the degenerate single-check case of the same
+# rollup the Home grid (object_rows) uses -- these exercise the marker rule
+# itself without the extra multi-check indirection.
+
+_DAY = date(2026, 7, 10)
+
+
+def _row_count_day(store, checks):
+    rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
+    row_count_row = next(r for r in rows if r.label == "row_count")
+    day_index = trailing_dates(_TODAY).index(_DAY)
+    return row_count_row.days[day_index]
+
+
+def test_check_rows_day_marker_recovery_shows_latest_glyph_and_fail_marker():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.OK, Status.FAIL)
+
+
+def test_check_rows_day_marker_fail_takes_priority_over_warn_and_error():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.WARN, datetime(2026, 7, 10, 10, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.ERROR, datetime(2026, 7, 10, 11, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.OK, Status.FAIL)
+
+
+def test_check_rows_day_marker_warn_when_no_fail_present():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.WARN, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.OK, Status.WARN)
+
+
+def test_check_rows_day_marker_error_alone_still_marks_but_reads_neutral():
+    # ERROR isn't a data failure (config mistake / unreachable source / a
+    # comparison check's first run with no baseline) -- it still marks the
+    # day (a worse status did happen), but callers render it as a neutral
+    # dot rather than ERROR's own alarming blue glyph.
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.ERROR, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.OK, Status.ERROR)
+
+
+def test_check_rows_day_marker_uniformly_ok_day_has_no_marker():
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.OK, None)
+
+
+def test_check_rows_day_marker_still_failing_day_has_no_marker():
+    # Worst and latest are both FAIL -- nothing "worse" happened than
+    # where the day ended up, so no marker, even though there were two
+    # observations that day.
+    checks = _checks()
+    store = Store(":memory:")
+    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
+    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    assert _row_count_day(store, checks) == (Status.FAIL, None)
 
 
 # -- check_label ----------------------------------------------------------
@@ -449,6 +560,62 @@ def test_populate_grid_row_key_matches_grid_row_key():
             populate_grid(table, rows, _TODAY, label_header="object")
             row_keys = {key.value for key in table.rows}
             assert row_keys == {row.key for row in rows}
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_day_cell_renders_latest_glyph_plus_marker():
+    async def scenario():
+        checks = _checks()
+        store = Store(":memory:")
+        _seed_at(
+            store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC)
+        )
+        _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+        rows = object_rows(_config(checks), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            orders_key = next(r for r in rows if r.object == "orders").key
+            marked_day = date(2026, 7, 10).isoformat()
+            cell = table.get_cell(orders_key, marked_day)
+            assert cell.plain == "✓✗"  # latest glyph (OK) + fail marker
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_day_cell_with_no_marker_is_a_single_glyph():
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            orders_key = next(r for r in rows if r.object == "orders").key
+            cell = table.get_cell(orders_key, _TODAY.isoformat())
+            assert cell.plain == "·"  # never observed, no marker to append
+
+    asyncio.run(scenario())
+
+
+def test_populate_grid_overall_column_never_carries_a_marker():
+    async def scenario():
+        checks = _checks()
+        store = Store(":memory:")
+        _seed_at(
+            store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC)
+        )
+        _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+        rows = object_rows(_config(checks), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            orders_key = next(r for r in rows if r.object == "orders").key
+            cell = table.get_cell(orders_key, "overall")
+            assert cell.plain == "✓"  # single glyph -- overall never marks
 
     asyncio.run(scenario())
 
