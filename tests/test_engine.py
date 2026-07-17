@@ -18,6 +18,17 @@ def _adapter_with_rows(n):
     return a
 
 
+def test_error_result_never_stores_a_blank_message():
+    # NotImplementedError() stringifies to "" -- the swallowed-error case
+    # that made a schema ERROR undebuggable. _error_result must fall back to
+    # something identifying (the exception type) rather than storing "".
+    check = Check(source="s", object="o", metric="schema")
+    result = _error_result(check, NotImplementedError())
+    assert result.status is Status.ERROR
+    assert result.error
+    assert "NotImplementedError" in result.error
+
+
 def test_row_count_within_range_is_ok():
     a = _adapter_with_rows(5)
     check = Check(

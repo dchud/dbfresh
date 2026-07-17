@@ -57,8 +57,18 @@ def _result(check: Check, status: Status, **fields: Any) -> Result:
 
 
 def _error_result(check: Check, exc: BaseException, **fields: Any) -> Result:
-    """A ``Status.ERROR`` Result for ``check``, carrying ``exc``'s message."""
-    return _result(check, Status.ERROR, error=str(exc), **fields)
+    """A ``Status.ERROR`` Result for ``check``, carrying ``exc``'s message.
+
+    Some exceptions stringify to ``""`` -- e.g. ``NotImplementedError()``
+    from a SQLAlchemy dialect that doesn't implement a reflection method --
+    which would surface as an ERROR with no explanation at all. Fall back to
+    ``repr`` so the message always names the failure, and log the exception
+    (with a traceback at debug level) so a sparse ``str`` is still
+    recoverable.
+    """
+    message = str(exc) or repr(exc)
+    log.debug("check_error", check_id=check_id(check), error=message, exc_info=exc)
+    return _result(check, Status.ERROR, error=message, **fields)
 
 
 def _verdict(check: Check, passed: bool) -> Status:

@@ -40,6 +40,26 @@ def test_describe_no_keys_is_none():
     a.close()
 
 
+def test_describe_survives_dialect_without_unique_constraints(monkeypatch):
+    # SQL Server's SQLAlchemy dialect implements get_columns and
+    # get_pk_constraint but not get_unique_constraints, so the base Dialect
+    # method raises NotImplementedError. describe() must degrade to
+    # columns + PK rather than failing the whole reflection: the schema
+    # fingerprint reads info.columns only, so a check should still evaluate.
+    from sqlalchemy.engine.reflection import Inspector
+
+    def not_implemented(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    monkeypatch.setattr(Inspector, "get_unique_constraints", not_implemented)
+    a = SqliteAdapter()
+    a.rows("CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT)")
+    info = a.describe("t")
+    assert [c.name for c in info.columns] == ["id", "email"]
+    assert info.keys == [["id"]]  # PK still reflected
+    a.close()
+
+
 def test_split_object_two_part_name():
     assert _split_object("dbo.fct_sales") == ("dbo", "fct_sales")
 

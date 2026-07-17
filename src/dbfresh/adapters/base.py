@@ -237,7 +237,18 @@ class SqlAlchemyAdapter:
         pk = insp.get_pk_constraint(table, schema=schema).get("constrained_columns")
         if pk:
             keys.append(list(pk))
-        for unique in insp.get_unique_constraints(table, schema=schema):
+        # SQL Server's SQLAlchemy dialect reflects columns and primary keys
+        # but does not implement get_unique_constraints, so the base Dialect
+        # method raises NotImplementedError. Unique constraints are
+        # supplementary here -- the schema fingerprint reads columns only --
+        # so degrade to primary-key-only rather than failing the whole
+        # reflection (which would turn every schema check on such a source
+        # into an ERROR).
+        try:
+            uniques = insp.get_unique_constraints(table, schema=schema)
+        except NotImplementedError:
+            uniques = []
+        for unique in uniques:
             cols = unique.get("column_names")
             if cols:
                 keys.append(list(cols))
