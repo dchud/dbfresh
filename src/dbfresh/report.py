@@ -254,9 +254,18 @@ def render_candidates(object_: str, candidates: list[dict]) -> str:
 _HISTORY_EXPECTED_WIDTH = 24
 
 
+def _summarize_fingerprint(fingerprint: str) -> str:
+    """A schema fingerprint (``name:type|name:type|...``) shown as a column
+    count. The full column list would dwarf every other value in the table,
+    and the run digest's schema diff already carries that detail; here only
+    the shape matters. An empty fingerprint (nothing reflected) reads as
+    ``0 cols``."""
+    n = fingerprint.count("|") + 1 if fingerprint else 0
+    return f"{n} col{'s' if n != 1 else ''}"
+
+
 def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
-    """A check's recent values, expectations, statuses, and a simple
-    up/down trend.
+    """A check's recent values, expectations, and statuses.
 
     ``check_id`` rides along in the header line as a parenthetical -- still
     present for anyone who needs to copy it (e.g. into ``--metric``-less
@@ -279,44 +288,53 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
 
     metric = candidate.get("metric")
     lines.append("")
-    lines.append(
-        f"{'observed_at':<28} {'status':<8} {'value':<16} "
-        f"{'expected':<{_HISTORY_EXPECTED_WIDTH}} trend"
-    )
-    previous: float | None = None
+    # Build each row's displayed value first so the value column can size to
+    # its actual content. A single check's history is all one metric, so one
+    # width stays coherent: a freshness row carries a reconstructed timestamp
+    # and wants a wide column, while a number or a "N cols" schema summary
+    # wants a narrow one -- padding every metric to the widest (freshness)
+    # would waste most of the line for the rest.
+    prepared: list[tuple[str, str, str, str, str | None]] = []
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
-        trend = ""
-        if isinstance(value, (int, float)) and isinstance(previous, (int, float)):
-            if value > previous:
-                trend = "▲"
-            elif value < previous:
-                trend = "▼"
-            else:
-                trend = "="
-        observed = format_timestamp(datetime.fromisoformat(row["observed_at"]), tz)
+        observed_at = row["observed_at"]
+        observed = format_timestamp(datetime.fromisoformat(observed_at), tz)
         if metric == "freshness" and isinstance(value, (int, float)):
-            # Duration only, no reconstructed absolute timestamp here: that
-            # parenthetical is digest-only, where a full line is available
-            # instead of this table's fixed-width value column.
-            display = f"{_format_duration(value)} stale"
+            # The reconstructed absolute last-update time the digest also
+            # shows (_format_freshness_observed): this row's own observed_at
+            # is the "now" that produced this lag, the role run.started_at
+            # plays there.
+            reference = datetime.fromisoformat(observed_at)
+            display = _format_freshness_observed(value, reference, tz)
+        elif metric == "schema" and isinstance(value, str) and value:
+            display = _summarize_fingerprint(value)
         else:
             display = _format_observed(metric, value)
-        expected = row.get("expected") or ""
-        line = (
-            f"{observed:<28} {row['status']:<8} {display:<16} "
-            f"{expected:<{_HISTORY_EXPECTED_WIDTH}} {trend}"
+        prepared.append(
+            (
+                observed,
+                row["status"],
+                display,
+                row.get("expected") or "",
+                row.get("error"),
+            )
         )
-        error = row.get("error")
+    value_width = max([len("value")] + [len(p[2]) for p in prepared])
+    lines.append(
+        f"{'observed_at':<28} {'status':<8} {'value':<{value_width}} "
+        f"{'expected':<{_HISTORY_EXPECTED_WIDTH}}"
+    )
+    for observed, status, display, expected, error in prepared:
+        line = (
+            f"{observed:<28} {status:<8} {display:<{value_width}} "
+            f"{expected:<{_HISTORY_EXPECTED_WIDTH}}"
+        )
         if error:
             # Collapse whitespace: an error can be multi-line (a driver's
-            # traceback), and both this fixed-width table and the TUI
-            # History screen map one line per observation, so the row has
-            # to stay on a single line.
+            # traceback), and both this table and the TUI History screen map
+            # one line per observation, so the row stays on a single line.
             line += f"  — {' '.join(str(error).split())}"
         lines.append(line)
-        if isinstance(value, (int, float)):
-            previous = value
     return "\n".join(lines)
 
 

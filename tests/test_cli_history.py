@@ -43,6 +43,28 @@ def test_history_prints_recent_observations(tmp_path, capsys, seed_observations)
     assert "120" in out
 
 
+def test_history_lists_newest_observation_first(tmp_path, capsys, seed_observations):
+    # Pinned to a UTC calendar (see test_history_limit_flag) so the
+    # observed_at dates asserted below are deterministic regardless of the
+    # host machine's local timezone.
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ncalendar:\n  timezone: UTC\nchecks: []\n")
+    store_path = tmp_path / "obs.db"
+    seed_observations(
+        store_path,
+        [
+            (_result(value=100), datetime(2026, 7, 8, tzinfo=UTC)),
+            (_result(value=120), datetime(2026, 7, 9, tzinfo=UTC)),
+        ],
+    )
+    code = main(
+        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.index("2026-07-09") < out.index("2026-07-08")
+
+
 def test_history_no_observations_returns_one(tmp_path, capsys):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"

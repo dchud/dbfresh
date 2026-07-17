@@ -53,9 +53,13 @@ _RECONSTRUCTED_NOTE = (
 )
 
 # render_history's own fixed-width columns (see dbfresh.report.render_history:
-# f"{observed:<28} {row['status']:<8} {display:<16} {trend}") -- used below to
-# locate the status field within each already-rendered row line rather than
-# recomputing it, so the CLI's formatting stays the single source of truth.
+# f"{observed:<28} {row['status']:<8} {display:<...} {expected:<...}") -- used
+# below to locate the status field within each already-rendered row line
+# rather than recomputing it, so the CLI's formatting stays the single
+# source of truth. Only observed_at and status are needed here -- both
+# precede the value/expected columns, whose own widths (and any growth,
+# e.g. a freshness row's wider reconstructed-timestamp value) don't shift
+# where those two fields start or end.
 _HISTORY_OBSERVED_WIDTH = 28
 _HISTORY_STATUS_WIDTH = 8
 
@@ -224,7 +228,7 @@ class ReportScreen(Screen):
 
 
 class HistoryScreen(Screen):
-    """A selected check's recent values, statuses, and trend.
+    """A selected check's recent values and statuses.
 
     The interactive form of ``dbfresh history``, over the same
     :meth:`~dbfresh.store.Store.history` and :func:`render_history` the CLI
