@@ -50,6 +50,28 @@ Button {
     border-bottom: none;
 }
 
+/* Same oversized-by-default problem for the text and dropdown controls:
+ * Textual's Input and Select are three rows tall (a tall border top and
+ * bottom) and full width, which is far more than the short values this app
+ * collects (source/object names, a threshold, a duration) need. Flatten
+ * both to a single row, keeping the $surface background so an empty field
+ * is still visibly a field -- the same shape Textual's own -textual-compact
+ * variant uses. !important is required to beat Textual's more specific
+ * :focus / -invalid border rules, which otherwise restore the tall border
+ * (and the row height) the moment a control takes focus; the compact focus
+ * background-tint still applies, so focus stays visible. Per-field widths
+ * live with each screen's rules below; height/flatten is global. */
+Input {
+    height: 1;
+    border: none !important;
+    padding: 0 1;
+}
+
+Select > SelectCurrent {
+    border: none !important;
+    padding: 0 1 0 0;
+}
+
 /* Every pushed screen's own bold, mixed-case page heading ("Report",
  * "History", "Configure", "Object detail", "Store", "Help") -- see each
  * screen's compose(). Distinct from .section-title (a smaller sub-section
@@ -247,6 +269,28 @@ HelpScreen {
 ConfigureScreen #propose-section,
 ConfigureScreen #new-source-form {
     padding: 1 2;
+}
+
+/* The single-value form fields default to full width, which is far wider
+ * than a source name, object name, timestamp column, or params line needs
+ * and leaves the screen looking sparse. Cap them at a readable fixed width
+ * (a little wider than the Home search box's 40) that still fits the
+ * new-source form into an 80-column terminal. The existing-check value
+ * inputs keep their own narrower width: 10 rule below. */
+ConfigureScreen #object-input,
+ConfigureScreen #timestamp-input,
+ConfigureScreen #new-source-name-input,
+ConfigureScreen #new-source-type-select,
+ConfigureScreen #new-source-params {
+    width: 48;
+}
+
+/* The source picker is the one field that shares its row with buttons (the
+ * +new / Edit / Remove trio), so it gets a narrower cap than the standalone
+ * fields above -- a source name is short, and a wide fixed width here would
+ * push the trailing Remove button off the row and out of reach. */
+ConfigureScreen #source-select {
+    width: 32;
 }
 
 ConfigureScreen Label {
