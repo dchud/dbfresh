@@ -124,6 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add.add_argument("-c", "--config", default="config.yaml")
 
+    env_template = subcommands.add_parser(
+        "env-template",
+        help="print an .env template of the variables the config references",
+        parents=[_verbosity_parent()],
+    )
+    env_template.add_argument("-c", "--config", default="config.yaml")
+
     ui = subcommands.add_parser(
         "ui", help="interactive Textual dashboard", parents=[_verbosity_parent()]
     )
@@ -572,7 +579,21 @@ def _ui_command(args: argparse.Namespace) -> int:
     return 0
 
 
-_CONFIG_READING_COMMANDS = frozenset({"run", "history", "prune", "add", "ui"})
+def _env_template_command(args: argparse.Namespace) -> int:
+    from dbfresh.config import ConfigError, collect_referenced_env_vars
+
+    try:
+        names = collect_referenced_env_vars(Path(args.config))
+    except (ConfigError, OSError, yaml.YAMLError) as exc:
+        return _report_config_error(exc)
+    for name in names:
+        print(f"{name}=")
+    return 0
+
+
+_CONFIG_READING_COMMANDS = frozenset(
+    {"run", "history", "prune", "add", "ui", "env-template"}
+)
 
 
 def _load_dotenv_beside_config(config_path: Path) -> None:
@@ -616,6 +637,8 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         return _add_command(args)
     if args.command == "ui":
         return _ui_command(args)
+    if args.command == "env-template":
+        return _env_template_command(args)
     parser.print_help()
     return 0
 
