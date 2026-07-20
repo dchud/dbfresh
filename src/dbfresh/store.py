@@ -366,6 +366,18 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def observed_check_ids(self) -> set[str]:
+        """The distinct ``check_id`` values that have at least one observation.
+
+        A check in the config but absent here has never run on this machine.
+        One indexed scan of ``observation``, so the Home dashboard can count
+        unobserved checks without a per-check lookup.
+        """
+        rows = self._conn.execute(
+            "SELECT DISTINCT check_id FROM observation"
+        ).fetchall()
+        return {row["check_id"] for row in rows}
+
     def latest_fingerprint_observation(self, check_id: str) -> dict | None:
         """The most recent prior observation for ``check_id`` that recorded
         a fingerprint (``value_text IS NOT NULL``), or ``None``.

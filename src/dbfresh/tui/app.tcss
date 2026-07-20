@@ -166,6 +166,16 @@ Select > SelectCurrent {
     margin: 0 1 0 1;
 }
 
+/* Same muted metadata tone as last-run-line above, not a status color --
+ * see dbfresh.tui.dashboard.unobserved_summary. Sits directly under it at
+ * the same left gutter. Hidden (display in app.py) when nothing is
+ * unobserved.
+ */
+#unobserved-line {
+    color: $subtext0;
+    margin: 0 1 0 1;
+}
+
 #empty-state {
     width: 100%;
     height: 100%;

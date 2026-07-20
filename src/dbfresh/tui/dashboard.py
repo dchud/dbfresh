@@ -160,6 +160,24 @@ def last_run_line(store: Store, tz: tzinfo | None) -> str | None:
     )
 
 
+def unobserved_count(checks: list[Check], store: Store) -> int:
+    """How many of ``checks`` have no observation on this machine yet.
+
+    Observations are per-machine, so a check in the config with nothing in
+    the store has not run here -- the signal a pulled-in config added
+    checks a colleague has not run. One ``observed_check_ids`` scan, then a
+    set-membership test per check; no per-check store query.
+    """
+    observed = store.observed_check_ids()
+    return sum(1 for check in checks if check_id(check) not in observed)
+
+
+def unobserved_summary(count: int) -> str:
+    """The one-line phrase for ``count`` checks not yet run here (count >= 1)."""
+    noun = "check" if count == 1 else "checks"
+    return f"{count} {noun} not yet run on this machine"
+
+
 def check_label(check: Check) -> str:
     """The label shown for one check's row.
 

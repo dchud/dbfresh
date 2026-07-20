@@ -35,6 +35,8 @@ from dbfresh.tui.dashboard import (
     object_rows,
     populate_grid,
     status_legend,
+    unobserved_count,
+    unobserved_summary,
 )
 
 _GRID_ID = "dashboard-grid"
@@ -243,6 +245,7 @@ class DbfreshApp(App):
         yield Static(status_legend(), id="status-legend")
         yield Static("", id="view-status")
         yield Static("", id="last-run-line")
+        yield Static("", id="unobserved-line")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
@@ -292,7 +295,11 @@ class DbfreshApp(App):
             )
             return
         self.refresh_dashboard()
-        self.notify("config reloaded")
+        pending = unobserved_count(self._require_config().checks, self._require_store())
+        message = "config reloaded"
+        if pending:
+            message = f"{message} · {unobserved_summary(pending)}"
+        self.notify(message)
 
     def action_help(self) -> None:
         from dbfresh.tui.screens import HelpScreen
@@ -367,6 +374,11 @@ class DbfreshApp(App):
         line = last_run_line(store, tz)
         last_run_widget.update(line or "")
         last_run_widget.display = line is not None
+
+        unobserved_widget = self.query_one("#unobserved-line", Static)
+        pending = unobserved_count(config.checks, store)
+        unobserved_widget.update(unobserved_summary(pending) if pending else "")
+        unobserved_widget.display = pending > 0
 
         banner = self.query_one(f"#{_MISSING_SECRETS_ID}", Static)
         banner.update(self._missing_secrets_text())
