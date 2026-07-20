@@ -361,6 +361,61 @@ def load_config_tolerant(
     return _load_config_or_raise(path, env, collect_missing=True)
 
 
+def collect_referenced_env_vars(path: str | Path) -> list[str]:
+    """Return the sorted, deduplicated names of every ``${VAR}`` the root
+    config and its resolved includes reference.
+
+    Interpolates against an empty environment, not ``os.environ``: passing
+    ``{}`` to :func:`interpolate_env` means every reference is undefined,
+    so every one of them lands in ``missing`` regardless of whether it
+    happens to be set on the machine generating the template. Building the
+    template from the real environment would silently omit a variable
+    that's already set there -- exactly the one a colleague sharing the
+    config still needs to be told about.
+
+    Does not build or validate a full :class:`Config`: no source-parameter,
+    metric, or severity checks run, and an undefined variable is never an
+    error here. Value-level validation must not block template generation,
+    and listing an unset var is the entire point -- this is meant to run
+    before secrets exist.
+
+    Known limit: a ``${VAR}`` referenced only inside a file reachable
+    through an include glob pattern that itself contains an unresolved
+    ``${VAR}`` is not collected, because that pattern is never resolved --
+    identical to :func:`_load_config`'s own behavior. The variable name
+    appearing in the include pattern itself is still collected; only names
+    unique to the unreached included file are missed.
+    """
+    path = Path(path)
+    missing: set[str] = set()
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+        data = interpolate_env(data, {}, missing)
+
+        include_patterns = data.get("include")
+        if isinstance(include_patterns, list):
+            patterns = [
+                pattern
+                for pattern in include_patterns
+                if not (isinstance(pattern, str) and _VAR.search(pattern))
+            ]
+            config_dir = path.resolve().parent
+            for include_path in resolve_includes(config_dir, patterns):
+                _read_included_file(include_path, {}, missing)
+    except ConfigError:
+        raise
+    except FileNotFoundError as exc:
+        raise ConfigError(f"config file not found: {path}") from exc
+    except OSError as exc:
+        raise ConfigError(f"cannot read config file {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
+    return sorted(missing)
+
+
 def _validate_metric_fields(check: Check, label: str) -> list[ValueError]:
     """Discriminating-field and expectation checks for a known metric.
 
