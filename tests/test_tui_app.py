@@ -239,6 +239,84 @@ def test_home_shows_last_run_line_after_a_completed_run(tmp_path, pump_until):
     asyncio.run(scenario())
 
 
+def test_unobserved_line_shows_count_when_checks_have_no_observations(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            widget = app.query_one("#unobserved-line", Static)
+            assert widget.display
+            assert "not yet run on this machine" in str(widget.render())
+
+    asyncio.run(scenario())
+
+
+def test_unobserved_line_hidden_after_refresh_once_every_check_is_observed(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            assert app.query_one("#unobserved-line", Static).display
+
+            store = app._require_store()
+            _seed_status(store, "t", Status.OK)
+            run_id = store.start_run()
+            store.record_observation(
+                run_id,
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.OK,
+                    source="s",
+                    value=0.0,
+                    check_id=check_id(_null_rate_check()),
+                ),
+            )
+            store.finish_run(run_id, Status.OK)
+
+            app.refresh_dashboard()
+            await pilot.pause()
+            assert not app.query_one("#unobserved-line", Static).display
+
+    asyncio.run(scenario())
+
+
+def test_reload_toast_appends_unobserved_count_when_checks_are_unobserved(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("R")
+            await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any("config reloaded" in n.message for n in app._notifications),
+            )
+
+            messages = [n.message for n in app._notifications]
+            assert any(
+                "config reloaded · 2 checks not yet run on this machine" in m
+                for m in messages
+            )
+
+    asyncio.run(scenario())
+
+
 def _undefined_var_config(path, db):
     path.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'

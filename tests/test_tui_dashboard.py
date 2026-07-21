@@ -25,6 +25,8 @@ from dbfresh.tui.dashboard import (
     status_legend,
     status_style,
     trailing_dates,
+    unobserved_count,
+    unobserved_summary,
 )
 
 _TODAY = date(2026, 7, 14)
@@ -487,6 +489,38 @@ def test_last_run_line_uses_the_given_display_timezone():
     line = last_run_line(store, tz=ZoneInfo("America/New_York"))
     assert line is not None
     assert "10:00" in line  # 14:00 UTC == 10:00 EDT in July
+
+
+# -- unobserved_count / unobserved_summary ---------------------------------
+
+
+def test_unobserved_count_on_a_fresh_store_equals_every_check():
+    store = Store(":memory:")
+    checks = _checks()
+    assert unobserved_count(checks, store) == len(checks)
+
+
+def test_unobserved_count_drops_by_one_once_a_check_has_an_observation():
+    store = Store(":memory:")
+    checks = _checks()
+    _seed(store, checks[0], Status.OK, _TODAY)
+    assert unobserved_count(checks, store) == len(checks) - 1
+
+
+def test_unobserved_count_ignores_a_check_id_outside_the_passed_checks():
+    store = Store(":memory:")
+    checks = _checks()
+    other = Check(source="s", object="other", metric="row_count")
+    _seed(store, other, Status.OK, _TODAY)
+    assert unobserved_count(checks, store) == len(checks)
+
+
+def test_unobserved_summary_singular_for_one_check():
+    assert unobserved_summary(1) == "1 check not yet run on this machine"
+
+
+def test_unobserved_summary_plural_for_more_than_one_check():
+    assert unobserved_summary(3) == "3 checks not yet run on this machine"
 
 
 # -- populate_grid --------------------------------------------------------

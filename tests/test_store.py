@@ -487,6 +487,22 @@ def test_latest_observation_ignores_other_check_ids(tmp_path):
     store.close()
 
 
+def test_observed_check_ids_is_empty_on_a_fresh_store(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    assert store.observed_check_ids() == set()
+    store.close()
+
+
+def test_observed_check_ids_returns_deduplicated_check_ids(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(run_id, _result(check_id="a", value=1))
+    store.record_observation(run_id, _result(check_id="b", value=2))
+    store.record_observation(run_id, _result(check_id="b", value=3))
+    assert store.observed_check_ids() == {"a", "b"}
+    store.close()
+
+
 def test_latest_fingerprint_observation_skips_a_value_less_skip_or_error(tmp_path):
     # A SKIPPED (skip_off_schedule) or ERROR (unreachable source) schema
     # observation persists with no fingerprint (value_text NULL). The
