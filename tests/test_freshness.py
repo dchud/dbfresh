@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from dbfresh.adapters.base import Dialect
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -60,3 +60,36 @@ def test_empty_table_freshness_fails():
     result = evaluate_check(_freshness_check(), a, now=now)
     assert result.status == Status.FAIL
     a.close()
+
+
+class _DateScalarAdapter:
+    """A minimal adapter whose ``MAX(column)`` returns a ``date`` object
+    rather than a ``datetime`` -- what a driver yields for a DATE-typed
+    column (e.g. pymssql for a SQL Server ``date``)."""
+
+    dialect = Dialect()
+
+    def __init__(self, value):
+        self._value = value
+
+    def scalar(self, sql):
+        return self._value
+
+
+def test_freshness_on_a_date_column_measures_lag_from_midnight():
+    # A DATE column has no time-of-day; the day is treated as midnight in
+    # the source timezone (UTC here), not rejected for lacking a tzinfo.
+    a = _DateScalarAdapter(date(2026, 7, 10))
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
+    result = evaluate_check(_freshness_check(), a, now=now)
+    assert result.status == Status.OK
+    assert result.value == 20 * 3600  # 20h since midnight UTC
+
+
+def test_freshness_date_column_uses_the_source_timezone_for_midnight():
+    check = _freshness_check()
+    check.source_timezone = "America/New_York"  # EDT (UTC-4) in July
+    a = _DateScalarAdapter(date(2026, 7, 10))
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)  # midnight NY = 04:00 UTC
+    result = evaluate_check(check, a, now=now)
+    assert result.value == 16 * 3600  # 20:00 - 04:00 = 16h

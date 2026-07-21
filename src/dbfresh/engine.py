@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -462,10 +462,17 @@ def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
 
     A naive value is interpreted in ``source_timezone`` (the check's
     source's declared ``timezone:``, default UTC) before being
-    converted; an already-aware value is unaffected.
+    converted; an already-aware value is unaffected. A date-only value (a
+    DATE column, which has no time-of-day) becomes midnight in
+    ``source_timezone``.
     """
     if isinstance(value, str):
         value = datetime.fromisoformat(value)
+    if isinstance(value, date) and not isinstance(value, datetime):
+        # A DATE column carries no time-of-day; treat it as midnight in
+        # the source timezone so lag is measured from the start of that
+        # day. datetime is a subclass of date, so exclude it explicitly.
+        value = datetime(value.year, value.month, value.day)
     if value.tzinfo is None:
         value = value.replace(tzinfo=ZoneInfo(source_timezone))
     return value.astimezone(UTC)
