@@ -1,4 +1,4 @@
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 from dbfresh.adapters.base import Dialect
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -62,10 +62,11 @@ def test_empty_table_freshness_fails():
     a.close()
 
 
-class _DateScalarAdapter:
-    """A minimal adapter whose ``MAX(column)`` returns a ``date`` object
-    rather than a ``datetime`` -- what a driver yields for a DATE-typed
-    column (e.g. pymssql for a SQL Server ``date``)."""
+class _ScalarAdapter:
+    """A minimal adapter whose ``MAX(column)`` returns a fixed value --
+    drives freshness evaluation with whatever object a driver yields for a
+    given column type (a ``date``, an aware ``datetime`` for
+    ``datetimeoffset``, a ``time``, ...)."""
 
     dialect = Dialect()
 
@@ -79,7 +80,7 @@ class _DateScalarAdapter:
 def test_freshness_on_a_date_column_measures_lag_from_midnight():
     # A DATE column has no time-of-day; the day is treated as midnight in
     # the source timezone (UTC here), not rejected for lacking a tzinfo.
-    a = _DateScalarAdapter(date(2026, 7, 10))
+    a = _ScalarAdapter(date(2026, 7, 10))
     now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
     result = evaluate_check(_freshness_check(), a, now=now)
     assert result.status == Status.OK
@@ -89,7 +90,27 @@ def test_freshness_on_a_date_column_measures_lag_from_midnight():
 def test_freshness_date_column_uses_the_source_timezone_for_midnight():
     check = _freshness_check()
     check.source_timezone = "America/New_York"  # EDT (UTC-4) in July
-    a = _DateScalarAdapter(date(2026, 7, 10))
+    a = _ScalarAdapter(date(2026, 7, 10))
     now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)  # midnight NY = 04:00 UTC
     result = evaluate_check(check, a, now=now)
     assert result.value == 16 * 3600  # 20:00 - 04:00 = 16h
+
+
+def test_freshness_on_an_aware_datetime_uses_its_own_offset():
+    # datetimeoffset comes back as an aware datetime; its own offset is
+    # used to convert to UTC, not the source's declared timezone.
+    value = datetime(2026, 7, 10, 10, 0, tzinfo=timezone(timedelta(hours=-4)))
+    check = _freshness_check()
+    check.source_timezone = "Asia/Tokyo"  # deliberately different; ignored
+    a = _ScalarAdapter(value)
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)  # 10:00-04:00 = 14:00 UTC
+    result = evaluate_check(check, a, now=now)
+    assert result.value == 6 * 3600  # 20:00 - 14:00 UTC = 6h
+
+
+def test_freshness_on_a_non_temporal_value_is_a_clear_error():
+    a = _ScalarAdapter(time(14, 30))  # a TIME column: no date, no age
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
+    result = evaluate_check(_freshness_check(), a, now=now)
+    assert result.status == Status.ERROR
+    assert "not a date or datetime" in (result.error or "")

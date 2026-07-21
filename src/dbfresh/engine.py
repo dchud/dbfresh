@@ -464,7 +464,8 @@ def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
     source's declared ``timezone:``, default UTC) before being
     converted; an already-aware value is unaffected. A date-only value (a
     DATE column, which has no time-of-day) becomes midnight in
-    ``source_timezone``.
+    ``source_timezone``. A value that is neither a date nor a datetime
+    (e.g. a TIME column, which has no date) raises :class:`TypeError`.
     """
     if isinstance(value, str):
         value = datetime.fromisoformat(value)
@@ -473,6 +474,14 @@ def _to_aware_utc(value: Any, source_timezone: str = "UTC") -> datetime:
         # the source timezone so lag is measured from the start of that
         # day. datetime is a subclass of date, so exclude it explicitly.
         value = datetime(value.year, value.month, value.day)
+    if not isinstance(value, datetime):
+        # A TIME column (or any non-temporal value a driver returns) has
+        # no meaningful age; fail with a clear message rather than an
+        # opaque AttributeError from .tzinfo/.astimezone below.
+        raise TypeError(
+            f"freshness column returned a {type(value).__name__}, "
+            "not a date or datetime"
+        )
     if value.tzinfo is None:
         value = value.replace(tzinfo=ZoneInfo(source_timezone))
     return value.astimezone(UTC)
