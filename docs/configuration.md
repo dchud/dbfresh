@@ -129,8 +129,8 @@ Every command that reads a config looks for it in this order:
 - The nearest `config.yaml` walking up from the current directory,
   stopping at the enclosing git repository root -- or, outside a
   repository, the home directory or the filesystem root. `config.yaml` is
-  a generic name, so the walk-up never crosses that boundary and silently
-  picks up an unrelated file further up.
+  a generic name, so the walk-up stops at that boundary rather than
+  silently picking up an unrelated file further up.
 - `config.yaml` in the current directory otherwise.
 
 A config found by walking up, or given via `DBFRESH_CONFIG`, is named by
