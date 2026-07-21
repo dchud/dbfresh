@@ -30,6 +30,8 @@ once releases are tagged.
   previously only `./config.yaml` or an explicit `-c PATH`.
 - The TUI's run-complete toast points at the `p` report and stays on
   screen when a run has failures to review.
+- The object-detail screen shows the highlighted check's error (or
+  expected vs observed) inline, without drilling into its history.
 
 ### Fixed
 
