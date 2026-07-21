@@ -714,6 +714,75 @@ def test_run_action_success_toast_summarizes_counts(tmp_path, pump_until):
     asyncio.run(scenario())
 
 
+def test_run_action_success_toast_points_at_the_report_on_a_failed_run(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    n.title == "Run complete" for n in app._notifications
+                ),
+            )
+
+            # row_count passes and null_rate fails -- see _seed_db / _config
+            # -- so the run's worst status is FAIL and the toast should
+            # point at the report.
+            notification = next(
+                n for n in app._notifications if n.title == "Run complete"
+            )
+            assert notification.message.endswith("press 'p' for the report")
+            assert notification.timeout == 10
+
+    asyncio.run(scenario())
+
+
+def test_run_action_success_toast_omits_report_hint_on_an_all_ok_run(
+    tmp_path, pump_until, seed_row_count_db, row_count_config
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        seed_row_count_db(db)
+        cfg = row_count_config(
+            tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+        )
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    n.title == "Run complete" for n in app._notifications
+                ),
+            )
+
+            notification = next(
+                n for n in app._notifications if n.title == "Run complete"
+            )
+            assert "press 'p'" not in notification.message
+            assert notification.timeout != 10
+
+    asyncio.run(scenario())
+
+
 def test_run_action_wires_per_check_progress_into_the_header(
     tmp_path, monkeypatch, pump_until
 ):

@@ -28,6 +28,8 @@ once releases are tagged.
 - The config is located by walking up from the current directory to find
   `config.yaml`, and via a `DBFRESH_CONFIG` environment variable —
   previously only `./config.yaml` or an explicit `-c PATH`.
+- The TUI's run-complete toast points at the `p` report and stays on
+  screen when a run has failures to review.
 
 ### Fixed
 
