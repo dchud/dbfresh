@@ -120,6 +120,25 @@ them, **never** the process's current directory:
 Paths given on the command line (`--store`, `-c`) resolve against the
 current directory as usual, like any other CLI argument.
 
+### Locating the config file
+
+Every command that reads a config looks for it in this order:
+
+- `-c PATH`, resolved against the current directory.
+- `DBFRESH_CONFIG`, if set.
+- The nearest `config.yaml` walking up from the current directory,
+  stopping at the enclosing git repository root -- or, outside a
+  repository, the home directory or the filesystem root. `config.yaml` is
+  a generic name, so the walk-up never crosses that boundary and silently
+  picks up an unrelated file further up.
+- `config.yaml` in the current directory otherwise.
+
+A config found by walking up, or given via `DBFRESH_CONFIG`, is named by
+its full path in any error, so a load failure always points at the exact
+file in question. This means running a command from a subdirectory of a
+config repository uses that repository's `config.yaml` instead of the
+empty-config fallback.
+
 ## Composition -- splitting checks across files
 
 A config is either a single file, or a root file plus included checks
