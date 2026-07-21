@@ -6,6 +6,8 @@ that the CLI parses `ui`'s flags and constructs the app correctly, without
 actually starting an interactive Textual session.
 """
 
+from pathlib import Path
+
 from dbfresh.cli import main
 
 
@@ -59,16 +61,22 @@ def test_ui_command_passes_the_already_parsed_config_to_the_app(tmp_path, monkey
 
 
 def test_ui_command_defaults_config_path_and_no_store_override(tmp_path, monkeypatch):
+    # No -c and no DBFRESH_CONFIG: config discovery finds config.yaml right
+    # in the current directory, so the app is launched with its absolute
+    # path (a discovered path always is -- see test_cli_config_discovery.py)
+    # rather than the bare literal "config.yaml".
     _FakeApp.instances.clear()
+    monkeypatch.delenv("DBFRESH_CONFIG", raising=False)
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.yaml").write_text("sources: {}\nchecks: []\n")
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\nchecks: []\n")
     monkeypatch.setattr("dbfresh.tui.app.DbfreshApp", _FakeApp)
 
     code = main(["ui"])
 
     assert code == 0
     launched = _FakeApp.instances[0]
-    assert str(launched.config_path) == "config.yaml"
+    assert Path(launched.config_path) == cfg.resolve()
     assert launched.store_path is None
 
 
