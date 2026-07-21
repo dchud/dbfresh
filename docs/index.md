@@ -10,6 +10,8 @@ extract or ETL job "ran"; it inspects the data those jobs produced. A silent
 empty load or a partial extract surfaces as a count, range, freshness, or
 null-rate violation.
 
+> **Note:** dbfresh is developed with agentic coding tools.
+
 ## Where to start
 
 - New to dbfresh? Start with [Quickstart](quickstart.md).

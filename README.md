@@ -12,6 +12,8 @@ database is a single adapter module. Adapters ship today for **SQL Server**,
 lightweight sources), with a **PostgreSQL** reference adapter that shows how
 little it takes to add another.
 
+> **Note:** dbfresh is developed with agentic coding tools.
+
 **Full documentation: <https://dchud.github.io/dbfresh/>**
 
 ## Install
