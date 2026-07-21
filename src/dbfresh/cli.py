@@ -88,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = subcommands.add_parser(
         "run", help="run checks and report", parents=[_verbosity_parent()]
     )
-    run.add_argument("-c", "--config", default="config.yaml")
+    run.add_argument("-c", "--config", default=None)
     run.add_argument("--only", default=None, help="restrict the run to one source")
     run.add_argument("--json", action="store_true", help="machine-readable output")
     run.add_argument(
@@ -108,13 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--source", default=None)
     history.add_argument("--metric", default=None)
     history.add_argument("-n", type=int, default=30, help="observations to show")
-    history.add_argument("-c", "--config", default="config.yaml")
+    history.add_argument("-c", "--config", default=None)
     history.add_argument("--store", default=None, help="observation store path")
 
     prune = subcommands.add_parser(
         "prune", help="enforce observation retention", parents=[_verbosity_parent()]
     )
-    prune.add_argument("-c", "--config", default="config.yaml")
+    prune.add_argument("-c", "--config", default=None)
     prune.add_argument("--store", default=None, help="observation store path")
 
     add = subcommands.add_parser(
@@ -122,19 +122,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="interactive check-authoring wizard",
         parents=[_verbosity_parent()],
     )
-    add.add_argument("-c", "--config", default="config.yaml")
+    add.add_argument("-c", "--config", default=None)
 
     env_template = subcommands.add_parser(
         "env-template",
         help="print an .env template of the variables the config references",
         parents=[_verbosity_parent()],
     )
-    env_template.add_argument("-c", "--config", default="config.yaml")
+    env_template.add_argument("-c", "--config", default=None)
 
     ui = subcommands.add_parser(
         "ui", help="interactive Textual dashboard", parents=[_verbosity_parent()]
     )
-    ui.add_argument("-c", "--config", default="config.yaml")
+    ui.add_argument("-c", "--config", default=None)
     ui.add_argument("--store", default=None, help="observation store path")
 
     return parser
@@ -595,6 +595,61 @@ _CONFIG_READING_COMMANDS = frozenset(
     {"run", "history", "prune", "add", "ui", "env-template"}
 )
 
+_DEFAULT_CONFIG_FILENAME = "config.yaml"
+
+
+def resolve_config_path(
+    cli_config: str | None, env_config: str | None, cwd: Path
+) -> Path:
+    """Locate the config to read: -c PATH > DBFRESH_CONFIG > nearest
+    config.yaml walking up from ``cwd`` > config.yaml in ``cwd``.
+
+    An explicit -c and a DBFRESH_CONFIG path resolve against the current
+    directory, like any other command-line path (matching --store /
+    DBFRESH_STORE). A discovered path is absolute so an error names the
+    exact file. When nothing is discovered the result is the bare
+    ``config.yaml``, preserving the prior current-directory fallback.
+    """
+    if cli_config is not None:
+        return Path(cli_config)
+    if env_config:
+        return Path(env_config)
+    discovered = _discover_config(cwd)
+    if discovered is not None:
+        return discovered
+    return Path(_DEFAULT_CONFIG_FILENAME)
+
+
+def _discover_config(start: Path) -> Path | None:
+    """The nearest ``config.yaml`` at or above ``start``, not crossing the
+    discovery boundary. Absolute path, or None when none is found."""
+    start = start.resolve()
+    boundary = _discovery_boundary(start)
+    current = start
+    while True:
+        candidate = current / _DEFAULT_CONFIG_FILENAME
+        if candidate.is_file():
+            return candidate
+        if current == boundary or current.parent == current:
+            return None
+        current = current.parent
+
+
+def _discovery_boundary(start: Path) -> Path:
+    """The highest directory the walk-up may inspect: the enclosing git
+    repository root if ``start`` is in a working tree, else the home
+    directory if ``start`` is under it, else the filesystem root.
+    ``config.yaml`` is a generic name, so an unrelated file further up must
+    not be picked up silently.
+    """
+    for directory in (start, *start.parents):
+        if (directory / ".git").exists():  # .git is a dir (repo) or file (worktree)
+            return directory
+    home = Path.home().resolve()
+    if start == home or home in start.parents:
+        return home
+    return Path(start.anchor)  # filesystem root
+
 
 def _load_dotenv_beside_config(config_path: Path) -> None:
     """Load a ``.env`` file next to ``config_path``, if one is present.
@@ -618,6 +673,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return _CONFIG_ERROR_EXIT
     if args.command in _CONFIG_READING_COMMANDS:
+        args.config = str(
+            resolve_config_path(
+                args.config, os.environ.get("DBFRESH_CONFIG"), Path.cwd()
+            )
+        )
         _load_dotenv_beside_config(Path(args.config))
     try:
         return _dispatch(args, parser)
