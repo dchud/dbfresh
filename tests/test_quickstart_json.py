@@ -68,7 +68,9 @@ def test_quickstart_json_example_results_have_the_same_keys(tmp_path, capsys):
         assert set(doc_result) == set(actual_result)
 
 
-def test_quickstart_json_example_matches_the_deterministic_fields(tmp_path, capsys):
+def test_quickstart_json_example_matches_the_deterministic_fields(
+    tmp_path, capsys
+):
     doc = _doc_json_example()
     actual = _run_quickstart_scenario(tmp_path, capsys)
     assert doc["status"] == actual["status"]

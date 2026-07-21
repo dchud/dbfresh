@@ -15,7 +15,11 @@ class _FakeApp:
     instances: list[_FakeApp] = []
 
     def __init__(
-        self, config_path, store_path=None, initial_config=None, missing_secrets=None
+        self,
+        config_path,
+        store_path=None,
+        initial_config=None,
+        missing_secrets=None,
     ):
         self.config_path = config_path
         self.store_path = store_path
@@ -27,7 +31,9 @@ class _FakeApp:
         pass
 
 
-def test_ui_command_constructs_app_with_config_and_store(tmp_path, monkeypatch):
+def test_ui_command_constructs_app_with_config_and_store(
+    tmp_path, monkeypatch
+):
     _FakeApp.instances.clear()
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
@@ -43,7 +49,9 @@ def test_ui_command_constructs_app_with_config_and_store(tmp_path, monkeypatch):
     assert launched.store_path == str(store)
 
 
-def test_ui_command_passes_the_already_parsed_config_to_the_app(tmp_path, monkeypatch):
+def test_ui_command_passes_the_already_parsed_config_to_the_app(
+    tmp_path, monkeypatch
+):
     # _ui_command validates the config before ever constructing the app; it
     # must hand that same Config to DbfreshApp instead of just the path, so
     # on_mount() doesn't parse the same unchanged file a second time.
@@ -60,7 +68,9 @@ def test_ui_command_passes_the_already_parsed_config_to_the_app(tmp_path, monkey
     assert launched.initial_config.sources == {}
 
 
-def test_ui_command_defaults_config_path_and_no_store_override(tmp_path, monkeypatch):
+def test_ui_command_defaults_config_path_and_no_store_override(
+    tmp_path, monkeypatch
+):
     # No -c and no DBFRESH_CONFIG: config discovery finds config.yaml right
     # in the current directory, so the app is launched with its absolute
     # path (a discovered path always is -- see test_cli_config_discovery.py)
@@ -119,7 +129,10 @@ def test_ui_command_starts_with_undefined_secret_var(tmp_path, monkeypatch):
     assert launched.missing_secrets == frozenset({"DB_PASSWORD"})
     # The literal token is left in place rather than resolved, so a check
     # against this source comes back ERROR on a run instead of crashing.
-    assert launched.initial_config.sources["s"].params["database"] == "${DB_PASSWORD}"
+    assert (
+        launched.initial_config.sources["s"].params["database"]
+        == "${DB_PASSWORD}"
+    )
 
 
 def test_ui_command_no_missing_secrets_passes_empty_set(tmp_path, monkeypatch):

@@ -14,7 +14,11 @@ from sqlalchemy import types as sqltypes
 from sqlalchemy.engine import make_url
 
 from dbfresh.adapters.base import Category
-from dbfresh.adapters.postgres import PostgresAdapter, PostgresDialect, refine_category
+from dbfresh.adapters.postgres import (
+    PostgresAdapter,
+    PostgresDialect,
+    refine_category,
+)
 
 PG_URL = os.environ.get("DBFRESH_PG_URL")
 

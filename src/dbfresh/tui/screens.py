@@ -11,7 +11,15 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Header, Input, Label, Static
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    Label,
+    Static,
+)
 from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import Check, check_id, parse_duration
@@ -35,7 +43,9 @@ from dbfresh.tui.dashboard import (
     status_style,
 )
 
-_NO_RUN_MESSAGE = "no runs recorded yet -- press 'r' on the dashboard to run checks"
+_NO_RUN_MESSAGE = (
+    "no runs recorded yet -- press 'r' on the dashboard to run checks"
+)
 
 # dbfresh.tui.app.tcss's $subtext0 -- Rich Text styling (used for the
 # reconstruction note below) can't reference a Textual CSS variable, so the
@@ -100,7 +110,8 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
             result = next(blocks, None)
             if result is not None:
                 styled = Text(
-                    status_glyph(result.status), style=status_style(result.status)
+                    status_glyph(result.status),
+                    style=status_style(result.status),
                 )
                 styled.append(line[1:])
                 lines.append(styled)
@@ -109,7 +120,9 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
     return Text("\n").join(lines)
 
 
-def _colorized_history(candidate: dict, rows: list[dict], tz: tzinfo | None) -> Text:
+def _colorized_history(
+    candidate: dict, rows: list[dict], tz: tzinfo | None
+) -> Text:
     """:func:`render_history`'s plain text, recolored for the History
     screen the same way :func:`_colorized_digest` recolors the Report
     digest -- ``render_history`` itself (also the CLI's ``dbfresh
@@ -208,7 +221,9 @@ class ReportScreen(Screen):
         if self._store is not None:
             stored_run = self._store.latest_run()
             if stored_run is not None:
-                observations = self._store.observations_for_run(stored_run["run_id"])
+                observations = self._store.observations_for_run(
+                    stored_run["run_id"]
+                )
                 reconstructed = reconstruct_run(stored_run, observations)
                 digest = _colorized_digest(reconstructed, tz=self._tz)
                 note = Text(_RECONSTRUCTED_NOTE, style=_SUBTEXT0)
@@ -241,7 +256,9 @@ class HistoryScreen(Screen):
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
-    def __init__(self, store: Store, check: Check, tz: tzinfo | None = None) -> None:
+    def __init__(
+        self, store: Store, check: Check, tz: tzinfo | None = None
+    ) -> None:
         super().__init__()
         self._store = store
         self._check = check
@@ -349,7 +366,9 @@ class ObjectDetailScreen(Screen[bool]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Object detail", classes="screen-heading")
-        yield Static(f"{self._source}.{self._object}", id="object-detail-heading")
+        yield Static(
+            f"{self._source}.{self._object}", id="object-detail-heading"
+        )
         yield Horizontal(Button("Run this object", id=_RUN_OBJECT_BUTTON_ID))
         yield DrillDownTable(
             id=_DETAIL_GRID_ID,
@@ -385,7 +404,12 @@ class ObjectDetailScreen(Screen[bool]):
         table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
         today = datetime.now(self._tz or UTC).date()
         rows = check_rows(
-            self._source, self._object, self._config, self._store, today, self._tz
+            self._source,
+            self._object,
+            self._config,
+            self._store,
+            today,
+            self._tz,
         )
         populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
@@ -397,7 +421,9 @@ class ObjectDetailScreen(Screen[bool]):
         row = self._rows_by_key.get(event.row_key.value)
         if row is None or row.check is None:
             return
-        self.app.push_screen(HistoryScreen(self._store, row.check, tz=self._tz))
+        self.app.push_screen(
+            HistoryScreen(self._store, row.check, tz=self._tz)
+        )
 
     def action_run_object(self) -> None:
         """Run only this object's checks (the "Run this object" button's
@@ -517,8 +543,12 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_hi_inputs.append(hi_input)
             edit_row = Horizontal(
                 Label(f"{label} (between):", classes="edit-label"),
-                Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
-                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
+                Horizontal(
+                    lo_input, Label("and"), hi_input, classes="edit-value"
+                ),
+                Horizontal(
+                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
+                ),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator == "vs_previous" and (
@@ -526,15 +556,23 @@ class ObjectDetailScreen(Screen[bool]):
             and check.expect.operand["max_ratio"] is not None
         ):
             operand = check.expect.operand
-            lo_input = Input(value=str(operand["min_ratio"]), id=f"detail-lo-{i}")
-            hi_input = Input(value=str(operand["max_ratio"]), id=f"detail-hi-{i}")
+            lo_input = Input(
+                value=str(operand["min_ratio"]), id=f"detail-lo-{i}"
+            )
+            hi_input = Input(
+                value=str(operand["max_ratio"]), id=f"detail-hi-{i}"
+            )
             self._edit_value_inputs.append(None)
             self._edit_lo_inputs.append(lo_input)
             self._edit_hi_inputs.append(hi_input)
             edit_row = Horizontal(
                 Label(f"{label} (ratio):", classes="edit-label"),
-                Horizontal(lo_input, Label("and"), hi_input, classes="edit-value"),
-                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
+                Horizontal(
+                    lo_input, Label("and"), hi_input, classes="edit-value"
+                ),
+                Horizontal(
+                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
+                ),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
         elif check.expect.operator in _NON_EDITABLE_OPERATORS:
@@ -543,7 +581,9 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_hi_inputs.append(None)
             edit_row = Horizontal(
                 Label(f"{label}:", classes="edit-label"),
-                Horizontal(Label(check.expect.describe()), classes="edit-value"),
+                Horizontal(
+                    Label(check.expect.describe()), classes="edit-value"
+                ),
                 Horizontal(classes="edit-save"),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
@@ -555,9 +595,13 @@ class ObjectDetailScreen(Screen[bool]):
             self._edit_lo_inputs.append(None)
             self._edit_hi_inputs.append(None)
             edit_row = Horizontal(
-                Label(f"{label} ({check.expect.operator}):", classes="edit-label"),
+                Label(
+                    f"{label} ({check.expect.operator}):", classes="edit-label"
+                ),
                 Horizontal(value_input, classes="edit-value"),
-                Horizontal(Button("Save", id=f"detail-save-{i}"), classes="edit-save"),
+                Horizontal(
+                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
+                ),
                 Button("Delete", id=f"detail-delete-{i}"),
             )
 
@@ -572,7 +616,9 @@ class ObjectDetailScreen(Screen[bool]):
         elif button_id.startswith("detail-delete-"):
             self._arm_delete(int(button_id.removeprefix("detail-delete-")))
         elif button_id.startswith("detail-confirm-"):
-            await self._confirm_delete(int(button_id.removeprefix("detail-confirm-")))
+            await self._confirm_delete(
+                int(button_id.removeprefix("detail-confirm-"))
+            )
         elif button_id.startswith("detail-cancel-"):
             self._cancel_delete(int(button_id.removeprefix("detail-cancel-")))
 
@@ -628,7 +674,10 @@ class ObjectDetailScreen(Screen[bool]):
             lo = float(raw_lo.strip())
             hi = float(raw_hi.strip())
         except ValueError:
-            return None, f"between requires two numbers, got {raw_lo!r} and {raw_hi!r}"
+            return (
+                None,
+                f"between requires two numbers, got {raw_lo!r} and {raw_hi!r}",
+            )
         if lo > hi:
             return None, f"between requires lo <= hi, got [{lo}, {hi}]"
         return {"between": [lo, hi]}, None
@@ -648,9 +697,15 @@ class ObjectDetailScreen(Screen[bool]):
             min_ratio = float(raw_lo.strip())
             max_ratio = float(raw_hi.strip())
         except ValueError:
-            return None, f"ratio requires two numbers, got {raw_lo!r} and {raw_hi!r}"
+            return (
+                None,
+                f"ratio requires two numbers, got {raw_lo!r} and {raw_hi!r}",
+            )
         if min_ratio > max_ratio:
-            return None, f"ratio requires min <= max, got [{min_ratio}, {max_ratio}]"
+            return (
+                None,
+                f"ratio requires min <= max, got [{min_ratio}, {max_ratio}]",
+            )
         operand = dict(check.expect.operand)
         operand["min_ratio"] = min_ratio
         operand["max_ratio"] = max_ratio
@@ -669,11 +724,15 @@ class ObjectDetailScreen(Screen[bool]):
                 check, lo_input.value, hi_input.value
             )
         elif lo_input is not None and hi_input is not None:
-            new_expect, error = self._parse_between_edit(lo_input.value, hi_input.value)
+            new_expect, error = self._parse_between_edit(
+                lo_input.value, hi_input.value
+            )
         else:
             value_input = self._edit_value_inputs[i]
             assert value_input is not None
-            new_expect, error = self._parse_scalar_edit(check, value_input.value)
+            new_expect, error = self._parse_scalar_edit(
+                check, value_input.value
+            )
         if error is not None:
             self.notify(error, title="Invalid check value", severity="error")
             return
@@ -682,7 +741,9 @@ class ObjectDetailScreen(Screen[bool]):
         cid = check_id(check)
         target = find_check_file(self._config_path, cid)
         if target is None:
-            self.notify(f"could not locate check {cid} on disk", severity="error")
+            self.notify(
+                f"could not locate check {cid} on disk", severity="error"
+            )
             return
         rewrite_check_expectation(target, cid, new_expect)
         self._config_changed = True
@@ -791,7 +852,12 @@ class StoreScreen(Screen):
         self.query_one("#store-prune-btn", Button).disabled = True
         self._prune_worker(self._store.path, self._retain_days)
 
-    @work(thread=True, exclusive=True, group=_PRUNE_WORKER_GROUP, exit_on_error=False)
+    @work(
+        thread=True,
+        exclusive=True,
+        group=_PRUNE_WORKER_GROUP,
+        exit_on_error=False,
+    )
     def _prune_worker(self, store_path: Path, retain_days: int) -> int:
         """Delete observations older than ``retain_days``, off the UI
         thread and off the app's own shared store connection.
@@ -834,15 +900,15 @@ class StoreScreen(Screen):
         if event.state == WorkerState.CANCELLED:
             return
         if event.state == WorkerState.ERROR:
-            self.notify(f"prune failed: {event.worker.error}", severity="error")
+            self.notify(
+                f"prune failed: {event.worker.error}", severity="error"
+            )
             return
 
         deleted = event.worker.result
         assert deleted is not None
         self.query_one("#store-info", Static).update(self._info_text())
-        result_text = (
-            f"pruned {deleted} observation(s) older than {self._retain_days} days"
-        )
+        result_text = f"pruned {deleted} observation(s) older than {self._retain_days} days"
         self.query_one("#store-prune-result", Static).update(result_text)
         self.notify(result_text)
 

@@ -222,7 +222,9 @@ def _worst_or_unknown(statuses: list[Status]) -> Status | None:
 _MARKER_PRIORITY = (Status.FAIL, Status.WARN, Status.ERROR)
 
 
-def _day_marker(latest: Status | None, all_statuses: list[Status]) -> Status | None:
+def _day_marker(
+    latest: Status | None, all_statuses: list[Status]
+) -> Status | None:
     """Whether ``all_statuses`` (every status a day saw) contains something
     strictly worse than ``latest`` (the day's current, latest-observed
     status) -- and if so, which one to flag when more than one qualifies.
@@ -249,7 +251,9 @@ def _day_marker(latest: Status | None, all_statuses: list[Status]) -> Status | N
 def trailing_dates(today: date, days: int = _TRAILING_DAYS) -> list[date]:
     """The last ``days`` calendar dates ending on (and including) ``today``,
     oldest first -- so the grid reads left (past) to right (present)."""
-    return [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+    return [
+        today - timedelta(days=offset) for offset in range(days - 1, -1, -1)
+    ]
 
 
 def bucket_by_day(
@@ -346,7 +350,9 @@ class DrillDownTable(DataTable):
         self._set_hover_cursor(False)
         candidate = self.cursor_coordinate.row + step
         while 0 <= candidate < self.row_count:
-            key = self.coordinate_to_cell_key(Coordinate(candidate, 0)).row_key.value
+            key = self.coordinate_to_cell_key(
+                Coordinate(candidate, 0)
+            ).row_key.value
             if not is_header_key(key):
                 self.cursor_coordinate = Coordinate(
                     candidate, self.cursor_coordinate.column
@@ -423,9 +429,9 @@ def object_rows(
     many checks the object has."""
     by_source: dict[str, dict[str, list[Check]]] = {}
     for check in config.checks:
-        by_source.setdefault(check.source, {}).setdefault(check.object, []).append(
-            check
-        )
+        by_source.setdefault(check.source, {}).setdefault(
+            check.object, []
+        ).append(check)
 
     dates = trailing_dates(today)
     rows: list[GridRow] = []
@@ -506,7 +512,9 @@ def check_rows(
     """The drill-in rows for one source.object: one per check, in config
     order -- the same [overall, trailing days] shape as :func:`object_rows`,
     scoped to a single check per row instead of rolled up across many."""
-    checks = [c for c in config.checks if c.source == source and c.object == object_]
+    checks = [
+        c for c in config.checks if c.source == source and c.object == object_
+    ]
     dates = trailing_dates(today)
     rows: list[GridRow] = []
     for check in checks:
@@ -617,7 +625,11 @@ def populate_grid(
                 key=header_key(source),
             )
             previous_source = source
-        label = row.object if group_headers and row.object is not None else row.label
+        label = (
+            row.object
+            if group_headers and row.object is not None
+            else row.label
+        )
         cells = [label, _status_cell(row.overall)]
         cells.extend(_day_cell(latest, marker) for latest, marker in row.days)
         table.add_row(*cells, key=row.key)

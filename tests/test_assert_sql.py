@@ -22,7 +22,9 @@ def _adapter_with_negatives():
 def test_assert_sql_with_violations_fails():
     a = _adapter_with_negatives()
     check = Check(
-        source="s", object="fct", assert_sql="SELECT * FROM fct WHERE amount < 0"
+        source="s",
+        object="fct",
+        assert_sql="SELECT * FROM fct WHERE amount < 0",
     )
     result = evaluate_check(check, a)
     assert result.status == Status.FAIL
@@ -36,7 +38,9 @@ def test_assert_sql_with_no_violations_is_ok():
     a.rows("CREATE TABLE fct (amount REAL)")
     a.rows("INSERT INTO fct VALUES (1.0), (2.0)")
     check = Check(
-        source="s", object="fct", assert_sql="SELECT * FROM fct WHERE amount < 0"
+        source="s",
+        object="fct",
+        assert_sql="SELECT * FROM fct WHERE amount < 0",
     )
     result = evaluate_check(check, a)
     assert result.status == Status.OK
@@ -97,7 +101,9 @@ def test_assert_sql_cte_with_broad_violations_is_not_truncated_inside_the_cte():
 def test_assert_sql_fetch_cap_is_honored_for_more_than_cap_violations():
     a = _adapter_with_n_negatives(n=25)
     check = Check(
-        source="s", object="fct", assert_sql="SELECT * FROM fct WHERE amount < 0"
+        source="s",
+        object="fct",
+        assert_sql="SELECT * FROM fct WHERE amount < 0",
     )
     result = evaluate_check(check, a)
     assert result.status == Status.FAIL
@@ -109,7 +115,9 @@ def test_assert_sql_fetch_cap_is_honored_for_more_than_cap_violations():
 def test_assert_sql_fewer_than_cap_violations_is_an_exact_count():
     a = _adapter_with_n_negatives(n=15)
     check = Check(
-        source="s", object="fct", assert_sql="SELECT * FROM fct WHERE amount < 0"
+        source="s",
+        object="fct",
+        assert_sql="SELECT * FROM fct WHERE amount < 0",
     )
     result = evaluate_check(check, a)
     assert result.status == Status.FAIL

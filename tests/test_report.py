@@ -21,7 +21,11 @@ def test_digest_header_and_failure_block():
     run = RunResult(
         results=[
             Result(
-                source="s", object="a", metric="row_count", status=Status.OK, value=5
+                source="s",
+                object="a",
+                metric="row_count",
+                status=Status.OK,
+                value=5,
             ),
             Result(
                 source="s",
@@ -224,7 +228,9 @@ def test_render_json_envelope_has_run_metadata_and_counts():
 
 
 def test_render_json_envelope_run_id_null_without_store():
-    run = RunResult(results=[], status=Status.OK, started_at=None, finished_at=None)
+    run = RunResult(
+        results=[], status=Status.OK, started_at=None, finished_at=None
+    )
     payload = json.loads(render_json(run))
 
     assert payload["run_id"] is None
@@ -369,7 +375,10 @@ def test_reconstruct_run_carries_error_text():
         _run_row(),
         [
             _observation(
-                status="ERROR", value=None, error="connection refused", expected=None
+                status="ERROR",
+                value=None,
+                error="connection refused",
+                expected=None,
             )
         ],
     )
@@ -420,7 +429,10 @@ def test_show_progress_suppressed_when_stdout_is_not_a_tty():
             return False
 
     stream = _NotATty()
-    assert show_progress(json_output=False, no_progress=False, stream=stream) is False
+    assert (
+        show_progress(json_output=False, no_progress=False, stream=stream)
+        is False
+    )
 
 
 def test_show_progress_enabled_for_a_normal_interactive_run():
@@ -428,7 +440,10 @@ def test_show_progress_enabled_for_a_normal_interactive_run():
         def isatty(self):
             return True
 
-    assert show_progress(json_output=False, no_progress=False, stream=_Tty()) is True
+    assert (
+        show_progress(json_output=False, no_progress=False, stream=_Tty())
+        is True
+    )
 
 
 def test_progress_reporter_disabled_yields_a_noop_callback():
@@ -439,7 +454,9 @@ def test_progress_reporter_disabled_yields_a_noop_callback():
 def test_progress_reporter_enabled_renders_completed_count():
     buffer = io.StringIO()
     console = Console(file=buffer, force_terminal=True)
-    with progress_reporter(total=2, enabled=True, console=console) as on_result:
+    with progress_reporter(
+        total=2, enabled=True, console=console
+    ) as on_result:
         on_result(None)
         on_result(None)
     assert "2/2" in buffer.getvalue()

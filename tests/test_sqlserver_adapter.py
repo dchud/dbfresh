@@ -14,7 +14,11 @@ import pytest
 from sqlalchemy.dialects import mssql
 
 from dbfresh.adapters.base import Category
-from dbfresh.adapters.sqlserver import SqlServerAdapter, TSqlDialect, refine_category
+from dbfresh.adapters.sqlserver import (
+    SqlServerAdapter,
+    TSqlDialect,
+    refine_category,
+)
 from dbfresh.checks import Check, compile_metric_sql
 
 SQLSERVER_URL = os.environ.get("DBFRESH_SQLSERVER_URL")
@@ -45,7 +49,9 @@ def test_timeout_is_passed_as_login_timeout_connect_arg(monkeypatch):
         captured.update(kwargs)
         return _FakeEngine()
 
-    monkeypatch.setattr("dbfresh.adapters.sqlserver.create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        "dbfresh.adapters.sqlserver.create_engine", fake_create_engine
+    )
 
     SqlServerAdapter("sqlserver://user:pass@host/mydb", timeout=30)
 
@@ -59,7 +65,9 @@ def test_no_timeout_passes_empty_connect_args(monkeypatch):
         captured.update(kwargs)
         return _FakeEngine()
 
-    monkeypatch.setattr("dbfresh.adapters.sqlserver.create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        "dbfresh.adapters.sqlserver.create_engine", fake_create_engine
+    )
 
     SqlServerAdapter("sqlserver://user:pass@host/mydb")
 
@@ -88,7 +96,9 @@ def test_dialect_introspection_capabilities_are_keys_only():
 
 
 def test_null_rate_compiles_with_tsql_float_ratio():
-    check = Check(source="s", object="dbo.fct", metric="null_rate", column="email")
+    check = Check(
+        source="s", object="dbo.fct", metric="null_rate", column="email"
+    )
     sql = compile_metric_sql(check, TSqlDialect())
     assert sql == (
         "SELECT SUM(CASE WHEN email IS NULL THEN 1 ELSE 0 END) * 1.0 "
@@ -163,7 +173,11 @@ def test_describe_normalizes_mocked_reflection(monkeypatch):
         {"name": "amount", "type": mssql.MONEY(), "nullable": True},
         {"name": "seen_at", "type": mssql.DATETIME2(), "nullable": True},
         {"name": "notes", "type": mssql.NVARCHAR(200), "nullable": True},
-        {"name": "row_id", "type": mssql.UNIQUEIDENTIFIER(), "nullable": False},
+        {
+            "name": "row_id",
+            "type": mssql.UNIQUEIDENTIFIER(),
+            "nullable": False,
+        },
     ]
     fake_inspector = _FakeInspector(
         columns, pk_columns=["id"], uniques=[{"column_names": ["row_id"]}]
@@ -188,7 +202,9 @@ def test_describe_normalizes_mocked_reflection(monkeypatch):
     assert info.keys == [["id"], ["row_id"]]
 
 
-def test_describe_three_part_name_passes_compound_schema_to_reflection(monkeypatch):
+def test_describe_three_part_name_passes_compound_schema_to_reflection(
+    monkeypatch,
+):
     # "db.schema.table" splits (at the last dot) into schema="db.schema",
     # table="table" -- SQLAlchemy's MSSQL dialect re-splits a dotted schema
     # string itself as database.owner, so passing the compound string
@@ -238,7 +254,9 @@ def test_live_describe_reflects_columns_and_keys():
             "CREATE TABLE dbo.dbfresh_probe ("
             "id INT PRIMARY KEY, amount MONEY, seen_at DATETIME2)"
         )
-        adapter.rows("INSERT INTO dbo.dbfresh_probe VALUES (1, 9.99, SYSDATETIME())")
+        adapter.rows(
+            "INSERT INTO dbo.dbfresh_probe VALUES (1, 9.99, SYSDATETIME())"
+        )
         info = adapter.describe("dbo.dbfresh_probe")
         categories = {col.name: col.category for col in info.columns}
         assert categories["id"] == Category.NUMERIC

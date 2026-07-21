@@ -8,7 +8,12 @@ prompts feed the module correctly and the result is written to disk.
 import yaml
 
 from dbfresh.adapters import factory
-from dbfresh.adapters.base import Category, Column, ObjectInfo, SqlAlchemyAdapter
+from dbfresh.adapters.base import (
+    Category,
+    Column,
+    ObjectInfo,
+    SqlAlchemyAdapter,
+)
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.cli import main
@@ -62,11 +67,15 @@ def _table(db):
     adapter.close()
 
 
-def test_add_wizard_appends_proposed_bundle_for_existing_source(tmp_path, monkeypatch):
+def test_add_wizard_appends_proposed_bundle_for_existing_source(
+    tmp_path, monkeypatch
+):
     db = tmp_path / "data.db"
     _table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     answers = iter(
         [
@@ -96,7 +105,9 @@ def test_add_wizard_run_twice_for_same_object_does_not_duplicate_checks(
     db = tmp_path / "data.db"
     _table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     def _run():
         answers = iter(["s", "fct", "y", "", "", ""])
@@ -155,7 +166,9 @@ def test_add_wizard_missing_object_requires_confirmation_to_proceed(
     db = tmp_path / "data.db"
     _table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     answers = iter(
         [
@@ -172,7 +185,9 @@ def test_add_wizard_missing_object_requires_confirmation_to_proceed(
     assert data["checks"] == []
 
 
-def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(tmp_path, monkeypatch):
+def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(
+    tmp_path, monkeypatch
+):
     # A new source's connection params may reference ${VAR} secrets. The
     # probe must succeed against the resolved value, but the YAML must
     # keep the placeholder -- never the literal secret.
@@ -228,11 +243,15 @@ def test_add_wizard_hints_at_env_var_for_credential_looking_keys(
     assert "${" in out
 
 
-def test_add_wizard_closes_adapter_when_declining_missing_object(tmp_path, monkeypatch):
+def test_add_wizard_closes_adapter_when_declining_missing_object(
+    tmp_path, monkeypatch
+):
     db = tmp_path / "data.db"
     _table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     closed = []
     original_close = SqlAlchemyAdapter.close
@@ -395,7 +414,9 @@ def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
     db = tmp_path / "data.db"
     _ambiguous_table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     answers = iter(
         [
@@ -422,7 +443,9 @@ def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
     db = tmp_path / "data.db"
     _ambiguous_table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
 
     answers = iter(
         [

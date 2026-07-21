@@ -89,8 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="run checks and report", parents=[_verbosity_parent()]
     )
     run.add_argument("-c", "--config", default=None)
-    run.add_argument("--only", default=None, help="restrict the run to one source")
-    run.add_argument("--json", action="store_true", help="machine-readable output")
+    run.add_argument(
+        "--only", default=None, help="restrict the run to one source"
+    )
+    run.add_argument(
+        "--json", action="store_true", help="machine-readable output"
+    )
     run.add_argument(
         "--no-progress", action="store_true", help="suppress the progress bar"
     )
@@ -107,12 +111,18 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("object")
     history.add_argument("--source", default=None)
     history.add_argument("--metric", default=None)
-    history.add_argument("-n", type=int, default=30, help="observations to show")
+    history.add_argument(
+        "-n", type=int, default=30, help="observations to show"
+    )
     history.add_argument("-c", "--config", default=None)
-    history.add_argument("--store", default=None, help="observation store path")
+    history.add_argument(
+        "--store", default=None, help="observation store path"
+    )
 
     prune = subcommands.add_parser(
-        "prune", help="enforce observation retention", parents=[_verbosity_parent()]
+        "prune",
+        help="enforce observation retention",
+        parents=[_verbosity_parent()],
     )
     prune.add_argument("-c", "--config", default=None)
     prune.add_argument("--store", default=None, help="observation store path")
@@ -132,7 +142,9 @@ def build_parser() -> argparse.ArgumentParser:
     env_template.add_argument("-c", "--config", default=None)
 
     ui = subcommands.add_parser(
-        "ui", help="interactive Textual dashboard", parents=[_verbosity_parent()]
+        "ui",
+        help="interactive Textual dashboard",
+        parents=[_verbosity_parent()],
     )
     ui.add_argument("-c", "--config", default=None)
     ui.add_argument("--store", default=None, help="observation store path")
@@ -174,7 +186,9 @@ def _run_command(args: argparse.Namespace) -> int:
         return _report_config_error(exc)
 
     if args.only is not None and args.only not in config.sources:
-        print(f"error: unknown source for --only: {args.only!r}", file=sys.stderr)
+        print(
+            f"error: unknown source for --only: {args.only!r}", file=sys.stderr
+        )
         return _CONFIG_ERROR_EXIT
 
     # Opened before run_and_persist (not just after) so history-based
@@ -203,7 +217,9 @@ def _run_command(args: argparse.Namespace) -> int:
     enabled = show_progress(args.json, args.no_progress)
     try:
         with progress_reporter(len(checks), enabled) as on_result:
-            run = run_and_persist(config, store, only=args.only, on_result=on_result)
+            run = run_and_persist(
+                config, store, only=args.only, on_result=on_result
+            )
     finally:
         if store is not None:
             store.close()
@@ -228,11 +244,17 @@ def _run_command(args: argparse.Namespace) -> int:
 
 def _history_command(args: argparse.Namespace) -> int:
     from dbfresh.config import ConfigError
-    from dbfresh.report import display_timezone, render_candidates, render_history
+    from dbfresh.report import (
+        display_timezone,
+        render_candidates,
+        render_history,
+    )
     from dbfresh.store import Store, resolve_store_path
 
     try:
-        config_dir, store_config, calendar = _resolve_read_context(Path(args.config))
+        config_dir, store_config, calendar = _resolve_read_context(
+            Path(args.config)
+        )
     except (ConfigError, OSError, yaml.YAMLError) as exc:
         return _report_config_error(exc)
     store_path = resolve_store_path(
@@ -253,7 +275,9 @@ def _history_command(args: argparse.Namespace) -> int:
             print(render_candidates(args.object, candidates))
             return 2
         rows = store.history(candidates[0]["check_id"], limit=args.n)
-        print(render_history(candidates[0], rows, tz=display_timezone(calendar)))
+        print(
+            render_history(candidates[0], rows, tz=display_timezone(calendar))
+        )
         return 0
     finally:
         store.close()
@@ -264,7 +288,9 @@ def _prune_command(args: argparse.Namespace) -> int:
     from dbfresh.store import Store, resolve_store_path
 
     try:
-        config_dir, store_config, _calendar = _resolve_read_context(Path(args.config))
+        config_dir, store_config, _calendar = _resolve_read_context(
+            Path(args.config)
+        )
     except (ConfigError, OSError, yaml.YAMLError) as exc:
         return _report_config_error(exc)
     store_path = resolve_store_path(
@@ -399,7 +425,9 @@ def _select_source(
         key = key.strip()
         value = value.strip()
         if _looks_like_secret_key(key) and "${" not in value:
-            print(f"    hint: consider {key}=${{VAR}} instead of a literal value")
+            print(
+                f"    hint: consider {key}=${{VAR}} instead of a literal value"
+            )
         params[key] = value
 
     probe, resolved_params = probe_new_source(type_, params)
@@ -464,7 +492,9 @@ def _add_command(args: argparse.Namespace) -> int:
                     "Ambiguous freshness timestamp candidates: "
                     + ", ".join(timestamp.candidates)
                 )
-                choice = _prompt("Pick a column for freshness (blank to skip)", "")
+                choice = _prompt(
+                    "Pick a column for freshness (blank to skip)", ""
+                )
                 if choice in timestamp.candidates:
                     timestamp_override = choice
                 elif choice:
@@ -499,8 +529,12 @@ def _add_command(args: argparse.Namespace) -> int:
                     f"Offered for {offer['column']} ({offer['category']}): "
                     + ", ".join(offer["checks"])
                 )
-                choice = _prompt("  add which (comma-separated, blank to skip)", "")
-                for metric in (m.strip() for m in choice.split(",") if m.strip()):
+                choice = _prompt(
+                    "  add which (comma-separated, blank to skip)", ""
+                )
+                for metric in (
+                    m.strip() for m in choice.split(",") if m.strip()
+                ):
                     proposed.append(
                         _prompt_offered_check(
                             source_name,
@@ -511,7 +545,9 @@ def _add_command(args: argparse.Namespace) -> int:
                         )
                     )
         else:
-            print("no metadata available; add checks manually by editing the YAML")
+            print(
+                "no metadata available; add checks manually by editing the YAML"
+            )
     finally:
         if adapter is not None:
             adapter.close()
@@ -524,7 +560,9 @@ def _add_command(args: argparse.Namespace) -> int:
         print("nothing to write")
         return 0
 
-    files = target_files(config_path) if config_path.exists() else [config_path]
+    files = (
+        target_files(config_path) if config_path.exists() else [config_path]
+    )
     if len(files) > 1:
         print("Included checks files:")
         for i, f in enumerate(files, 1):
@@ -567,7 +605,9 @@ def _ui_command(args: argparse.Namespace) -> int:
         # (which writes config_path for the first time) without first
         # hand-writing YAML. Mirrors `dbfresh add`, which already tolerates
         # a missing config the same way.
-        config = Config(sources={}, checks=[], config_dir=config_path.resolve().parent)
+        config = Config(
+            sources={}, checks=[], config_dir=config_path.resolve().parent
+        )
 
     app = DbfreshApp(
         config_path=args.config,
@@ -652,7 +692,9 @@ def _discovery_boundary(start: Path) -> Path:
     not be picked up silently.
     """
     for directory in (start, *start.parents):
-        if (directory / ".git").exists():  # .git is a dir (repo) or file (worktree)
+        if (
+            directory / ".git"
+        ).exists():  # .git is a dir (repo) or file (worktree)
             return directory
     home = Path.home().resolve()
     if start == home or home in start.parents:
@@ -695,7 +737,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _CONFIG_ERROR_EXIT
 
 
-def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+def _dispatch(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> int:
     if args.command == "run":
         return _run_command(args)
     if args.command == "history":

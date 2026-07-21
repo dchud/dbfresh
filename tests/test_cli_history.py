@@ -23,7 +23,9 @@ def _result(**overrides) -> Result:
     return Result(**fields)
 
 
-def test_history_prints_recent_observations(tmp_path, capsys, seed_observations):
+def test_history_prints_recent_observations(
+    tmp_path, capsys, seed_observations
+):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"
     seed_observations(
@@ -34,7 +36,14 @@ def test_history_prints_recent_observations(tmp_path, capsys, seed_observations)
         ],
     )
     code = main(
-        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+        ]
     )
     out = capsys.readouterr().out
     assert code == 0
@@ -43,7 +52,9 @@ def test_history_prints_recent_observations(tmp_path, capsys, seed_observations)
     assert "120" in out
 
 
-def test_history_lists_newest_observation_first(tmp_path, capsys, seed_observations):
+def test_history_lists_newest_observation_first(
+    tmp_path, capsys, seed_observations
+):
     # Pinned to a UTC calendar (see test_history_limit_flag) so the
     # observed_at dates asserted below are deterministic regardless of the
     # host machine's local timezone.
@@ -58,7 +69,14 @@ def test_history_lists_newest_observation_first(tmp_path, capsys, seed_observati
         ],
     )
     code = main(
-        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+        ]
     )
     out = capsys.readouterr().out
     assert code == 0
@@ -69,12 +87,16 @@ def test_history_no_observations_returns_one(tmp_path, capsys):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"
     Store(store_path).close()  # empty store, tables exist
-    code = main(["history", "dbo.missing", "-c", str(cfg), "--store", str(store_path)])
+    code = main(
+        ["history", "dbo.missing", "-c", str(cfg), "--store", str(store_path)]
+    )
     assert code == 1
     assert "no observations" in capsys.readouterr().out.lower()
 
 
-def test_history_ambiguous_object_lists_candidates(tmp_path, capsys, seed_observations):
+def test_history_ambiguous_object_lists_candidates(
+    tmp_path, capsys, seed_observations
+):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"
     seed_observations(
@@ -85,7 +107,14 @@ def test_history_ambiguous_object_lists_candidates(tmp_path, capsys, seed_observ
         ],
     )
     code = main(
-        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+        ]
     )
     out = capsys.readouterr().out
     assert code == 2
@@ -93,7 +122,9 @@ def test_history_ambiguous_object_lists_candidates(tmp_path, capsys, seed_observ
     assert "b" in out
 
 
-def test_history_source_and_metric_disambiguate(tmp_path, capsys, seed_observations):
+def test_history_source_and_metric_disambiguate(
+    tmp_path, capsys, seed_observations
+):
     cfg = _config(tmp_path / "config.yaml")
     store_path = tmp_path / "obs.db"
     seed_observations(
@@ -156,13 +187,23 @@ def test_history_limit_flag(tmp_path, capsys, seed_observations):
 
 def test_history_uses_calendar_timezone(tmp_path, capsys, seed_observations):
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("sources: {}\ncalendar:\n  timezone: America/New_York\nchecks: []\n")
+    cfg.write_text(
+        "sources: {}\ncalendar:\n  timezone: America/New_York\nchecks: []\n"
+    )
     store_path = tmp_path / "obs.db"
     seed_observations(
-        store_path, [(_result(value=100), datetime(2026, 7, 8, 12, tzinfo=UTC))]
+        store_path,
+        [(_result(value=100), datetime(2026, 7, 8, 12, tzinfo=UTC))],
     )
     code = main(
-        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+        ]
     )
     out = capsys.readouterr().out
     assert code == 0
@@ -184,13 +225,22 @@ def test_history_reads_dotenv_beside_config_for_interpolation(
     seed_observations(store_path, [(_result(value=1), None)])
 
     code = main(
-        ["history", "dbo.fct_sales", "-c", str(cfg), "--store", str(store_path)]
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+        ]
     )
     assert code == 0
     assert "config error" not in capsys.readouterr().err
 
 
-def test_history_works_without_config_file(tmp_path, capsys, seed_observations):
+def test_history_works_without_config_file(
+    tmp_path, capsys, seed_observations
+):
     store_path = tmp_path / "obs.db"
     seed_observations(store_path, [(_result(value=1), None)])
     code = main(

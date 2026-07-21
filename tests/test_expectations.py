@@ -43,7 +43,10 @@ def test_null_value_fails():
 
 def test_describe():
     assert parse_expectation({"max": 0.01}).describe() == "max 0.01"
-    assert parse_expectation({"between": [10, 20]}).describe() == "between 10 and 20"
+    assert (
+        parse_expectation({"between": [10, 20]}).describe()
+        == "between 10 and 20"
+    )
 
 
 def test_empty_expectation_raises():

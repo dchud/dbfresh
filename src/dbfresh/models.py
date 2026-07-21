@@ -101,7 +101,9 @@ class ObservationReader(Protocol):
         self, check_id: str
     ) -> dict[str, Any] | None: ...
 
-    def latest_clean_observation(self, check_id: str) -> dict[str, Any] | None: ...
+    def latest_clean_observation(
+        self, check_id: str
+    ) -> dict[str, Any] | None: ...
 
     def last_same_weekday_observation(
         self, check_id: str, run_date: date

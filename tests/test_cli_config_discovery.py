@@ -26,7 +26,9 @@ def _write_config(path: Path, text: str = _MINIMAL_CONFIG) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_config_path_explicit_cli_wins_over_env_and_discovery(tmp_path):
+def test_resolve_config_path_explicit_cli_wins_over_env_and_discovery(
+    tmp_path,
+):
     sub = tmp_path / "sub"
     sub.mkdir()
     _write_config(tmp_path / "config.yaml")  # discoverable, but must lose
@@ -92,7 +94,9 @@ def test_discover_config_finds_an_ancestor_config_in_a_git_less_tree(
 
 def test_discover_config_does_not_cross_a_git_root(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    _write_config(tmp_path / "config.yaml")  # above the git root; must not be found
+    _write_config(
+        tmp_path / "config.yaml"
+    )  # above the git root; must not be found
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     sub = repo / "sub"
@@ -101,7 +105,9 @@ def test_discover_config_does_not_cross_a_git_root(tmp_path, monkeypatch):
     assert _discover_config(sub) is None
 
 
-def test_discover_config_finds_a_config_exactly_at_the_git_root(tmp_path, monkeypatch):
+def test_discover_config_finds_a_config_exactly_at_the_git_root(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
@@ -149,7 +155,9 @@ def test_env_template_discovers_config_from_a_subdirectory(
     assert captured.out == "DB_PATH=\n"
 
 
-def test_env_template_uses_dbfresh_config_env_var(tmp_path, capsys, monkeypatch):
+def test_env_template_uses_dbfresh_config_env_var(
+    tmp_path, capsys, monkeypatch
+):
     cfg = _write_config(
         tmp_path / "elsewhere" / "config.yaml",
         'sources:\n  s: { type: sqlite, database: "${DB_PATH}" }\nchecks: []\n',
@@ -170,7 +178,9 @@ def test_env_template_explicit_flag_overrides_env_and_discovery(
     tmp_path, capsys, monkeypatch
 ):
     _write_config(tmp_path / "config.yaml")  # discoverable, must lose
-    env_cfg = _write_config(tmp_path / "env-config.yaml")  # DBFRESH_CONFIG, must lose
+    env_cfg = _write_config(
+        tmp_path / "env-config.yaml"
+    )  # DBFRESH_CONFIG, must lose
     explicit_cfg = _write_config(
         tmp_path / "explicit.yaml",
         'sources:\n  s: { type: sqlite, database: "${DB_PATH}" }\nchecks: []\n',

@@ -76,9 +76,14 @@ def test_rewrite_source_preserves_a_comment_on_the_next_source(tmp_path):
 
 def test_rewrite_source_preserves_a_var_token_param_verbatim(tmp_path):
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("sources:\n  s: { type: sqlserver, server: old-host }\nchecks: []\n")
+    cfg.write_text(
+        "sources:\n  s: { type: sqlserver, server: old-host }\nchecks: []\n"
+    )
     rewrite_source(
-        cfg, "s", "sqlserver", {"server": "new-host", "password": "${DB_PASSWORD}"}
+        cfg,
+        "s",
+        "sqlserver",
+        {"server": "new-host", "password": "${DB_PASSWORD}"},
     )
 
     data = yaml.safe_load(cfg.read_text())
@@ -138,7 +143,9 @@ def test_remove_source_preserves_a_comment_on_the_next_source(tmp_path):
     assert set(data["sources"]) == {"b"}
 
 
-def test_remove_source_raises_and_writes_nothing_when_checks_reference_it(tmp_path):
+def test_remove_source_raises_and_writes_nothing_when_checks_reference_it(
+    tmp_path,
+):
     cfg = tmp_path / "config.yaml"
     original = (
         "sources:\n"

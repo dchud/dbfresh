@@ -31,14 +31,21 @@ _NULL_RATE = Check(
     source="orders_db", object="orders", metric="null_rate", column="email"
 )
 _FRESHNESS = Check(
-    source="orders_db", object="orders", metric="freshness", column="modified_at"
+    source="orders_db",
+    object="orders",
+    metric="freshness",
+    column="modified_at",
 )
 _DUPLICATE = Check(
     source="orders_db", object="orders", metric="duplicate_count", key="sku"
 )
 # Deliberately never observed below, so its dashboard leaf renders "unknown".
-_SUM = Check(source="orders_db", object="orders", metric="sum", column="amount")
-_WAREHOUSE_ROW_COUNT = Check(source="warehouse", object="shipments", metric="row_count")
+_SUM = Check(
+    source="orders_db", object="orders", metric="sum", column="amount"
+)
+_WAREHOUSE_ROW_COUNT = Check(
+    source="warehouse", object="shipments", metric="row_count"
+)
 
 _CONFIG_YAML = """\
 sources:
@@ -80,7 +87,9 @@ checks:
 """
 
 
-def _seed(store: Store, check: Check, status: Status, value, observed_at: datetime):
+def _seed(
+    store: Store, check: Check, status: Status, value, observed_at: datetime
+):
     run_id = store.start_run(started_at=observed_at)
     store.record_observation(
         run_id,
@@ -144,12 +153,16 @@ class _FrozenDateTime(datetime):
         return _FROZEN_NOW.astimezone(tz) if tz is not None else _FROZEN_NOW
 
 
-def test_home_dashboard_shows_mixed_statuses(snap_compare, tmp_path, monkeypatch):
+def test_home_dashboard_shows_mixed_statuses(
+    snap_compare, tmp_path, monkeypatch
+):
     monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
     # display_timezone() defaults to the local system zone absent a
     # configured calendar (this fixture has none) -- pin it to UTC so the
     # snapshot is deterministic across machines, not just across runs.
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
+    monkeypatch.setattr(
+        "dbfresh.report.display_timezone", lambda calendar: UTC
+    )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
@@ -161,7 +174,9 @@ def test_object_detail_screen_shows_check_grid_and_legend(
 ):
     monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
     monkeypatch.setattr("dbfresh.tui.screens.datetime", _FrozenDateTime)
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
+    monkeypatch.setattr(
+        "dbfresh.report.display_timezone", lambda calendar: UTC
+    )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
@@ -216,15 +231,21 @@ def _crafted_run_result() -> RunResult:
             status=Status.SKIPPED,
         ),
     ]
-    return RunResult(results=results, status=worst_status(r.status for r in results))
+    return RunResult(
+        results=results, status=worst_status(r.status for r in results)
+    )
 
 
-def test_report_screen_shows_failures_and_warnings(snap_compare, tmp_path, monkeypatch):
+def test_report_screen_shows_failures_and_warnings(
+    snap_compare, tmp_path, monkeypatch
+):
     monkeypatch.setattr("dbfresh.report.datetime", _FrozenDateTime)
     # display_timezone() defaults to the local system zone absent a
     # configured calendar (this fixture has none) -- pin it to UTC so the
     # snapshot is deterministic across machines, not just across runs.
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda calendar: UTC)
+    monkeypatch.setattr(
+        "dbfresh.report.display_timezone", lambda calendar: UTC
+    )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
 
@@ -243,12 +264,18 @@ def test_configure_screen_initial_layout(snap_compare, tmp_path):
     async def run_before(pilot):
         await pilot.press("c")
         await pilot.pause()
-        pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
+        pilot.app.screen.set_focus(
+            None
+        )  # no blinking input cursor in the baseline
 
-    assert snap_compare(app, run_before=run_before, terminal_size=_TERMINAL_SIZE)
+    assert snap_compare(
+        app, run_before=run_before, terminal_size=_TERMINAL_SIZE
+    )
 
 
-def test_configure_screen_new_source_form_at_zero_sources(snap_compare, tmp_path):
+def test_configure_screen_new_source_form_at_zero_sources(
+    snap_compare, tmp_path
+):
     """A brand-new project's config has no sources at all -- Configure opens
     straight into the new-source form rather than the propose form (which
     would just be an empty Select with nothing to do)."""
@@ -260,9 +287,13 @@ def test_configure_screen_new_source_form_at_zero_sources(snap_compare, tmp_path
     async def run_before(pilot):
         await pilot.press("c")
         await pilot.pause()
-        pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
+        pilot.app.screen.set_focus(
+            None
+        )  # no blinking input cursor in the baseline
 
-    assert snap_compare(app, run_before=run_before, terminal_size=_TERMINAL_SIZE)
+    assert snap_compare(
+        app, run_before=run_before, terminal_size=_TERMINAL_SIZE
+    )
 
 
 def test_configure_screen_post_propose_layout(snap_compare, tmp_path):
@@ -298,7 +329,9 @@ def test_configure_screen_post_propose_layout(snap_compare, tmp_path):
         await pilot.click("#propose-btn")
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        pilot.app.screen.set_focus(None)  # no blinking input cursor in the baseline
+        pilot.app.screen.set_focus(
+            None
+        )  # no blinking input cursor in the baseline
 
     # Taller than the standard height: the three stacked panels don't fit a
     # 30-row viewport (a 30-row capture shows only the propose form, which

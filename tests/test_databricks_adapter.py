@@ -37,7 +37,9 @@ def test_module_imports_without_databricks_sql_connector_installed():
 
 def test_constructing_adapter_needs_databricks_sql_connector_only_at_connect_time():
     with pytest.raises(ModuleNotFoundError):
-        DatabricksAdapter(host="x", http_path="/sql/1.0/warehouses/abc", token="t")
+        DatabricksAdapter(
+            host="x", http_path="/sql/1.0/warehouses/abc", token="t"
+        )
 
 
 def test_dialect_freshness_capabilities():
@@ -48,7 +50,9 @@ def test_dialect_freshness_capabilities():
 def test_dialect_introspection_capability_is_stats_only():
     # describe() never populates keys (Unity Catalog exposes no constraints
     # here); only last_modified (a "stats" field).
-    assert DatabricksDialect().introspection_capabilities == frozenset({"stats"})
+    assert DatabricksDialect().introspection_capabilities == frozenset(
+        {"stats"}
+    )
 
 
 def test_dialect_uses_inherited_limit_n():
@@ -159,11 +163,15 @@ class _FailingDescribeDetailConnection(_FakeConnection):
 
     def resolve(self, sql):
         if "DESCRIBE DETAIL" in sql:
-            raise RuntimeError("DESCRIBE DETAIL is not supported for this table")
+            raise RuntimeError(
+                "DESCRIBE DETAIL is not supported for this table"
+            )
         return super().resolve(sql)
 
 
-def _make_bare_adapter(responses, connection_cls=_FakeConnection) -> DatabricksAdapter:
+def _make_bare_adapter(
+    responses, connection_cls=_FakeConnection
+) -> DatabricksAdapter:
     """A DatabricksAdapter over a fake connection, no live driver needed."""
     adapter = DatabricksAdapter.__new__(DatabricksAdapter)
     adapter._conn = connection_cls(responses)
@@ -176,7 +184,9 @@ def _desc(*names):
 
 
 def test_scalar_returns_first_column_of_first_row():
-    adapter = _make_bare_adapter([("SELECT COUNT(*)", _desc("count"), [(42,)])])
+    adapter = _make_bare_adapter(
+        [("SELECT COUNT(*)", _desc("count"), [(42,)])]
+    )
     assert adapter.scalar("SELECT COUNT(*) FROM t") == 42
 
 
@@ -212,7 +222,9 @@ def test_rows_limited_caps_the_fetch_via_the_cursor():
 
 
 def test_rows_limited_returns_every_row_when_under_the_cap():
-    adapter = _make_bare_adapter([("SELECT * FROM t", _desc("a"), [(1,), (2,)])])
+    adapter = _make_bare_adapter(
+        [("SELECT * FROM t", _desc("a"), [(1,), (2,)])]
+    )
     assert adapter.rows_limited("SELECT * FROM t", 5) == [{"a": 1}, {"a": 2}]
 
 
@@ -267,7 +279,9 @@ def test_describe_queries_the_catalog_qualified_information_schema():
         ]
     )
     adapter.describe("main.gold.customer_360")
-    query = next(q for q in adapter._conn.queries if "information_schema.columns" in q)
+    query = next(
+        q for q in adapter._conn.queries if "information_schema.columns" in q
+    )
     assert "main.information_schema.columns" in query
     assert "table_schema = :table_schema" in query
     assert "table_name = :table_name" in query
@@ -281,7 +295,9 @@ def test_describe_columns_query_binds_a_name_containing_a_quote():
     # A single quote in a user-typed object name (the wizard/TUI feed
     # exactly this path) must never land inside the SQL text -- bound
     # parameters, not string interpolation, keep the query well-formed.
-    adapter = _make_bare_adapter([("information_schema.columns", _COLUMNS_DESC, [])])
+    adapter = _make_bare_adapter(
+        [("information_schema.columns", _COLUMNS_DESC, [])]
+    )
     adapter._columns("o'brien")
     query = adapter._conn.queries[-1]
     assert "o'brien" not in query
@@ -370,7 +386,9 @@ def test_describe_queries_the_catalog_qualified_information_schema_tables():
         ]
     )
     adapter.describe("main.gold.customer_360")
-    query = next(q for q in adapter._conn.queries if "information_schema.tables" in q)
+    query = next(
+        q for q in adapter._conn.queries if "information_schema.tables" in q
+    )
     assert "main.information_schema.tables" in query
     assert "table_schema = :table_schema" in query
     assert "table_name = :table_name" in query
@@ -381,7 +399,9 @@ def test_describe_queries_the_catalog_qualified_information_schema_tables():
 
 
 def test_describe_is_view_query_binds_a_name_containing_a_quote():
-    adapter = _make_bare_adapter([("information_schema.tables", _TABLES_DESC, [])])
+    adapter = _make_bare_adapter(
+        [("information_schema.tables", _TABLES_DESC, [])]
+    )
     adapter._is_view("o'brien")
     query = adapter._conn.queries[-1]
     assert "o'brien" not in query
@@ -435,7 +455,9 @@ def test_real_adapter_describe_is_view_true_rejects_describe_history_source():
     )
     info = adapter.describe("main.gold.active_customers")
     with pytest.raises(ValueError, match="view"):
-        validate_freshness_source("describe_history", adapter.dialect, info.is_view)
+        validate_freshness_source(
+            "describe_history", adapter.dialect, info.is_view
+        )
 
 
 def test_describe_history_last_modified_filters_to_data_operations_and_takes_max():
@@ -455,7 +477,10 @@ def test_describe_history_last_modified_filters_to_data_operations_and_takes_max
             )
         ]
     )
-    assert adapter.describe_history_last_modified("main.gold.customer_360") == merge
+    assert (
+        adapter.describe_history_last_modified("main.gold.customer_360")
+        == merge
+    )
 
 
 def test_describe_history_query_is_bounded_by_a_limit():
@@ -475,16 +500,26 @@ def test_describe_history_last_modified_none_when_no_data_operations():
             (
                 "DESCRIBE HISTORY",
                 _desc("timestamp", "operation"),
-                [(datetime(2026, 1, 1), "OPTIMIZE"), (datetime(2026, 1, 2), "VACUUM")],
+                [
+                    (datetime(2026, 1, 1), "OPTIMIZE"),
+                    (datetime(2026, 1, 2), "VACUUM"),
+                ],
             )
         ]
     )
-    assert adapter.describe_history_last_modified("main.gold.customer_360") is None
+    assert (
+        adapter.describe_history_last_modified("main.gold.customer_360")
+        is None
+    )
 
 
 def test_validate_freshness_source_accepts_describe_forms_on_a_table():
-    validate_freshness_source("describe_history", DatabricksDialect(), is_view=False)
-    validate_freshness_source("describe_detail", DatabricksDialect(), is_view=False)
+    validate_freshness_source(
+        "describe_history", DatabricksDialect(), is_view=False
+    )
+    validate_freshness_source(
+        "describe_detail", DatabricksDialect(), is_view=False
+    )
 
 
 def test_validate_freshness_source_accepts_column_always():

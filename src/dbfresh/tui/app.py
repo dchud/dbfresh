@@ -92,9 +92,7 @@ _RUN_TOAST_SEVERITY: dict[Status, SeverityLevel] = {
 # Shown instead of the grid when there's nothing to show -- a zero-check
 # config renders as just the grid's own header row otherwise, which reads
 # as broken rather than as "nothing configured yet".
-_EMPTY_STATE_MESSAGE = (
-    "no checks configured yet -- press 'c' to configure a source and its checks"
-)
+_EMPTY_STATE_MESSAGE = "no checks configured yet -- press 'c' to configure a source and its checks"
 
 # Shown instead of the grid when checks exist but the active filter/search
 # narrows them to nothing -- distinct from _EMPTY_STATE_MESSAGE above so a
@@ -228,7 +226,9 @@ class DbfreshApp(App):
         banner = Static(self._missing_secrets_text(), id=_MISSING_SECRETS_ID)
         banner.display = bool(self.missing_secrets)
         yield banner
-        env_hygiene_banner = Static(self._env_hygiene_text(), id=_ENV_HYGIENE_ID)
+        env_hygiene_banner = Static(
+            self._env_hygiene_text(), id=_ENV_HYGIENE_ID
+        )
         env_hygiene_banner.display = self._env_at_risk is not None
         yield env_hygiene_banner
         # Out of the way (display hidden) until '/' reveals it
@@ -266,7 +266,9 @@ class DbfreshApp(App):
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
         yield Footer()
 
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+    def check_action(
+        self, action: str, parameters: tuple[object, ...]
+    ) -> bool | None:
         """Disable (and, per Textual's own Footer, hide) every Home-only
         action -- configure/report/store, plus the grid's filter/search
         controls -- while a screen is already pushed on top of Home; see
@@ -274,7 +276,9 @@ class DbfreshApp(App):
         quit, and whatever the topmost screen binds for itself) is
         unaffected -- this only ever narrows that one set.
         """
-        return not (action in _HOME_ONLY_ACTIONS and len(self.screen_stack) > 1)
+        return not (
+            action in _HOME_ONLY_ACTIONS and len(self.screen_stack) > 1
+        )
 
     def on_mount(self) -> None:
         if self.config is None:
@@ -313,7 +317,9 @@ class DbfreshApp(App):
             )
             return
         self.refresh_dashboard()
-        pending = unobserved_count(self._require_config().checks, self._require_store())
+        pending = unobserved_count(
+            self._require_config().checks, self._require_store()
+        )
         message = "config reloaded"
         if pending:
             message = f"{message} · {unobserved_summary(pending)}"
@@ -367,7 +373,9 @@ class DbfreshApp(App):
         today = datetime.now(tz).date()
         rows = object_rows(config, store, today, tz)
         visible = self._view.apply(rows)
-        populate_grid(table, visible, today, label_header="object", group_headers=True)
+        populate_grid(
+            table, visible, today, label_header="object", group_headers=True
+        )
         self._rows_by_key = {row.key: row for row in visible}
         self._skip_leading_header_cursor(table)
 
@@ -395,7 +403,9 @@ class DbfreshApp(App):
 
         unobserved_widget = self.query_one("#unobserved-line", Static)
         pending = unobserved_count(config.checks, store)
-        unobserved_widget.update(unobserved_summary(pending) if pending else "")
+        unobserved_widget.update(
+            unobserved_summary(pending) if pending else ""
+        )
         unobserved_widget.display = pending > 0
 
         banner = self.query_one(f"#{_MISSING_SECRETS_ID}", Static)
@@ -421,11 +431,15 @@ class DbfreshApp(App):
         """
         if table.row_count == 0:
             return
-        leading_key = table.coordinate_to_cell_key(Coordinate(0, 0)).row_key.value
+        leading_key = table.coordinate_to_cell_key(
+            Coordinate(0, 0)
+        ).row_key.value
         if not is_header_key(leading_key):
             return
         for row_index in range(1, table.row_count):
-            key = table.coordinate_to_cell_key(Coordinate(row_index, 0)).row_key.value
+            key = table.coordinate_to_cell_key(
+                Coordinate(row_index, 0)
+            ).row_key.value
             if not is_header_key(key):
                 table.cursor_coordinate = Coordinate(row_index, 0)
                 return
@@ -507,7 +521,12 @@ class DbfreshApp(App):
         """
         self._run_checks_worker(only=source, object_=object_)
 
-    @work(thread=True, exclusive=True, group=_RUN_WORKER_GROUP, exit_on_error=False)
+    @work(
+        thread=True,
+        exclusive=True,
+        group=_RUN_WORKER_GROUP,
+        exit_on_error=False,
+    )
     def _run_checks_worker(
         self, only: str | None = None, object_: str | None = None
     ) -> RunResult:
@@ -653,7 +672,9 @@ class DbfreshApp(App):
         from dbfresh.tui.screens import ReportScreen
 
         tz = display_timezone(self._require_config().calendar)
-        self.push_screen(ReportScreen(self.last_run, self._require_store(), tz=tz))
+        self.push_screen(
+            ReportScreen(self.last_run, self._require_store(), tz=tz)
+        )
 
     def action_store(self) -> None:
         from dbfresh.tui.screens import StoreScreen

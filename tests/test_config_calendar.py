@@ -142,7 +142,9 @@ checks:
         load_config(path, env={})
 
 
-def test_calendar_business_without_calendar_block_is_a_validation_error(tmp_path):
+def test_calendar_business_without_calendar_block_is_a_validation_error(
+    tmp_path,
+):
     path = _write(
         tmp_path,
         """
@@ -281,16 +283,24 @@ checks:
     )
     cfg = load_config(path, env={})
     adapter = SqliteAdapter()
-    adapter.rows("CREATE TABLE t (id INTEGER)")  # 0 rows -- would FAIL if evaluated
-    now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday, the configured holiday
+    adapter.rows(
+        "CREATE TABLE t (id INTEGER)"
+    )  # 0 rows -- would FAIL if evaluated
+    now = datetime(
+        2026, 7, 6, 12, 0, tzinfo=UTC
+    )  # Monday, the configured holiday
 
-    result = evaluate_check(cfg.checks[0], adapter, now=now, calendar=cfg.calendar)
+    result = evaluate_check(
+        cfg.checks[0], adapter, now=now, calendar=cfg.calendar
+    )
 
     assert result.status == Status.SKIPPED
     adapter.close()
 
 
-def test_skip_off_schedule_without_calendar_block_is_a_validation_error(tmp_path):
+def test_skip_off_schedule_without_calendar_block_is_a_validation_error(
+    tmp_path,
+):
     path = _write(
         tmp_path,
         """

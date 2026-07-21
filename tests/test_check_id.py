@@ -11,7 +11,9 @@ def test_check_id_is_twelve_hex_chars():
 
 
 def test_check_id_uses_explicit_id_verbatim():
-    check = Check(source="s", object="t", metric="row_count", id="my-custom-id")
+    check = Check(
+        source="s", object="t", metric="row_count", id="my-custom-id"
+    )
     assert check_id(check) == "my-custom-id"
 
 
@@ -84,7 +86,9 @@ def test_check_id_assertion_differs_from_metric_check_with_same_object():
 
 def test_check_id_assert_sql_uses_normalized_text():
     a = Check(source="s", object="t", assert_sql="SELECT * FROM t WHERE x < 0")
-    b = Check(source="s", object="t", assert_sql="  SELECT * FROM t   WHERE x < 0  ")
+    b = Check(
+        source="s", object="t", assert_sql="  SELECT * FROM t   WHERE x < 0  "
+    )
     assert check_id(a) == check_id(b)
 
 

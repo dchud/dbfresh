@@ -100,7 +100,9 @@ def test_load_config_store_mapping_with_retain_days(tmp_path):
 
 
 def test_load_config_store_mapping_without_path(tmp_path):
-    path = _write(tmp_path, "store: { retain_days: 10 }\nsources: {}\nchecks: []\n")
+    path = _write(
+        tmp_path, "store: { retain_days: 10 }\nsources: {}\nchecks: []\n"
+    )
     cfg = load_config(path, env={})
     assert cfg.store.path is None
     assert cfg.store.retain_days == 10
@@ -328,7 +330,9 @@ checks:
     assert str(excinfo.value) == "undefined environment variable: DB_PATH"
 
 
-def test_load_config_missing_var_in_included_file_accumulates_with_main(tmp_path):
+def test_load_config_missing_var_in_included_file_accumulates_with_main(
+    tmp_path,
+):
     root = _write(
         tmp_path,
         """
@@ -449,7 +453,9 @@ def test_load_config_tolerant_still_raises_on_invalid_yaml(tmp_path):
         load_config_tolerant(path, env={})
 
 
-def test_load_config_tolerant_missing_var_and_broken_config_still_raises(tmp_path):
+def test_load_config_tolerant_missing_var_and_broken_config_still_raises(
+    tmp_path,
+):
     # A config can have both problems at once -- the non-variable
     # validation error still wins (raises) even though a variable is also
     # undefined, since tolerance covers only the undefined-variable case.

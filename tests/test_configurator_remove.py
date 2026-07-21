@@ -41,7 +41,9 @@ def test_remove_check_deletes_target_and_preserves_others(tmp_path):
         "    max: 0.05\n"
     )
     row_count = build_check("s", "t", "row_count", expect={"max": 100})
-    null_rate = build_check("s", "t", "null_rate", column="email", expect={"max": 0.05})
+    null_rate = build_check(
+        "s", "t", "null_rate", column="email", expect={"max": 0.05}
+    )
 
     remove_check(cfg, check_id_of_block(row_count))
 
@@ -84,7 +86,9 @@ def test_remove_check_preserves_comments_on_other_checks(tmp_path):
     assert data["checks"][0]["metric"] == "null_rate"
 
 
-def test_remove_check_across_multi_file_include_only_touches_owning_file(tmp_path):
+def test_remove_check_across_multi_file_include_only_touches_owning_file(
+    tmp_path,
+):
     (tmp_path / "checks").mkdir()
     a = tmp_path / "checks" / "a.yaml"
     b = tmp_path / "checks" / "b.yaml"
@@ -100,10 +104,14 @@ def test_remove_check_across_multi_file_include_only_touches_owning_file(tmp_pat
 
     data_a = yaml.safe_load(a.read_text())
     assert not data_a.get("checks")  # empty (None or []) either way is valid
-    assert b.read_text() == b_text_before  # other file is byte-for-byte untouched
+    assert (
+        b.read_text() == b_text_before
+    )  # other file is byte-for-byte untouched
 
 
-def test_remove_check_handles_last_check_leaves_valid_empty_checks_file(tmp_path):
+def test_remove_check_handles_last_check_leaves_valid_empty_checks_file(
+    tmp_path,
+):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         "sources:\n  s: { type: sqlite, database: ':memory:' }\n"

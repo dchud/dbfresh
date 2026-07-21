@@ -28,13 +28,17 @@ def test_build_check_minimal_table_level():
 
 
 def test_build_check_column_level_includes_column_field():
-    block = build_check("s", "t", "null_rate", column="email", expect={"max": 0.05})
+    block = build_check(
+        "s", "t", "null_rate", column="email", expect={"max": 0.05}
+    )
     assert block["column"] == "email"
     assert "key" not in block
 
 
 def test_build_check_key_level_includes_key_field():
-    block = build_check("s", "t", "duplicate_count", key="id", expect={"max": 0})
+    block = build_check(
+        "s", "t", "duplicate_count", key="id", expect={"max": 0}
+    )
     assert block["key"] == "id"
     assert "column" not in block
 
@@ -249,9 +253,13 @@ def test_append_checks_twice_for_same_object_keeps_config_loadable(tmp_path):
     adapter.close()
 
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
     append_checks(cfg, proposals, config_path=cfg)
-    append_checks(cfg, proposals, config_path=cfg)  # add run twice on the same object
+    append_checks(
+        cfg, proposals, config_path=cfg
+    )  # add run twice on the same object
 
     config = load_config(cfg)  # must not raise a duplicate check_id error
     assert len(config.checks) == len(proposals)

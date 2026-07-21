@@ -42,11 +42,17 @@ def test_latest_clean_observation_skips_error_and_skipped(tmp_path):
     store.close()
 
 
-def test_latest_clean_observation_returns_none_when_only_dirty_statuses(tmp_path):
+def test_latest_clean_observation_returns_none_when_only_dirty_statuses(
+    tmp_path,
+):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
-    store.record_observation(run_id, _result(check_id="x", status=Status.ERROR))
-    store.record_observation(run_id, _result(check_id="x", status=Status.SKIPPED))
+    store.record_observation(
+        run_id, _result(check_id="x", status=Status.ERROR)
+    )
+    store.record_observation(
+        run_id, _result(check_id="x", status=Status.SKIPPED)
+    )
     assert store.latest_clean_observation("x") is None
     store.close()
 
@@ -80,9 +86,13 @@ def test_last_same_weekday_observation_matches_two_weeks_back(tmp_path):
     run_id = store.start_run()
     base = datetime(2026, 7, 6, tzinfo=UTC)
     store.record_observation(
-        run_id, _result(check_id="x", value=100, status=Status.OK), observed_at=base
+        run_id,
+        _result(check_id="x", value=100, status=Status.OK),
+        observed_at=base,
     )
-    run_date = (base + timedelta(days=14)).date()  # same weekday, 2 weeks later
+    run_date = (
+        base + timedelta(days=14)
+    ).date()  # same weekday, 2 weeks later
     obs = store.last_same_weekday_observation("x", run_date)
     assert obs["value"] == 100.0
     store.close()
@@ -93,7 +103,9 @@ def test_last_same_weekday_observation_excludes_same_day_rerun(tmp_path):
     run_id = store.start_run()
     base = datetime(2026, 7, 6, tzinfo=UTC)
     store.record_observation(
-        run_id, _result(check_id="x", value=100, status=Status.OK), observed_at=base
+        run_id,
+        _result(check_id="x", value=100, status=Status.OK),
+        observed_at=base,
     )
     run_date = base.date()  # today, same day -> within the 6-day floor
     assert store.last_same_weekday_observation("x", run_date) is None
@@ -105,9 +117,13 @@ def test_last_same_weekday_observation_excludes_wrong_weekday(tmp_path):
     run_id = store.start_run()
     base = datetime(2026, 7, 6, tzinfo=UTC)
     store.record_observation(
-        run_id, _result(check_id="x", value=100, status=Status.OK), observed_at=base
+        run_id,
+        _result(check_id="x", value=100, status=Status.OK),
+        observed_at=base,
     )
-    run_date = (base + timedelta(days=15)).date()  # one day off, different weekday
+    run_date = (
+        base + timedelta(days=15)
+    ).date()  # one day off, different weekday
     assert store.last_same_weekday_observation("x", run_date) is None
     store.close()
 
@@ -146,7 +162,9 @@ def test_last_same_weekday_observation_picks_most_recent_matching(tmp_path):
     store.close()
 
 
-def test_last_same_weekday_observation_floor_boundary_at_exactly_6_days(tmp_path):
+def test_last_same_weekday_observation_floor_boundary_at_exactly_6_days(
+    tmp_path,
+):
     # Directly control weekday/observed_at to isolate the floor arithmetic
     # from the natural 7-day weekday cycle: a prior observation dated
     # exactly 6 calendar days before run_date, sharing run_date's weekday
@@ -169,7 +187,9 @@ def test_last_same_weekday_observation_floor_boundary_at_exactly_6_days(tmp_path
     store.close()
 
 
-def test_last_same_weekday_observation_floor_boundary_at_5_days_excluded(tmp_path):
+def test_last_same_weekday_observation_floor_boundary_at_5_days_excluded(
+    tmp_path,
+):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     run_date = date(2026, 7, 19)
@@ -192,8 +212,12 @@ def test_record_observation_stores_weekday_in_calendar_timezone(tmp_path):
     run_id = store.start_run()
     cal = build_calendar({"timezone": "America/Los_Angeles"})
     observed_at = datetime(2026, 7, 6, 1, 0, tzinfo=UTC)
-    local_weekday = observed_at.astimezone(ZoneInfo("America/Los_Angeles")).weekday()
-    assert local_weekday != observed_at.weekday()  # sanity: the tz crosses midnight
+    local_weekday = observed_at.astimezone(
+        ZoneInfo("America/Los_Angeles")
+    ).weekday()
+    assert (
+        local_weekday != observed_at.weekday()
+    )  # sanity: the tz crosses midnight
 
     store.record_observation(
         run_id, _result(check_id="x"), observed_at=observed_at, calendar=cal
@@ -207,7 +231,9 @@ def test_record_observation_without_calendar_stores_utc_weekday(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     observed_at = datetime(2026, 7, 6, 1, 0, tzinfo=UTC)
-    store.record_observation(run_id, _result(check_id="x"), observed_at=observed_at)
+    store.record_observation(
+        run_id, _result(check_id="x"), observed_at=observed_at
+    )
     row = store._conn.execute("SELECT weekday FROM observation").fetchone()
     assert row["weekday"] == observed_at.weekday()
     store.close()

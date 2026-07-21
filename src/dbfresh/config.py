@@ -20,7 +20,9 @@ from dbfresh.checks import Check, check_id, describe_check, parse_expectation
 from dbfresh.registry import METRICS
 
 _CHECK_CALENDAR_MODES = frozenset({"business"})
-_FRESHNESS_SOURCES = frozenset({"column", "describe_history", "describe_detail"})
+_FRESHNESS_SOURCES = frozenset(
+    {"column", "describe_history", "describe_detail"}
+)
 _METRIC_REQUIRED = {spec.name: spec.required for spec in METRICS}
 _VALID_SEVERITIES = frozenset({"error", "warn"})
 _SOURCE_OWN_FIELDS = frozenset({"type", "timezone", "timeout"})
@@ -79,7 +81,8 @@ def interpolate_env(
         return _VAR.sub(replace, value)
     if isinstance(value, dict):
         return {
-            key: interpolate_env(item, environ, missing) for key, item in value.items()
+            key: interpolate_env(item, environ, missing)
+            for key, item in value.items()
         }
     if isinstance(value, list):
         return [interpolate_env(item, environ, missing) for item in value]
@@ -140,7 +143,9 @@ class ConfigError(ValueError):
     """
 
 
-def _parse_by_weekday(raw: Any, metric: str | None = None) -> dict[str, Any] | None:
+def _parse_by_weekday(
+    raw: Any, metric: str | None = None
+) -> dict[str, Any] | None:
     if not raw:
         return None
     parsed = {}
@@ -196,7 +201,9 @@ def _build_check(raw: dict, defaults: dict) -> Check:
     """
     metric = raw.get("metric")
     expect = (
-        parse_expectation(raw["expect"], metric=metric) if "expect" in raw else None
+        parse_expectation(raw["expect"], metric=metric)
+        if "expect" in raw
+        else None
     )
     on_holiday = raw.get("on_holiday")
     return Check(
@@ -214,7 +221,9 @@ def _build_check(raw: dict, defaults: dict) -> Check:
         id=raw.get("id"),
         by_weekday=_parse_by_weekday(raw.get("by_weekday"), metric=metric),
         on_holiday=(
-            parse_expectation(on_holiday, metric=metric) if on_holiday else None
+            parse_expectation(on_holiday, metric=metric)
+            if on_holiday
+            else None
         ),
         calendar=_parse_check_calendar_mode(
             raw.get("calendar", defaults.get("calendar"))
@@ -428,12 +437,22 @@ def _validate_metric_fields(check: Check, label: str) -> list[ValueError]:
     required = _METRIC_REQUIRED.get(check.metric)
     # freshness's "column" requirement is conditional on freshness_source,
     # so it is validated separately in _validate_freshness_source.
-    if required == "column" and check.metric != "freshness" and not check.column:
-        errors.append(ValueError(f"{label}: metric {check.metric!r} requires 'column'"))
+    if (
+        required == "column"
+        and check.metric != "freshness"
+        and not check.column
+    ):
+        errors.append(
+            ValueError(f"{label}: metric {check.metric!r} requires 'column'")
+        )
     if required == "key" and not check.key:
-        errors.append(ValueError(f"{label}: metric {check.metric!r} requires 'key'"))
+        errors.append(
+            ValueError(f"{label}: metric {check.metric!r} requires 'key'")
+        )
     if check.expect is None:
-        errors.append(ValueError(f"{label}: metric check has no expectation (expect:)"))
+        errors.append(
+            ValueError(f"{label}: metric check has no expectation (expect:)")
+        )
     return errors
 
 
@@ -446,7 +465,11 @@ def _validate_freshness_source(
         return []
     if check.freshness_source == "column":
         if not check.column:
-            return [ValueError(f"{label}: freshness_source 'column' requires 'column'")]
+            return [
+                ValueError(
+                    f"{label}: freshness_source 'column' requires 'column'"
+                )
+            ]
         return []
     try:
         dialect = dialect_for_type(sources[check.source].type)
@@ -485,7 +508,9 @@ def _validate_checks(
 
         extra_keys = sorted(set(raw) - _CHECK_KEYS)
         if extra_keys:
-            errors.append(ValueError(f"{label}: unknown check field(s): {extra_keys}"))
+            errors.append(
+                ValueError(f"{label}: unknown check field(s): {extra_keys}")
+            )
 
         primitives = [
             name
@@ -498,7 +523,9 @@ def _validate_checks(
         ]
         if not primitives:
             errors.append(
-                ValueError(f"{label}: check has none of metric, assert, or assert_sql")
+                ValueError(
+                    f"{label}: check has none of metric, assert, or assert_sql"
+                )
             )
         elif len(primitives) > 1:
             errors.append(
@@ -522,15 +549,21 @@ def _validate_checks(
             and check.metric != "freshness"
         ):
             errors.append(
-                ValueError(f"{label}: 'max_lag' is only valid for the freshness metric")
+                ValueError(
+                    f"{label}: 'max_lag' is only valid for the freshness metric"
+                )
             )
 
         if check.source not in sources:
             errors.append(
-                ValueError(f"check references unknown source: {check.source!r}")
+                ValueError(
+                    f"check references unknown source: {check.source!r}"
+                )
             )
         elif check.metric is not None and check.metric not in metric_names:
-            errors.append(ValueError(f"{label}: unknown metric: {check.metric!r}"))
+            errors.append(
+                ValueError(f"{label}: unknown metric: {check.metric!r}")
+            )
         elif check.metric is not None:
             errors.extend(_validate_metric_fields(check, label))
             errors.extend(_validate_freshness_source(check, sources, label))
@@ -673,7 +706,9 @@ def _load_config(
         name: SourceConfig(
             name=name,
             type=spec["type"],
-            params={k: v for k, v in spec.items() if k not in _SOURCE_OWN_FIELDS},
+            params={
+                k: v for k, v in spec.items() if k not in _SOURCE_OWN_FIELDS
+            },
             timezone=spec.get("timezone"),
             timeout=spec.get("timeout"),
         )

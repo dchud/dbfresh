@@ -7,12 +7,19 @@ from dbfresh.engine import Status, evaluate_check
 def test_compile_duplicate_count_guards_nulls():
     check = Check(source="s", object="t", metric="duplicate_count", key="id")
     sql = compile_metric_sql(check, Dialect())
-    assert sql == "SELECT COUNT(*) - COUNT(DISTINCT id) FROM t WHERE id IS NOT NULL"
+    assert (
+        sql
+        == "SELECT COUNT(*) - COUNT(DISTINCT id) FROM t WHERE id IS NOT NULL"
+    )
 
 
 def test_compile_duplicate_count_with_where():
     check = Check(
-        source="s", object="t", metric="duplicate_count", key="id", where="active = 1"
+        source="s",
+        object="t",
+        metric="duplicate_count",
+        key="id",
+        where="active = 1",
     )
     sql = compile_metric_sql(check, Dialect())
     assert sql == (

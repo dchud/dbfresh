@@ -2,7 +2,11 @@
 check, and unverified-manual-entry degradation."""
 
 from dbfresh.adapters.sqlite import SqliteAdapter
-from dbfresh.configurator import check_object_exists, probe_connection, probe_new_source
+from dbfresh.configurator import (
+    check_object_exists,
+    probe_connection,
+    probe_new_source,
+)
 
 
 def test_probe_connection_succeeds_for_a_good_sqlite_source():
@@ -59,7 +63,9 @@ def test_probe_new_source_interpolates_env_before_probing(monkeypatch):
 
     monkeypatch.setattr("dbfresh.configurator.probe_connection", fake_probe)
 
-    result, resolved = probe_new_source("sqlite", {"token": "${DBFRESH_TEST_TOKEN}"})
+    result, resolved = probe_new_source(
+        "sqlite", {"token": "${DBFRESH_TEST_TOKEN}"}
+    )
 
     assert result.ok is True
     assert resolved == {"token": "sekret"}

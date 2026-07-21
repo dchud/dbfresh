@@ -32,9 +32,13 @@ def _config(path, retain_days: int = _RETAIN_DAYS):
     return path
 
 
-def _seed(store: Store, check_id: str, value: float, observed_at: datetime) -> None:
+def _seed(
+    store: Store, check_id: str, value: float, observed_at: datetime
+) -> None:
     run_id = store.start_run(started_at=observed_at)
-    store.record_observation(run_id, _result(check_id, value), observed_at=observed_at)
+    store.record_observation(
+        run_id, _result(check_id, value), observed_at=observed_at
+    )
     store.finish_run(run_id, Status.OK, finished_at=observed_at)
 
 
@@ -143,7 +147,10 @@ def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(
             await pilot.pause()
             await pump_until(
                 pilot,
-                lambda: app.store is not None and app.store.observation_count() == 1,
+                lambda: (
+                    app.store is not None
+                    and app.store.observation_count() == 1
+                ),
             )
 
             assert not app.screen.query_one("#store-prune-confirm-row").display
@@ -153,16 +160,20 @@ def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(
             # store still sees the deletion (same underlying file, WAL
             # makes it visible across connections).
             assert app.store.observation_count() == 1
-            remaining = {row["check_id"] for row in app.store.history("new")} | {
-                row["check_id"] for row in app.store.history("old")
-            }
+            remaining = {
+                row["check_id"] for row in app.store.history("new")
+            } | {row["check_id"] for row in app.store.history("old")}
             assert remaining == {"new"}
 
             await pump_until(
                 pilot,
                 lambda: (
                     "pruned"
-                    in str(app.screen.query_one("#store-prune-result", Static).render())
+                    in str(
+                        app.screen.query_one(
+                            "#store-prune-result", Static
+                        ).render()
+                    )
                 ),
             )
 

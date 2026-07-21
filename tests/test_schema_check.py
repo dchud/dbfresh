@@ -1,7 +1,12 @@
 from datetime import UTC, datetime
 
 from dbfresh.adapters.sqlite import SqliteAdapter
-from dbfresh.checks import Check, check_id, fingerprint_columns, parse_expectation
+from dbfresh.checks import (
+    Check,
+    check_id,
+    fingerprint_columns,
+    parse_expectation,
+)
 from dbfresh.engine import Result, Status, evaluate_check, run_checks
 from dbfresh.store import Store
 
@@ -73,7 +78,9 @@ def test_schema_check_unchanged_fails_on_added_column(tmp_path):
 
 
 def test_schema_check_unchanged_fails_on_removed_column(tmp_path):
-    a = _adapter_with_table("CREATE TABLE t (id INTEGER, name TEXT, extra TEXT)")
+    a = _adapter_with_table(
+        "CREATE TABLE t (id INTEGER, name TEXT, extra TEXT)"
+    )
     store = Store(tmp_path / "obs.db")
     check = _schema_check()
     run_id = store.start_run()
@@ -123,7 +130,9 @@ def test_schema_check_warn_severity_yields_warn_not_fail(tmp_path):
 def test_schema_check_equals_pinned_fingerprint_passes():
     a = _adapter_with_table("CREATE TABLE t (id INTEGER, name TEXT)")
     pinned = fingerprint_columns(a.describe("t").columns)
-    check = _schema_check(expect=parse_expectation({"equals": pinned}, metric="schema"))
+    check = _schema_check(
+        expect=parse_expectation({"equals": pinned}, metric="schema")
+    )
     result = evaluate_check(check, a)
     assert result.status == Status.OK
     a.close()

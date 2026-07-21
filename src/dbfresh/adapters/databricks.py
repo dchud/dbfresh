@@ -30,9 +30,20 @@ from typing import Any
 from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
 
 _NUMERIC_TYPES = frozenset(
-    {"tinyint", "smallint", "int", "integer", "bigint", "float", "double", "decimal"}
+    {
+        "tinyint",
+        "smallint",
+        "int",
+        "integer",
+        "bigint",
+        "float",
+        "double",
+        "decimal",
+    }
 )
-_TEMPORAL_TYPES = frozenset({"date", "timestamp", "timestamp_ntz", "timestamp_ltz"})
+_TEMPORAL_TYPES = frozenset(
+    {"date", "timestamp", "timestamp_ntz", "timestamp_ltz"}
+)
 _STRING_TYPES = frozenset({"string", "varchar", "char"})
 _BOOLEAN_TYPES = frozenset({"boolean"})
 
@@ -60,7 +71,9 @@ def category_for_databricks(type_name: str) -> Category:
 class DatabricksDialect(Dialect):
     name = "databricks"
     # Delta tables expose freshness via DESCRIBE metadata as well as a column.
-    freshness_sources = frozenset({"column", "describe_history", "describe_detail"})
+    freshness_sources = frozenset(
+        {"column", "describe_history", "describe_detail"}
+    )
     # describe() populates only last_modified (a "stats" field): keys are
     # always None (Unity Catalog exposes no constraint metadata here).
     introspection_capabilities = frozenset({"stats"})
@@ -120,7 +133,10 @@ class DatabricksAdapter:
             if cursor.description is None:
                 return []
             columns = [d[0] for d in cursor.description]
-            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            return [
+                dict(zip(columns, row, strict=True))
+                for row in cursor.fetchall()
+            ]
         finally:
             cursor.close()
 
@@ -143,7 +159,9 @@ class DatabricksAdapter:
         finally:
             cursor.close()
 
-    def _rows_with_params(self, sql: str, parameters: dict[str, Any]) -> list[dict]:
+    def _rows_with_params(
+        self, sql: str, parameters: dict[str, Any]
+    ) -> list[dict]:
         """Like :meth:`rows`, but with server-side bound parameters.
 
         Used only by the ``describe()`` metadata queries below, which embed
@@ -159,7 +177,10 @@ class DatabricksAdapter:
             if cursor.description is None:
                 return []
             columns = [d[0] for d in cursor.description]
-            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            return [
+                dict(zip(columns, row, strict=True))
+                for row in cursor.fetchall()
+            ]
         finally:
             cursor.close()
 
@@ -177,7 +198,9 @@ class DatabricksAdapter:
         """
         columns = self._columns(obj)
         is_view = self._is_view(obj)
-        last_modified = None if is_view else self._describe_detail_last_modified(obj)
+        last_modified = (
+            None if is_view else self._describe_detail_last_modified(obj)
+        )
         return ObjectInfo(
             columns=columns,
             keys=None,
@@ -230,7 +253,9 @@ class DatabricksAdapter:
         if schema:
             where.append("table_schema = :table_schema")
             params["table_schema"] = schema
-        sql = f"SELECT table_type FROM {info_schema} WHERE {' AND '.join(where)}"
+        sql = (
+            f"SELECT table_type FROM {info_schema} WHERE {' AND '.join(where)}"
+        )
         result = self._rows_with_params(sql, params)
         if not result:
             return False
@@ -261,7 +286,9 @@ class DatabricksAdapter:
         most recent entries -- history retention can span the table's
         whole lifetime, and only recent operations matter for staleness.
         """
-        history = self.rows(f"DESCRIBE HISTORY {obj} LIMIT {_HISTORY_FETCH_LIMIT}")
+        history = self.rows(
+            f"DESCRIBE HISTORY {obj} LIMIT {_HISTORY_FETCH_LIMIT}"
+        )
         timestamps = [
             row["timestamp"]
             for row in history

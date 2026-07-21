@@ -42,7 +42,10 @@ def test_offered_column_checks_keys_off_category_not_native_type_name():
     # -- offers key off `category` only, never the native type name.
     columns = [
         Column(
-            name="weird", type="MADE_UP_TYPE", nullable=True, category=Category.NUMERIC
+            name="weird",
+            type="MADE_UP_TYPE",
+            nullable=True,
+            category=Category.NUMERIC,
         )
     ]
     offers = offered_column_checks(columns)
@@ -57,7 +60,12 @@ def test_offered_column_checks_keys_off_category_not_native_type_name():
 
 def test_offered_column_checks_omits_null_rate_for_not_null_column():
     columns = [
-        Column(name="id", type="INTEGER", nullable=False, category=Category.NUMERIC)
+        Column(
+            name="id",
+            type="INTEGER",
+            nullable=False,
+            category=Category.NUMERIC,
+        )
     ]
     offers = offered_column_checks(columns)
     assert "null_rate" not in offers[0]["checks"]
@@ -66,7 +74,9 @@ def test_offered_column_checks_omits_null_rate_for_not_null_column():
 
 def test_offered_column_checks_includes_null_rate_for_nullable_column():
     columns = [
-        Column(name="email", type="TEXT", nullable=True, category=Category.STRING)
+        Column(
+            name="email", type="TEXT", nullable=True, category=Category.STRING
+        )
     ]
     offers = offered_column_checks(columns)
     assert offers[0]["checks"] == ["null_rate", "duplicate_count"]
@@ -102,7 +112,8 @@ def test_offered_column_checks_excludes_metric_already_proposed_for_column():
         }
     ]
     offers = {
-        o["column"]: o["checks"] for o in offered_column_checks(columns, proposed)
+        o["column"]: o["checks"]
+        for o in offered_column_checks(columns, proposed)
     }
     assert "freshness" not in offers["modified_at"]
     assert "null_rate" in offers["modified_at"]  # not proposed, stays offered
@@ -114,7 +125,12 @@ def test_offered_column_checks_excludes_duplicate_count_already_proposed_via_key
     # single-column key that's also numeric or string gets a proposed
     # duplicate_count, which the same exclusion must catch too.
     columns = [
-        Column(name="id", type="INTEGER", nullable=False, category=Category.NUMERIC)
+        Column(
+            name="id",
+            type="INTEGER",
+            nullable=False,
+            category=Category.NUMERIC,
+        )
     ]
     proposed = [
         {
@@ -139,7 +155,9 @@ def test_offered_column_checks_without_proposed_excludes_nothing():
             category=Category.TEMPORAL,
         )
     ]
-    assert offered_column_checks(columns) == offered_column_checks(columns, None)
+    assert offered_column_checks(columns) == offered_column_checks(
+        columns, None
+    )
 
 
 def test_build_offered_check_null_rate_uses_given_max():

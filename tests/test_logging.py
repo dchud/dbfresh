@@ -50,7 +50,9 @@ def test_quiet_by_default_no_stderr_on_a_healthy_run(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     code = main(["run", "-c", str(cfg), "--no-store"])
 
@@ -65,7 +67,9 @@ def test_verbose_flag_emits_run_start_and_run_end_on_stderr(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     code = main(["run", "-c", str(cfg), "--no-store", "-v"])
 
@@ -88,7 +92,9 @@ def test_verbose_flag_after_subcommand_also_works(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     code = main(["run", "-c", str(cfg), "--no-store", "-v"])
 
@@ -101,7 +107,9 @@ def test_source_connect_success_logged_at_info_only_with_verbose(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     main(["run", "-c", str(cfg), "--no-store"])
     assert capsys.readouterr().err == ""  # quiet by default
@@ -150,13 +158,19 @@ def test_verbose_debug_emits_per_check_result_events(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     main(["run", "-c", str(cfg), "--no-store"])
-    assert "event='check_result'" not in capsys.readouterr().err  # quiet default
+    assert (
+        "event='check_result'" not in capsys.readouterr().err
+    )  # quiet default
 
     main(["run", "-c", str(cfg), "--no-store", "-v"])
-    assert "event='check_result'" not in capsys.readouterr().err  # info: not yet
+    assert (
+        "event='check_result'" not in capsys.readouterr().err
+    )  # info: not yet
 
     main(["run", "-c", str(cfg), "--no-store", "-vv"])
     err = capsys.readouterr().err
@@ -169,7 +183,9 @@ def test_env_var_overrides_verbosity_to_force_debug(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     monkeypatch.setenv("DBFRESH_LOG_LEVEL", "DEBUG")
 
     code = main(["run", "-c", str(cfg), "--no-store"])  # no -v at all
@@ -183,7 +199,9 @@ def test_env_var_overrides_verbose_flag_to_suppress_info(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     monkeypatch.setenv("DBFRESH_LOG_LEVEL", "ERROR")
 
     code = main(["run", "-c", str(cfg), "--no-store", "-vv"])  # would be DEBUG
@@ -197,14 +215,19 @@ def test_invalid_env_log_level_is_a_clean_error_not_a_traceback(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     monkeypatch.setenv("DBFRESH_LOG_LEVEL", "NOT_A_LEVEL")
 
     code = main(["run", "-c", str(cfg), "--no-store"])
 
     captured = capsys.readouterr()
     assert code == 3
-    assert captured.err.strip() == "error: invalid DBFRESH_LOG_LEVEL: 'NOT_A_LEVEL'"
+    assert (
+        captured.err.strip()
+        == "error: invalid DBFRESH_LOG_LEVEL: 'NOT_A_LEVEL'"
+    )
     assert "Traceback" not in captured.err
 
 
@@ -213,7 +236,9 @@ def test_json_output_unaffected_by_verbose_logging(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
 
     main(["run", "-c", str(cfg), "--json", "-vv"])
     captured = capsys.readouterr()

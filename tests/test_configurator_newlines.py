@@ -58,12 +58,16 @@ def test_rewrite_check_expectation_preserves_crlf(tmp_path):
         "  expect:\n"
         "    max: 100\n",
     )
-    cid = _check_id_of_block({"source": "s", "object": "t", "metric": "row_count"})
+    cid = _check_id_of_block(
+        {"source": "s", "object": "t", "metric": "row_count"}
+    )
 
     assert rewrite_check_expectation(cfg, cid, {"max": 500}) is True
 
     _assert_uniform_crlf(cfg)
-    assert yaml.safe_load(cfg.read_text())["checks"][0]["expect"] == {"max": 500}
+    assert yaml.safe_load(cfg.read_text())["checks"][0]["expect"] == {
+        "max": 500
+    }
 
 
 def test_remove_check_preserves_crlf(tmp_path):
@@ -83,7 +87,9 @@ def test_remove_check_preserves_crlf(tmp_path):
         "  expect:\n"
         "    max: 100\n",
     )
-    cid = _check_id_of_block({"source": "s", "object": "t", "metric": "row_count"})
+    cid = _check_id_of_block(
+        {"source": "s", "object": "t", "metric": "row_count"}
+    )
 
     remove_check(cfg, cid)
 
@@ -102,7 +108,10 @@ def test_add_source_preserves_crlf(tmp_path):
     add_source(cfg, "added", "sqlite", {"database": "other.db"})
 
     _assert_uniform_crlf(cfg)
-    assert set(yaml.safe_load(cfg.read_text())["sources"]) == {"existing", "added"}
+    assert set(yaml.safe_load(cfg.read_text())["sources"]) == {
+        "existing",
+        "added",
+    }
 
 
 def test_append_checks_preserves_crlf_in_root_config(tmp_path):
@@ -114,7 +123,14 @@ def test_append_checks_preserves_crlf_in_root_config(tmp_path):
 
     append_checks(
         cfg,
-        [{"source": "s", "object": "t", "metric": "row_count", "expect": {"max": 5}}],
+        [
+            {
+                "source": "s",
+                "object": "t",
+                "metric": "row_count",
+                "expect": {"max": 5},
+            }
+        ],
     )
 
     _assert_uniform_crlf(cfg)
@@ -130,7 +146,14 @@ def test_append_checks_preserves_crlf_in_bare_list_file(tmp_path):
 
     append_checks(
         included,
-        [{"source": "s", "object": "new", "metric": "row_count", "expect": {"max": 5}}],
+        [
+            {
+                "source": "s",
+                "object": "new",
+                "metric": "row_count",
+                "expect": {"max": 5},
+            }
+        ],
     )
 
     _assert_uniform_crlf(included)
@@ -150,7 +173,10 @@ def test_rewrite_source_preserves_crlf(tmp_path):
     rewrite_source(cfg, "s", "sqlite", {"database": "moved.db"})
 
     _assert_uniform_crlf(cfg)
-    assert yaml.safe_load(cfg.read_text())["sources"]["s"]["database"] == "moved.db"
+    assert (
+        yaml.safe_load(cfg.read_text())["sources"]["s"]["database"]
+        == "moved.db"
+    )
 
 
 def test_remove_source_preserves_crlf(tmp_path):
@@ -182,7 +208,10 @@ def test_add_source_fallback_preserves_crlf(tmp_path):
     add_source(cfg, "added", "sqlite", {"database": "other.db"})
 
     _assert_uniform_crlf(cfg)
-    assert set(yaml.safe_load(cfg.read_text())["sources"]) == {"existing", "added"}
+    assert set(yaml.safe_load(cfg.read_text())["sources"]) == {
+        "existing",
+        "added",
+    }
 
 
 def test_lf_config_stays_lf_after_edit(tmp_path):
@@ -196,7 +225,9 @@ def test_lf_config_stays_lf_after_edit(tmp_path):
         "  expect:\n"
         "    max: 100\n"
     )
-    cid = _check_id_of_block({"source": "s", "object": "t", "metric": "row_count"})
+    cid = _check_id_of_block(
+        {"source": "s", "object": "t", "metric": "row_count"}
+    )
 
     assert rewrite_check_expectation(cfg, cid, {"max": 500}) is True
 

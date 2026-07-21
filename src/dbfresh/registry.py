@@ -39,7 +39,10 @@ METRICS: tuple[MetricSpec, ...] = (
         "`equals` across runs.",
     ),
     MetricSpec(
-        "null_rate", "column", "column", "Fraction of NULL values in one column."
+        "null_rate",
+        "column",
+        "column",
+        "Fraction of NULL values in one column.",
     ),
     MetricSpec(
         "duplicate_count",

@@ -55,7 +55,9 @@ def category_for(sqla_type: Any) -> Category:
         return Category.BOOLEAN
     if isinstance(sqla_type, (sqltypes.Integer, sqltypes.Numeric)):
         return Category.NUMERIC
-    if isinstance(sqla_type, (sqltypes.Date, sqltypes.DateTime, sqltypes.Time)):
+    if isinstance(
+        sqla_type, (sqltypes.Date, sqltypes.DateTime, sqltypes.Time)
+    ):
         return Category.TEMPORAL
     if isinstance(sqla_type, (sqltypes.String, sqltypes.Enum)):
         return Category.STRING
@@ -86,7 +88,9 @@ def _split_object(obj: str) -> tuple[str | None, str]:
 # freshness_source values that read Delta table metadata via DESCRIBE
 # instead of querying a timestamp column -- Databricks-only, table-only
 # (a view has no Delta storage for DESCRIBE to describe).
-_DESCRIBE_FRESHNESS_SOURCES = frozenset({"describe_history", "describe_detail"})
+_DESCRIBE_FRESHNESS_SOURCES = frozenset(
+    {"describe_history", "describe_detail"}
+)
 
 
 def validate_freshness_source(
@@ -234,7 +238,9 @@ class SqlAlchemyAdapter:
             for col in insp.get_columns(table, schema=schema)
         ]
         keys: list[list[str]] = []
-        pk = insp.get_pk_constraint(table, schema=schema).get("constrained_columns")
+        pk = insp.get_pk_constraint(table, schema=schema).get(
+            "constrained_columns"
+        )
         if pk:
             keys.append(list(pk))
         # SQL Server's SQLAlchemy dialect reflects columns and primary keys

@@ -105,7 +105,9 @@ def render_matrix() -> str:
 # since nothing outside this module imports these private names.
 
 
-def _subparsers_action(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+def _subparsers_action(
+    parser: argparse.ArgumentParser,
+) -> argparse._SubParsersAction:
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             return action
@@ -114,7 +116,10 @@ def _subparsers_action(parser: argparse.ArgumentParser) -> argparse._SubParsersA
 
 def _command_help(sub_action: argparse._SubParsersAction) -> dict[str, str]:
     """One-line help text per subcommand name, as shown in top-level --help."""
-    return {pseudo.dest: pseudo.help or "" for pseudo in sub_action._choices_actions}
+    return {
+        pseudo.dest: pseudo.help or ""
+        for pseudo in sub_action._choices_actions
+    }
 
 
 def _flag_rows(subparser: argparse.ArgumentParser) -> list[str]:
@@ -171,7 +176,9 @@ def render_cli() -> str:
         seen_codes.add(code)
         statuses_at_code = [s.value for s in Status if exit_code(s) == code]
         meaning = _EXIT_CODE_MEANING[status]
-        lines.append(f"| {code} | {' / '.join(statuses_at_code)} | {meaning} |")
+        lines.append(
+            f"| {code} | {' / '.join(statuses_at_code)} | {meaning} |"
+        )
     lines.append("")
     return "\n".join(lines)
 
@@ -206,7 +213,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     pages = write_all(args.output_dir)
-    print(f"wrote {len(pages)} generated reference page(s) to {args.output_dir}")
+    print(
+        f"wrote {len(pages)} generated reference page(s) to {args.output_dir}"
+    )
     return 0
 
 

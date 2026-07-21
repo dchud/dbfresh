@@ -56,7 +56,9 @@ checks:
     assert captured.err == ""
 
 
-def test_env_template_no_vars_produces_empty_output_and_exits_zero(tmp_path, capsys):
+def test_env_template_no_vars_produces_empty_output_and_exits_zero(
+    tmp_path, capsys
+):
     cfg = _write(
         tmp_path / "config.yaml",
         "sources:\n  s: { type: sqlite, database: ':memory:' }\nchecks: []\n",
@@ -69,7 +71,9 @@ def test_env_template_no_vars_produces_empty_output_and_exits_zero(tmp_path, cap
     assert captured.out == ""
 
 
-def test_env_template_missing_config_file_exits_3_with_config_error(tmp_path, capsys):
+def test_env_template_missing_config_file_exits_3_with_config_error(
+    tmp_path, capsys
+):
     missing = tmp_path / "does_not_exist.yaml"
 
     code = main(["env-template", "-c", str(missing)])

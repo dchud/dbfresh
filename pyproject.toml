@@ -62,8 +62,15 @@ docs = [
     "mkdocs-material>=9.7.6",
 ]
 
+[tool.ruff]
+line-length = 79
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4"]
+# The formatter enforces the 79-character line length on code; E501 would
+# otherwise only flag docstring and comment prose the formatter does not
+# reflow, so it is disabled to keep the two from disagreeing.
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

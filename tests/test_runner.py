@@ -45,7 +45,9 @@ def test_run_and_persist_runs_checks_and_returns_run_result(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
 
     run = run_and_persist(config, store=None)
@@ -60,13 +62,17 @@ def test_run_and_persist_writes_observations_when_store_given(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
     run_and_persist(config, store=store)
 
-    obs = store._conn.execute("SELECT status, value FROM observation").fetchone()
+    obs = store._conn.execute(
+        "SELECT status, value FROM observation"
+    ).fetchone()
     assert obs["status"] == "OK"
     assert obs["value"] == 3.0
     store.close()
@@ -77,7 +83,9 @@ def test_run_and_persist_observations_use_injected_now_not_wall_clock(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
@@ -94,7 +102,9 @@ def test_run_and_persist_start_run_started_at_is_injected_now(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
@@ -111,7 +121,9 @@ def test_run_and_persist_starts_run_row_before_evaluation(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -137,7 +149,9 @@ def test_run_and_persist_leaves_store_open_for_reuse(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -255,7 +269,9 @@ def test_run_and_persist_run_id_is_none_without_store(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     frozen_now = datetime(2020, 1, 1, tzinfo=UTC)
 
@@ -271,7 +287,9 @@ def test_run_and_persist_run_id_set_when_store_given(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     store = Store(tmp_path / "obs.db")
 
@@ -285,7 +303,9 @@ def test_run_and_persist_run_id_set_when_store_given(
     store.close()
 
 
-def test_run_and_persist_only_restricts_to_one_source(tmp_path, seed_row_count_db):
+def test_run_and_persist_only_restricts_to_one_source(
+    tmp_path, seed_row_count_db
+):
     # "down" would fail to build were it ever touched -- --only excludes
     # it from the run entirely, not just from the result set, so the run
     # stays OK instead of the worst-status ERROR an untouched-but-included
@@ -378,7 +398,9 @@ def test_run_and_persist_on_result_invoked_per_check(
 ):
     db = tmp_path / "data.db"
     seed_row_count_db(db)
-    cfg = row_count_config(tmp_path / "config.yaml", db, "{ between: [1, 10] }")
+    cfg = row_count_config(
+        tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+    )
     config = load_config(cfg)
     seen = []
 
@@ -408,7 +430,9 @@ def test_run_and_persist_closes_every_adapter_even_if_one_close_raises(
     def fake_create_adapter(type_, params, timeout=None):
         return _FakeAdapter(type_)
 
-    monkeypatch.setattr("dbfresh.adapters.factory.create_adapter", fake_create_adapter)
+    monkeypatch.setattr(
+        "dbfresh.adapters.factory.create_adapter", fake_create_adapter
+    )
 
     cfg = tmp_path / "config.yaml"
     cfg.write_text(

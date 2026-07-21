@@ -4,7 +4,11 @@ in place, and find_check_file: locate which target_files() file holds it."""
 import yaml
 
 from dbfresh.checks import Check, check_id
-from dbfresh.configurator import build_check, find_check_file, rewrite_check_expectation
+from dbfresh.configurator import (
+    build_check,
+    find_check_file,
+    rewrite_check_expectation,
+)
 
 
 def test_rewrite_check_expectation_splices_block_style_in_place(tmp_path):
@@ -32,7 +36,9 @@ def test_rewrite_check_expectation_splices_block_style_in_place(tmp_path):
     assert data["sources"]["s"]["type"] == "sqlite"  # untouched
 
 
-def test_rewrite_check_expectation_preserves_comments_and_other_checks(tmp_path):
+def test_rewrite_check_expectation_preserves_comments_and_other_checks(
+    tmp_path,
+):
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         "# top comment\n"
@@ -99,7 +105,9 @@ def test_rewrite_check_expectation_works_on_bare_list_included_file(tmp_path):
     assert data[0]["expect"] == {"max": 999}
 
 
-def test_rewrite_check_expectation_returns_false_when_check_id_not_found(tmp_path):
+def test_rewrite_check_expectation_returns_false_when_check_id_not_found(
+    tmp_path,
+):
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
 
@@ -123,7 +131,9 @@ def test_rewrite_check_expectation_does_not_change_check_id(tmp_path):
     rewrite_check_expectation(cfg, cid, {"max": 999})
 
     data = yaml.safe_load(cfg.read_text())
-    rewritten = build_check("s", "t", "row_count", expect=data["checks"][0]["expect"])
+    rewritten = build_check(
+        "s", "t", "row_count", expect=data["checks"][0]["expect"]
+    )
     assert check_id_of_block(rewritten) == cid
 
 
@@ -166,7 +176,9 @@ def test_rewrite_check_expectation_between_preserves_other_checks(tmp_path):
         "  expect:\n"
         "    max: 0.05\n"
     )
-    row_count_check = build_check("s", "t", "row_count", expect={"between": [1, 1000]})
+    row_count_check = build_check(
+        "s", "t", "row_count", expect={"between": [1, 1000]}
+    )
     cid = check_id_of_block(row_count_check)
 
     ok = rewrite_check_expectation(cfg, cid, {"between": [10, 500]})
@@ -296,7 +308,9 @@ def check_id_of_block(block: dict) -> str:
     )
 
 
-def test_rewrite_check_expectation_keeps_the_next_checks_leading_comment(tmp_path):
+def test_rewrite_check_expectation_keeps_the_next_checks_leading_comment(
+    tmp_path,
+):
     """Editing a check's expect must not swallow a comment that is a leading
     note for the *following* check -- the same trailing-run trim remove_check
     already applies."""

@@ -178,7 +178,9 @@ def test_delta_only_guard_evaluated_without_ratio(tmp_path):
 
 
 def test_ratio_and_delta_both_configured_both_must_pass(tmp_path):
-    a = _rows_adapter(110)  # ratio 1.1 passes [0.5, 2.0]; delta 10 fails [-5, 5]
+    a = _rows_adapter(
+        110
+    )  # ratio 1.1 passes [0.5, 2.0]; delta 10 fails [-5, 5]
     store = Store(tmp_path / "obs.db")
     check = _vs_previous_check(min_delta=-5, max_delta=5)
     _stored_baseline(store, check_id(check), value=100)
@@ -198,12 +200,20 @@ def test_null_current_scalar_uses_empty_result_not_on_missing(tmp_path):
         metric="avg",
         column="amount",
         expect=parse_expectation(
-            {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2}},
+            {
+                "vs_previous": {
+                    "baseline": "previous",
+                    "min_ratio": 0.5,
+                    "max_ratio": 2,
+                }
+            },
             metric="avg",
         ),
     )
     result = evaluate_check(check, a, store=store)
-    assert result.status == Status.FAIL  # empty result, allow_empty defaults False
+    assert (
+        result.status == Status.FAIL
+    )  # empty result, allow_empty defaults False
     a.close()
     store.close()
 
@@ -248,7 +258,9 @@ def test_baseline_last_same_weekday_uses_calendar_timezone_and_floor(tmp_path):
     check = _vs_previous_check(baseline="last_same_weekday")
     cid = check_id(check)
 
-    two_weeks_ago = datetime(2026, 6, 22, tzinfo=UTC)  # same weekday, 2 weeks back
+    two_weeks_ago = datetime(
+        2026, 6, 22, tzinfo=UTC
+    )  # same weekday, 2 weeks back
     run_id = store.start_run()
     result = Result(
         object="t",
@@ -258,7 +270,9 @@ def test_baseline_last_same_weekday_uses_calendar_timezone_and_floor(tmp_path):
         value=100,
         check_id=cid,
     )
-    store.record_observation(run_id, result, observed_at=two_weeks_ago, calendar=cal)
+    store.record_observation(
+        run_id, result, observed_at=two_weeks_ago, calendar=cal
+    )
 
     a = _rows_adapter(350)
     now = two_weeks_ago + timedelta(days=14)
@@ -268,7 +282,9 @@ def test_baseline_last_same_weekday_uses_calendar_timezone_and_floor(tmp_path):
     store.close()
 
 
-def test_baseline_last_same_weekday_no_match_within_floor_is_on_missing(tmp_path):
+def test_baseline_last_same_weekday_no_match_within_floor_is_on_missing(
+    tmp_path,
+):
     cal = build_calendar({"timezone": "UTC"})
     store = Store(tmp_path / "obs.db")
     check = _vs_previous_check(baseline="last_same_weekday")
@@ -284,10 +300,14 @@ def test_baseline_last_same_weekday_no_match_within_floor_is_on_missing(tmp_path
         value=999,
         check_id=cid,
     )
-    store.record_observation(run_id, result, observed_at=now, calendar=cal)  # same day
+    store.record_observation(
+        run_id, result, observed_at=now, calendar=cal
+    )  # same day
 
     a = _rows_adapter(5)
     outcome = evaluate_check(check, a, now=now, calendar=cal, store=store)
-    assert outcome.status == Status.OK  # no eligible baseline -> on_missing pass
+    assert (
+        outcome.status == Status.OK
+    )  # no eligible baseline -> on_missing pass
     a.close()
     store.close()

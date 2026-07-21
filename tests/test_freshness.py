@@ -7,8 +7,12 @@ from dbfresh.engine import Status, evaluate_check
 
 
 def test_compile_freshness():
-    check = Check(source="s", object="t", metric="freshness", column="created_at")
-    assert compile_metric_sql(check, Dialect()) == "SELECT MAX(created_at) FROM t"
+    check = Check(
+        source="s", object="t", metric="freshness", column="created_at"
+    )
+    assert (
+        compile_metric_sql(check, Dialect()) == "SELECT MAX(created_at) FROM t"
+    )
 
 
 def test_max_lag_describe():

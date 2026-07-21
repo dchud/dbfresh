@@ -180,10 +180,14 @@ def test_object_detail_edits_a_single_scalar_threshold(tmp_path):
             await pilot.pause()
 
         data = yaml.safe_load(cfg.read_text())
-        null_rate_checks = [c for c in data["checks"] if c["metric"] == "null_rate"]
+        null_rate_checks = [
+            c for c in data["checks"] if c["metric"] == "null_rate"
+        ]
         assert null_rate_checks[0]["expect"] == {"max": 0.2}
         # the other checks are untouched
-        row_count_checks = [c for c in data["checks"] if c["metric"] == "row_count"]
+        row_count_checks = [
+            c for c in data["checks"] if c["metric"] == "row_count"
+        ]
         assert row_count_checks[0]["expect"] == {"between": [1, 1000]}
 
     asyncio.run(scenario())
@@ -227,7 +231,9 @@ def test_object_detail_edits_a_between_lo_hi_pair(tmp_path):
             await pilot.pause()
 
         data = yaml.safe_load(cfg.read_text())
-        row_count_checks = [c for c in data["checks"] if c["metric"] == "row_count"]
+        row_count_checks = [
+            c for c in data["checks"] if c["metric"] == "row_count"
+        ]
         assert row_count_checks[0]["expect"] == {"between": [5.0, 2000.0]}
 
     asyncio.run(scenario())
@@ -310,7 +316,9 @@ def test_object_detail_edits_a_vs_previous_ratio_pair(tmp_path):
     asyncio.run(scenario())
 
 
-def test_object_detail_vs_previous_ratio_min_greater_than_max_is_rejected(tmp_path):
+def test_object_detail_vs_previous_ratio_min_greater_than_max_is_rejected(
+    tmp_path,
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -483,7 +491,9 @@ def test_object_detail_delete_confirmed_refreshes_its_own_grid_and_edit_panel(
     asyncio.run(scenario())
 
 
-def test_object_detail_dismiss_after_a_mutation_reloads_home_dashboard(tmp_path):
+def test_object_detail_dismiss_after_a_mutation_reloads_home_dashboard(
+    tmp_path,
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -585,8 +595,12 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
         async with app.run_test() as pilot:
             await _open_object_detail(pilot)  # drills into s.t (first row)
             detail_table = app.screen.query_one(DataTable)
-            row_count_id = check_id(Check(source="s", object="t", metric="row_count"))
-            assert _overall_glyph(detail_table, row_count_id) == "·"  # never observed
+            row_count_id = check_id(
+                Check(source="s", object="t", metric="row_count")
+            )
+            assert (
+                _overall_glyph(detail_table, row_count_id) == "·"
+            )  # never observed
 
             app.screen.query_one("#detail-run-object-btn", Button).press()
             await pilot.app.workers.wait_for_complete()
@@ -640,7 +654,9 @@ def test_object_detail_run_this_object_also_refreshes_the_home_grid(
     asyncio.run(scenario())
 
 
-def test_object_detail_run_object_binding_matches_the_button(tmp_path, pump_until):
+def test_object_detail_run_object_binding_matches_the_button(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -662,7 +678,9 @@ def test_object_detail_run_object_binding_matches_the_button(tmp_path, pump_unti
     asyncio.run(scenario())
 
 
-def test_global_run_from_object_detail_still_runs_every_object(tmp_path, pump_until):
+def test_global_run_from_object_detail_still_runs_every_object(
+    tmp_path, pump_until
+):
     """'r' (run everything) keeps working unscoped from ObjectDetailScreen
     -- scoping only ever kicks in via the new 'O' binding / button, never
     by way of the global run action."""

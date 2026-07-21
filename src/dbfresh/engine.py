@@ -67,7 +67,9 @@ def _error_result(check: Check, exc: BaseException, **fields: Any) -> Result:
     recoverable.
     """
     message = str(exc) or repr(exc)
-    log.debug("check_error", check_id=check_id(check), error=message, exc_info=exc)
+    log.debug(
+        "check_error", check_id=check_id(check), error=message, exc_info=exc
+    )
     return _result(check, Status.ERROR, error=message, **fields)
 
 
@@ -157,7 +159,9 @@ def _evaluate_check(
     if check.metric == "schema":
         return _evaluate_schema(check, adapter, expect, store)
     if expect is not None and expect.operator == "vs_previous":
-        return _evaluate_vs_previous(check, adapter, now, expect, calendar, store)
+        return _evaluate_vs_previous(
+            check, adapter, now, expect, calendar, store
+        )
     sql = compile_metric_sql(check, adapter.dialect)
     expected = expect.describe() if expect else None
     try:
@@ -180,7 +184,9 @@ def _empty_result(check: Check, expected: str | None) -> Result:
             expected=expected,
             error="empty result: cannot compute null_rate",
         )
-    return _result(check, _verdict(check, check.allow_empty), expected=expected)
+    return _result(
+        check, _verdict(check, check.allow_empty), expected=expected
+    )
 
 
 def _assertion_label(check: Check) -> str | None:
@@ -201,7 +207,9 @@ def _evaluate_assertion(check: Check, adapter: Adapter) -> Result:
     except Exception as exc:  # unreachable source / query error -> ERROR
         return _error_result(check, exc, metric=None, label=label)
     if count == 0:
-        return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
+        return _result(
+            check, Status.OK, metric=None, value=0, label=label, samples=[]
+        )
     samples = adapter.rows(adapter.dialect.limit(f"SELECT * {violation}", 20))
     status = _verdict(check, False)
     return _result(
@@ -236,7 +244,9 @@ def _evaluate_assert_sql(check: Check, adapter: Adapter) -> Result:
         return _error_result(check, exc, metric=None, label=label)
     count = len(rows)
     if count == 0:
-        return _result(check, Status.OK, metric=None, value=0, label=label, samples=[])
+        return _result(
+            check, Status.OK, metric=None, value=0, label=label, samples=[]
+        )
     capped = count > _ASSERT_SQL_CAP
     value: int | str = f"{_ASSERT_SQL_CAP}+" if capped else count
     status = _verdict(check, False)
@@ -261,7 +271,9 @@ def _freshness_raw(check: Check, adapter: Adapter) -> Any:
         sql = compile_metric_sql(check, adapter.dialect)
         return adapter.scalar(sql)
     info = adapter.describe(check.object)
-    validate_freshness_source(check.freshness_source, adapter.dialect, info.is_view)
+    validate_freshness_source(
+        check.freshness_source, adapter.dialect, info.is_view
+    )
     if check.freshness_source == "describe_detail":
         return info.last_modified
     # describe_history is a Databricks-only capability, not part of the
@@ -417,7 +429,9 @@ def _read_vs_previous_baseline(
     if spec["baseline"] == "previous":
         observation = store.latest_clean_observation(cid)
     else:  # last_same_weekday
-        run_date = calendar.local_date(now) if calendar is not None else now.date()
+        run_date = (
+            calendar.local_date(now) if calendar is not None else now.date()
+        )
         observation = store.last_same_weekday_observation(cid, run_date)
     return observation.get("value") if observation is not None else None
 
@@ -512,7 +526,9 @@ def run_checks(
             if exc is not None:
                 result = _connect_error_result(check, exc)
             else:
-                result = evaluate_check(check, adapters[source], now, calendar, store)
+                result = evaluate_check(
+                    check, adapters[source], now, calendar, store
+                )
             log.debug(
                 "check_result",
                 check_id=result.check_id,
@@ -538,4 +554,6 @@ def run_checks(
         with ThreadPoolExecutor(max_workers=len(by_source)) as pool:
             for source_results in pool.map(run_source, by_source.values()):
                 results.extend(source_results)
-    return RunResult(results=results, status=worst_status(r.status for r in results))
+    return RunResult(
+        results=results, status=worst_status(r.status for r in results)
+    )

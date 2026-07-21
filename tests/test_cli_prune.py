@@ -43,7 +43,9 @@ def test_prune_removes_observations_older_than_configured_retain_days(
     store = Store(store_path)
     remaining = {
         row["check_id"]
-        for row in store._conn.execute("SELECT check_id FROM observation").fetchall()
+        for row in store._conn.execute(
+            "SELECT check_id FROM observation"
+        ).fetchall()
     }
     assert remaining == {"new"}
     store.close()
@@ -65,7 +67,9 @@ def test_prune_defaults_to_400_days_retention(tmp_path, seed_observations):
     store = Store(store_path)
     remaining = {
         row["check_id"]
-        for row in store._conn.execute("SELECT check_id FROM observation").fetchall()
+        for row in store._conn.execute(
+            "SELECT check_id FROM observation"
+        ).fetchall()
     }
     assert remaining == {"recent"}
     store.close()
@@ -88,6 +92,8 @@ def test_prune_works_without_config_file(tmp_path, seed_observations):
     )
     assert code == 0
     store = Store(store_path)
-    remaining = store._conn.execute("SELECT check_id FROM observation").fetchall()
+    remaining = store._conn.execute(
+        "SELECT check_id FROM observation"
+    ).fetchall()
     assert remaining == []
     store.close()
