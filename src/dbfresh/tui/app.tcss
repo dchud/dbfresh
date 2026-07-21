@@ -126,6 +126,18 @@ Select > SelectCurrent {
     padding: 0 1;
 }
 
+/* A committable .env beside the config (env_hygiene.committable_env_file)
+ * -- same warning convention as #missing-secrets-banner above: $warning
+ * only, never FAIL-red or ERROR-blue. Hidden (banner.display in app.py)
+ * when nothing is at risk.
+ */
+#env-hygiene-banner {
+    background: $mantle;
+    color: $warning;
+    text-style: bold;
+    padding: 0 1;
+}
+
 /* The label substring-search box (DbfreshApp.action_toggle_search) --
  * narrow rather than Input's own default full-width, since it only ever
  * holds a short "source.object" substring. Hidden (display in app.py)

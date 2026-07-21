@@ -1,5 +1,6 @@
 import asyncio
 import re
+import subprocess
 import threading
 from datetime import UTC, datetime
 
@@ -371,6 +372,80 @@ def test_missing_secrets_banner_hidden_when_nothing_missing(tmp_path):
             await pilot.pause()
 
             banner = app.query_one("#missing-secrets-banner", Static)
+            assert not banner.display
+
+    asyncio.run(scenario())
+
+
+def _isolate_git_config(tmp_path, monkeypatch):
+    # _env_at_risk runs real git (env_hygiene.committable_env_file) -- pin
+    # its config away from the developer's own, so a global gitignore that
+    # happens to ignore .env can't make these tests pass or fail depending
+    # on machine layout.
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global"))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "no-system"))
+
+
+def _git_init(repo_dir):
+    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
+
+
+def test_env_hygiene_banner_shown_when_env_file_is_not_gitignored(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        _isolate_git_config(tmp_path, monkeypatch)
+        _git_init(tmp_path)
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        (tmp_path / ".env").write_text("DB_PASSWORD=x\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            banner = app.query_one("#env-hygiene-banner", Static)
+            assert banner.display
+            text = str(banner.render())
+            assert "not gitignored" in text
+
+    asyncio.run(scenario())
+
+
+def test_env_hygiene_banner_hidden_when_env_file_is_gitignored(tmp_path, monkeypatch):
+    async def scenario():
+        _isolate_git_config(tmp_path, monkeypatch)
+        _git_init(tmp_path)
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        (tmp_path / ".env").write_text("DB_PASSWORD=x\n")
+        (tmp_path / ".gitignore").write_text(".env\n")
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            banner = app.query_one("#env-hygiene-banner", Static)
+            assert not banner.display
+
+    asyncio.run(scenario())
+
+
+def test_env_hygiene_banner_hidden_when_no_env_file(tmp_path, monkeypatch):
+    async def scenario():
+        _isolate_git_config(tmp_path, monkeypatch)
+        _git_init(tmp_path)
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            banner = app.query_one("#env-hygiene-banner", Static)
             assert not banner.display
 
     asyncio.run(scenario())

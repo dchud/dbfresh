@@ -581,6 +581,7 @@ def _ui_command(args: argparse.Namespace) -> int:
 
 def _env_template_command(args: argparse.Namespace) -> int:
     from dbfresh.config import ConfigError, collect_referenced_env_vars
+    from dbfresh.env_hygiene import committable_env_file
 
     try:
         names = collect_referenced_env_vars(Path(args.config))
@@ -588,6 +589,14 @@ def _env_template_command(args: argparse.Namespace) -> int:
         return _report_config_error(exc)
     for name in names:
         print(f"{name}=")
+
+    at_risk = committable_env_file(Path(args.config))
+    if at_risk is not None:
+        print(
+            f"warning: {at_risk} is not gitignored; it likely holds secrets "
+            f"that should not be committed. Add it to .gitignore.",
+            file=sys.stderr,
+        )
     return 0
 
 

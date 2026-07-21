@@ -24,6 +24,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 from textual.worker import Worker, WorkerState
 
 from dbfresh.config import Config, StoreConfig, load_config_tolerant
+from dbfresh.env_hygiene import committable_env_file
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.store import Store, resolve_store_path
 from dbfresh.tui.dashboard import (
@@ -107,6 +108,8 @@ _MISSING_SECRETS_ID = "missing-secrets-banner"
 # is never built from the same lookup that renders OK/WARN/FAIL/ERROR/
 # SKIPPED on the grid, even where the character happens to coincide.
 _MISSING_SECRETS_GLYPH = "!"
+
+_ENV_HYGIENE_ID = "env-hygiene-banner"
 
 
 def _run_summary(run: RunResult) -> str:
@@ -201,6 +204,11 @@ class DbfreshApp(App):
         self.missing_secrets: tuple[str, ...] = tuple(
             sorted(set(missing_secrets or ()))
         )
+        # Computed once here rather than on every refresh_dashboard call --
+        # the check runs git. _reload_config recomputes it, since that's
+        # the only point after startup where the .env/gitignore state could
+        # have changed.
+        self._env_at_risk: Path | None = committable_env_file(self.config_path)
 
     def _missing_secrets_text(self) -> str:
         names = ", ".join(self.missing_secrets)
@@ -209,11 +217,20 @@ class DbfreshApp(App):
             f".env file beside {self.config_path.name}, or export them"
         )
 
+    def _env_hygiene_text(self) -> str:
+        return (
+            f".env beside {self.config_path.name} is not gitignored; it "
+            f"likely holds secrets -- add it to .gitignore before committing."
+        )
+
     def compose(self) -> ComposeResult:
         yield Header()
         banner = Static(self._missing_secrets_text(), id=_MISSING_SECRETS_ID)
         banner.display = bool(self.missing_secrets)
         yield banner
+        env_hygiene_banner = Static(self._env_hygiene_text(), id=_ENV_HYGIENE_ID)
+        env_hygiene_banner.display = self._env_at_risk is not None
+        yield env_hygiene_banner
         # Out of the way (display hidden) until '/' reveals it
         # (action_toggle_search); populated from self._view on reopen so
         # it reflects an already-active search rather than always starting
@@ -273,6 +290,7 @@ class DbfreshApp(App):
         # stuck behind a "reload failed" toast.
         self.config, missing = load_config_tolerant(self.config_path)
         self.missing_secrets = tuple(sorted(missing))
+        self._env_at_risk = committable_env_file(self.config_path)
 
     def action_reload_config(self) -> None:
         """Re-read ``config_path`` from disk on demand.
@@ -383,6 +401,10 @@ class DbfreshApp(App):
         banner = self.query_one(f"#{_MISSING_SECRETS_ID}", Static)
         banner.update(self._missing_secrets_text())
         banner.display = bool(self.missing_secrets)
+
+        env_hygiene_banner = self.query_one(f"#{_ENV_HYGIENE_ID}", Static)
+        env_hygiene_banner.update(self._env_hygiene_text())
+        env_hygiene_banner.display = self._env_at_risk is not None
 
     def _skip_leading_header_cursor(self, table: DataTable) -> None:
         """After a grouped (re)populate, row 0 is always a source header --
