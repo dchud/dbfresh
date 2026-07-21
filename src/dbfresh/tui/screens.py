@@ -30,7 +30,13 @@ from dbfresh.configurator import (
     rewrite_check_expectation,
 )
 from dbfresh.models import RunResult, Status
-from dbfresh.report import reconstruct_run, render_digest, render_history
+from dbfresh.report import (
+    _format_freshness_observed,
+    _format_observed,
+    reconstruct_run,
+    render_digest,
+    render_history,
+)
 from dbfresh.store import Store, format_bytes
 from dbfresh.tui.dashboard import (
     DrillDownTable,
@@ -300,6 +306,48 @@ _RUN_OBJECT_BUTTON_ID = "detail-run-object-btn"
 _NON_EDITABLE_OPERATORS = frozenset({"unchanged", "vs_previous"})
 
 
+def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
+    """The text for ``#check-detail-line`` -- the currently-highlighted
+    check's WARN/FAIL/ERROR detail on :class:`ObjectDetailScreen`, so why a
+    check is in that state is visible without the extra hop into
+    :class:`HistoryScreen`.
+
+    The leading glyph reuses the grid's own
+    :func:`~dbfresh.tui.dashboard.status_glyph`/``status_style`` -- the same
+    encoding the row itself renders -- but the reason text after it carries
+    no style of its own, so it falls back to this screen's own muted
+    ``#check-detail-line`` CSS color (app.tcss): status colors stay reserved
+    for the glyph, never a bespoke "error" color.
+
+    ERROR shows the persisted error message; WARN/FAIL show what the check
+    expected against what it actually observed, reusing
+    :func:`~dbfresh.report._format_observed`/``_format_freshness_observed``
+    -- the same value formatting the digest already uses (see
+    ``render_digest``) -- rather than reformatting the stored value here.
+    ``obs["observed_at"]`` stands in for a live run's ``reference`` (the
+    "now" that produced a freshness lag), the same substitution
+    ``render_history`` makes per row. A long error is whitespace-collapsed
+    to one line, the same way ``render_history`` collapses its own error
+    column.
+    """
+    status = Status(obs["status"])
+    text = Text()
+    text.append(status_glyph(status), style=status_style(status))
+    text.append(" ")
+    if status == Status.ERROR:
+        error = " ".join(str(obs["error"] or "").split())
+        text.append(f"error: {error}")
+        return text
+    value = obs["value"] if obs["value"] is not None else obs["value_text"]
+    if check.metric == "freshness" and isinstance(value, (int, float)):
+        reference = datetime.fromisoformat(obs["observed_at"])
+        observed = _format_freshness_observed(value, reference, tz)
+    else:
+        observed = _format_observed(check.metric, value)
+    text.append(f"expected {obs['expected']} · observed {observed}")
+    return text
+
+
 class ObjectDetailScreen(Screen[bool]):
     """One object's checks as a status grid -- the Home grid's drill-in.
 
@@ -379,6 +427,9 @@ class ObjectDetailScreen(Screen[bool]):
             # reason: keep each cell's own status color on the cursor row.
             cursor_foreground_priority="renderable",
         )
+        detail_line = Static("", id="check-detail-line")
+        detail_line.display = False
+        yield detail_line
         yield Static(status_legend(), id="status-legend")
         yield VerticalScroll(
             Vertical(
@@ -400,7 +451,13 @@ class ObjectDetailScreen(Screen[bool]):
         observations -- also called by the app's Run action when this
         screen is the one currently on top of a just-completed run, so its
         statuses update without the user having to pop back to Home and
-        back in."""
+        back in.
+
+        ``populate_grid`` clears the table first, which resets its cursor
+        to row 0 -- syncing ``#check-detail-line`` here too keeps it
+        showing whatever row 0 now is, rather than leaving it stale on a
+        row that a mutation may have just deleted or replaced.
+        """
         table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
         today = datetime.now(self._tz or UTC).date()
         rows = check_rows(
@@ -413,6 +470,7 @@ class ObjectDetailScreen(Screen[bool]):
         )
         populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
+        self._sync_check_detail_line(self._current_row_key(table))
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
@@ -424,6 +482,46 @@ class ObjectDetailScreen(Screen[bool]):
         self.app.push_screen(
             HistoryScreen(self._store, row.check, tz=self._tz)
         )
+
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        """Keep ``#check-detail-line`` in step with the cursor -- mirrors
+        :meth:`on_data_table_row_selected`'s own row lookup, but updates the
+        detail line instead of drilling into ``HistoryScreen``."""
+        event.stop()
+        self._sync_check_detail_line(event.row_key.value)
+
+    def _current_row_key(self, table: DataTable) -> str | None:
+        """The row key at ``table``'s current cursor position, or ``None``
+        when the table has no rows (an object with no checks left)."""
+        if table.row_count == 0:
+            return None
+        return table.coordinate_to_cell_key(
+            table.cursor_coordinate
+        ).row_key.value
+
+    def _sync_check_detail_line(self, row_key: str | None) -> None:
+        """Show or hide ``#check-detail-line`` for the check named by
+        ``row_key``.
+
+        Hidden for a header row (``row_key`` not in ``_rows_by_key``, never
+        actually reached here since this grid has none), for a check never
+        observed on this machine (``obs is None``), and for OK/SKIPPED
+        (nothing to review) -- shown only for WARN/FAIL/ERROR, via
+        :func:`_check_detail_text`.
+        """
+        line = self.query_one("#check-detail-line", Static)
+        row = self._rows_by_key.get(row_key) if row_key is not None else None
+        if row is None or row.check is None:
+            line.display = False
+            return
+        obs = self._store.latest_observation(check_id(row.check))
+        if obs is None or Status(obs["status"]) in (Status.OK, Status.SKIPPED):
+            line.display = False
+            return
+        line.update(_check_detail_text(row.check, obs, self._tz))
+        line.display = True
 
     def action_run_object(self) -> None:
         """Run only this object's checks (the "Run this object" button's

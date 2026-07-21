@@ -211,6 +211,19 @@ Select > SelectCurrent {
     margin: 1;
 }
 
+/* The currently-highlighted check's WARN/FAIL/ERROR detail
+ * (ObjectDetailScreen.on_data_table_row_highlighted / _check_detail_text)
+ * -- same muted metadata tone as #status-legend/#last-run-line, not a
+ * status color. The leading glyph carries its own status color via an
+ * inline Rich style set in Python, so only the reason text after it picks
+ * up this rule's color. Hidden (display set in Python) whenever the
+ * highlighted row has nothing to show: never observed, or OK/SKIPPED.
+ */
+#check-detail-line {
+    color: $subtext0;
+    margin: 0 1 1 1;
+}
+
 #detail-edit-scroll {
     margin: 0 1 1 1;
 }
