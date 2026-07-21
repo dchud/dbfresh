@@ -7,11 +7,12 @@ import asyncio
 import pytest
 import yaml
 from textual.css.query import NoMatches
-from textual.widgets import Button, DataTable
+from textual.widgets import Button, DataTable, Static
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import load_config
-from dbfresh.models import Status
+from dbfresh.models import Result, Status
+from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.screens import ObjectDetailScreen
 
@@ -52,6 +53,32 @@ def _seed_db(path):
     adapter = SqliteAdapter(str(path))
     adapter.rows("CREATE TABLE t (id INTEGER, email TEXT)")
     adapter.close()
+
+
+def _seed_observation(
+    store, check, status, value=None, expected=None, error=None
+):
+    """One completed run with a single observation for ``check`` -- the
+    minimum needed for Store.latest_observation(check_id(check)) to return
+    it, mirroring test_tui_app.py's own ``_seed_status`` but carrying
+    ``expected``/``error``/``value`` too, since the check-detail line reads
+    all three.
+    """
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        Result(
+            object=check.object,
+            metric=check.metric,
+            status=status,
+            source=check.source,
+            value=value,
+            expected=expected,
+            error=error,
+            check_id=check_id(check),
+        ),
+    )
+    store.finish_run(run_id, status)
 
 
 def _row_count_check():
@@ -575,6 +602,149 @@ def test_object_detail_dismiss_without_any_mutation_does_not_reload(tmp_path):
             # Nothing was edited or deleted -- Home's config object is the
             # exact same instance, not just an equal reload.
             assert app.config is config_before
+
+    asyncio.run(scenario())
+
+
+# -- inline check-detail line -------------------------------------------
+
+
+def test_object_detail_highlighting_a_fail_check_shows_expected_and_observed(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store,
+            _row_count_check(),
+            Status.FAIL,
+            value=5000,
+            expected="between [1, 1000]",
+        )
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            # Cursor starts on row 0 (row_count) -- no move needed.
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert line.display
+            text = str(line.content)
+            assert "expected" in text
+            assert "between [1, 1000]" in text
+            assert "observed" in text
+            assert "5000" in text
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_highlighting_an_error_check_shows_the_error_message(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store,
+            _null_rate_check(),
+            Status.ERROR,
+            error="connection refused",
+        )
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            await pilot.press("down")  # row_count (0) -> null_rate (1)
+            await pilot.pause()
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert line.display
+            text = str(line.content)
+            assert "error:" in text
+            assert "connection refused" in text
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_highlighting_an_ok_check_hides_the_line(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(store, _row_count_check(), Status.OK, value=3)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert not line.display
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_cursor_move_from_failing_to_ok_hides_the_line(
+    tmp_path,
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store,
+            _row_count_check(),
+            Status.FAIL,
+            value=5000,
+            expected="between [1, 1000]",
+        )
+        _seed_observation(store, _null_rate_check(), Status.OK, value=0.01)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert line.display  # row_count (FAIL) is highlighted first
+
+            await pilot.press("down")  # row_count (0) -> null_rate (1), OK
+            await pilot.pause()
+
+            assert not line.display
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_never_observed_check_hides_the_line(tmp_path):
+    """No observation at all on this machine yet -- distinct from OK/SKIPPED,
+    but hidden the same way (nothing to review)."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert not line.display
 
     asyncio.run(scenario())
 
