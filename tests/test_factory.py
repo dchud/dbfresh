@@ -92,9 +92,7 @@ def test_create_adapter_rewords_a_missing_submodule_of_the_driver_package(
                 "No module named 'databricks.sdk'", name="databricks.sdk"
             )
 
-    monkeypatch.setitem(
-        factory._ADAPTERS, "databricks", _MissingSdkSubmodule
-    )
+    monkeypatch.setitem(factory._ADAPTERS, "databricks", _MissingSdkSubmodule)
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter("databricks", {"host": "x"})
     assert "dbfresh[databricks]" in str(exc_info.value)

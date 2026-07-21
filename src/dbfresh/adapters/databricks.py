@@ -100,15 +100,48 @@ class DatabricksAdapter:
     """Native adapter over a Databricks SQL warehouse connection.
 
     Config fields: ``host``, ``http_path`` (the warehouse endpoint), and
-    ``token`` (a personal access token).
+    either ``token`` (a personal access token, the default auth method) or
+    ``auth_type: oauth_m2m`` with ``client_id``/``client_secret`` (a
+    Databricks-account-managed service principal, authenticated via
+    ``databricks-sdk``). Config-load validation has already ensured a
+    coherent combination by the time this constructs anything -- it only
+    builds the connection for whichever method was configured.
     """
 
-    def __init__(self, host: str, http_path: str, token: str) -> None:
+    def __init__(
+        self,
+        host: str,
+        http_path: str,
+        token: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        auth_type: str | None = None,
+    ) -> None:
         import databricks.sql as dbsql
 
-        self._conn = dbsql.connect(
-            server_hostname=host, http_path=http_path, access_token=token
-        )
+        if auth_type == "oauth_m2m":
+            from databricks.sdk.core import Config, oauth_service_principal
+
+            def _credentials_provider():
+                return oauth_service_principal(
+                    Config(
+                        host=f"https://{host}",
+                        client_id=client_id,
+                        client_secret=client_secret,
+                    )
+                )
+
+            self._conn = dbsql.connect(
+                server_hostname=host,
+                http_path=http_path,
+                credentials_provider=_credentials_provider,
+            )
+        else:
+            self._conn = dbsql.connect(
+                server_hostname=host,
+                http_path=http_path,
+                access_token=token,
+            )
         # Declared as the base Dialect, not the inferred DatabricksDialect:
         # the Adapter protocol's `dialect` attribute is invariant, so a
         # narrower inferred type here would make DatabricksAdapter fail
