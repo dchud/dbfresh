@@ -18,20 +18,17 @@ little it takes to add another.
 
 ## Install
 
-Once a release is published to PyPI (still pending):
-
-```bash
-uv tool install dbfresh
-# or
-pipx install dbfresh
-```
-
-From a checkout of this repository, for now:
+dbfresh runs from a checkout of this repository:
 
 ```bash
 uv sync
 uv run dbfresh --version
 ```
+
+Add `--extra sqlserver` and/or `--extra databricks` to `uv sync` for those
+drivers (they install exactly what you list), or `uv tool install
+".[sqlserver,databricks]"` for a global command. See the
+[Quickstart](https://dchud.github.io/dbfresh/quickstart/) for more.
 
 ## Minimal example
 

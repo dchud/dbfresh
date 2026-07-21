@@ -2,38 +2,40 @@
 
 ## Install
 
-Once a release is published to PyPI:
-
-```bash
-uv tool install dbfresh
-# or
-pipx install dbfresh
-```
-
-Working from a checkout of this repository, install the dependencies and run
-it through `uv` instead:
+dbfresh runs from a checkout of this repository. Install its dependencies
+with `uv` and invoke it through `uv run`:
 
 ```bash
 uv sync
 uv run dbfresh --version
 ```
 
-The rest of this page uses `uv run dbfresh ...`; drop the `uv run` prefix
-once `dbfresh` is installed as a standalone tool.
+The rest of this page uses `uv run dbfresh ...`.
 
 **SQL Server** and **Databricks** sources need their database driver, which
 ships as an optional extra rather than a core dependency -- so a sqlite-only
 install isn't forced to build the native `pymssql` or Databricks driver.
-Install with the matching extra:
+
+Add the matching extra to `uv sync`. `uv sync` makes the environment match
+*exactly* the extras you pass, so `--extra databricks` alone uninstalls the
+`sqlserver` extra (and vice versa) -- to use more than one source type, pass
+them together:
 
 ```bash
-uv tool install "dbfresh[sqlserver]"    # SQL Server (pymssql)
-uv tool install "dbfresh[databricks]"   # Databricks
+uv sync --extra sqlserver --extra databricks   # or: uv sync --all-extras
 ```
 
-From a checkout, add `--extra sqlserver` (or `--extra databricks`) to
-`uv sync`. Without the extra, adding such a source fails with a hint that
-names the extra to install.
+Without an extra, adding such a source fails with a hint that names the
+extra to install.
+
+To get a global `dbfresh` command instead of prefixing every call with
+`uv run`, install the checkout as a tool -- `.` is the clone, extras go
+comma-separated in the brackets, and `-e` makes it an editable install that
+tracks your checkout:
+
+```bash
+uv tool install ".[sqlserver,databricks]"
+```
 
 ## A minimal config
 
