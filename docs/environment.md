@@ -10,13 +10,14 @@ a gitignored, per-user `.env` file next to the config.
 
 ## `.env` loading
 
-Every command that reads a config -- `run`, `history`, `prune`, `add`, `ui`
--- loads `.env` from the config file's directory automatically, before
-parsing the config. A real environment variable already set takes
-precedence over the same name in `.env`. This is why a config committed to
-a team repo never carries a credential: the YAML holds only `${VAR}`
-references, and each person's or environment's actual values live in their
-own untracked `.env` (or CI secrets, or the shell environment) instead.
+Every command that reads a config -- `run`, `history`, `prune`, `add`,
+`ui`, `env-template` -- loads `.env` from the config file's directory
+automatically, before parsing the config. A real environment variable
+already set takes precedence over the same name in `.env`. This is why a
+config committed to a team repo never carries a credential: the YAML holds
+only `${VAR}` references, and each person's or environment's actual values
+live in their own untracked `.env` (or CI secrets, or the shell
+environment) instead.
 
 ## SQL Server (`type: sqlserver`)
 
@@ -47,6 +48,8 @@ per environment.
 ## The copyable pair
 
 `config.example.yaml` and `.env.example`, both at the repo root, use the
-same canonical variable names as this page. Copy `config.example.yaml` to
-`config.yaml` and `.env.example` to `.env`, fill in real values in `.env`,
-and never commit the real `.env`.
+same canonical variable names as this page. `.env.example` is generated
+from the config with `dbfresh env-template` rather than hand-maintained,
+so it always matches the `${VAR}`s the config actually references. Copy
+`config.example.yaml` to `config.yaml` and `.env.example` to `.env`, fill
+in real values in `.env`, and never commit the real `.env`.

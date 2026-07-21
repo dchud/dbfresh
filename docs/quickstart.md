@@ -77,10 +77,15 @@ gitignored, per-user `.env` file next to the config:
 DEMO_DB_PATH=./demo.db
 ```
 
-Every command that reads a config (`run`, `history`, `prune`, `add`, `ui`)
-loads `.env` (from the config file's directory) automatically, before
-parsing the config -- so a config committed to a team repo never carries a
-connection string or credential.
+Every command that reads a config (`run`, `history`, `prune`, `add`, `ui`,
+`env-template`) loads `.env` (from the config file's directory)
+automatically, before parsing the config -- so a config committed to a
+team repo never carries a connection string or credential.
+
+`dbfresh env-template` prints one `NAME=` line per `${VAR}` the config
+references, sorted, with the value left blank. `dbfresh env-template >
+.env.example` seeds the committed template a clone copies to `.env` and
+fills in with real values.
 
 See [Environment & secrets](environment.md) for the field-by-field
 `${VAR}` reference per source type, and the copyable
