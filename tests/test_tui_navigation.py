@@ -53,7 +53,9 @@ def _bound_keys(screen) -> set[str]:
 # --- no duplicate stacking -------------------------------------------------
 
 
-def test_pressing_report_repeatedly_does_not_stack_a_second_report_screen(tmp_path):
+def test_pressing_report_repeatedly_does_not_stack_a_second_report_screen(
+    tmp_path,
+):
     async def scenario():
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -73,7 +75,9 @@ def test_pressing_report_repeatedly_does_not_stack_a_second_report_screen(tmp_pa
     asyncio.run(scenario())
 
 
-def test_pressing_configure_or_store_while_report_is_open_does_not_navigate(tmp_path):
+def test_pressing_configure_or_store_while_report_is_open_does_not_navigate(
+    tmp_path,
+):
     """Once a screen is pushed on top of Home, 'c'/'p'/'s' are Home-only --
     none of them jump to a different destination without going back through
     Home first, so pressing 'c' or 's' while Report is open does nothing."""
@@ -96,7 +100,9 @@ def test_pressing_configure_or_store_while_report_is_open_does_not_navigate(tmp_
     asyncio.run(scenario())
 
 
-def test_pressing_store_repeatedly_does_not_stack_a_second_store_screen(tmp_path):
+def test_pressing_store_repeatedly_does_not_stack_a_second_store_screen(
+    tmp_path,
+):
     async def scenario():
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -128,7 +134,9 @@ def test_pressing_configure_repeatedly_does_not_stack_a_second_configure_screen(
     asyncio.run(scenario())
 
 
-def test_repeated_enter_on_home_drills_down_without_stacking_duplicates(tmp_path):
+def test_repeated_enter_on_home_drills_down_without_stacking_duplicates(
+    tmp_path,
+):
     """Home's row -> ObjectDetail -> History drill-in, each step consuming
     exactly one Enter -- the screen stack grows by exactly one screen per
     keypress, never two, even with no pause between presses."""
@@ -206,7 +214,9 @@ def test_pushed_screens_hide_home_only_nav_keys_from_the_footer(tmp_path):
     asyncio.run(scenario())
 
 
-def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(tmp_path):
+def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(
+    tmp_path,
+):
     async def scenario():
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -216,7 +226,15 @@ def test_object_detail_footer_hides_home_keys_but_keeps_its_own_enter_hint(tmp_p
             assert isinstance(app.screen, ObjectDetailScreen)
             keys = _bound_keys(app.screen)
             assert not ({"c", "p", "s", "f", "slash"} & keys)
-            assert {"enter", "escape", "r", "R", "O", "question_mark", "q"} <= keys
+            assert {
+                "enter",
+                "escape",
+                "r",
+                "R",
+                "O",
+                "question_mark",
+                "q",
+            } <= keys
 
     asyncio.run(scenario())
 
@@ -253,7 +271,9 @@ def _escape_label(screen) -> str:
     return screen.active_bindings["escape"].binding.description
 
 
-def test_escape_reads_back_on_navigation_screens_and_cancel_on_configure(tmp_path):
+def test_escape_reads_back_on_navigation_screens_and_cancel_on_configure(
+    tmp_path,
+):
     async def scenario():
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -291,7 +311,10 @@ def test_pushed_screens_set_their_own_heading_and_header_title(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            cases = (("p", ReportScreen, "Report"), ("s", StoreScreen, "Store"))
+            cases = (
+                ("p", ReportScreen, "Report"),
+                ("s", StoreScreen, "Store"),
+            )
             for key, expect_type, label in cases:
                 await pilot.press(key)
                 await pilot.pause()
@@ -323,7 +346,9 @@ def test_pushed_screens_set_their_own_heading_and_header_title(tmp_path):
 # --- help overlay --------------------------------------------------------------
 
 
-def test_help_overlay_opens_from_home_with_bindings_and_status_legend(tmp_path):
+def test_help_overlay_opens_from_home_with_bindings_and_status_legend(
+    tmp_path,
+):
     async def scenario():
         app = _app(tmp_path)
         async with app.run_test() as pilot:
@@ -332,7 +357,9 @@ def test_help_overlay_opens_from_home_with_bindings_and_status_legend(tmp_path):
             await pilot.pause()
 
             assert isinstance(app.screen, HelpScreen)
-            bindings_text = str(app.screen.query_one("#help-bindings").render())
+            bindings_text = str(
+                app.screen.query_one("#help-bindings").render()
+            )
             assert "run checks" in bindings_text
             assert "reload config" in bindings_text
             assert "non-OK filter" in bindings_text
@@ -426,7 +453,9 @@ def test_reload_config_failure_is_caught_not_crashed(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
 
-            app.config_path.write_text("not: [valid, yaml structure for dbfresh")
+            app.config_path.write_text(
+                "not: [valid, yaml structure for dbfresh"
+            )
 
             await pilot.press("R")
             await pilot.pause()

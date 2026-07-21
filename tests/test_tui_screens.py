@@ -88,7 +88,9 @@ def test_colorized_history_fail_and_error_stay_visually_distinct():
     ]
     text = _colorized_history(_CANDIDATE, rows, tz=None)
     fail_style = next(
-        span.style for span in text.spans if "FAIL" in text.plain[span.start : span.end]
+        span.style
+        for span in text.spans
+        if "FAIL" in text.plain[span.start : span.end]
     )
     error_style = next(
         span.style
@@ -106,7 +108,12 @@ def test_colorized_history_shows_expected_and_error():
             500.0,
             expected="between 1 and 100000",
         ),
-        _row("2026-07-09T00:00:00+00:00", "ERROR", None, error="connection refused"),
+        _row(
+            "2026-07-09T00:00:00+00:00",
+            "ERROR",
+            None,
+            error="connection refused",
+        ),
     ]
     text = _colorized_history(_CANDIDATE, rows, tz=None).plain
     assert "between 1 and 100000" in text
@@ -122,9 +129,9 @@ def test_colorized_history_aligns_the_value_column_including_skipped():
         _row("2026-07-08T00:00:00+00:00", "OK", 10000.0),
         _row("2026-07-09T00:00:00+00:00", "SKIPPED", 10000.0),
     ]
-    ok_line, skipped_line = _colorized_history(_CANDIDATE, rows, tz=None).plain.split(
-        "\n"
-    )[-2:]
+    ok_line, skipped_line = _colorized_history(
+        _CANDIDATE, rows, tz=None
+    ).plain.split("\n")[-2:]
     assert "OK" in ok_line and "SKIPPED" in skipped_line
     assert ok_line.index("10000") == skipped_line.index("10000")
 
@@ -154,8 +161,11 @@ def test_colorized_history_freshness_row_stays_aligned():
     style = status_style(Status.FAIL)
     glyph = status_glyph(Status.FAIL)
     segments = [
-        text.plain[span.start : span.end] for span in text.spans if span.style == style
+        text.plain[span.start : span.end]
+        for span in text.spans
+        if span.style == style
     ]
     assert any(
-        segment.strip().startswith(glyph) and "FAIL" in segment for segment in segments
+        segment.strip().startswith(glyph) and "FAIL" in segment
+        for segment in segments
     )

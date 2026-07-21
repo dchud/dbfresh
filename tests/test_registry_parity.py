@@ -87,7 +87,13 @@ _OPERATOR_FIXTURES: dict[str, tuple[dict, str | None]] = {
     "gt": ({"gt": 0}, None),
     "max_lag": ({"max_lag": "1h"}, "freshness"),
     "vs_previous": (
-        {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2.0}},
+        {
+            "vs_previous": {
+                "baseline": "previous",
+                "min_ratio": 0.5,
+                "max_ratio": 2.0,
+            }
+        },
         "row_count",
     ),
     "unchanged": ({"unchanged": True}, "schema"),
@@ -102,4 +108,6 @@ def test_registry_operator_is_accepted_by_parse_expectation(spec):
 
 def test_every_operator_fixture_maps_to_a_registered_operator():
     """Guards the fixture table itself: no stray or missing operator keys."""
-    assert set(_OPERATOR_FIXTURES) == {spec.operator for spec in registry.OPERATORS}
+    assert set(_OPERATOR_FIXTURES) == {
+        spec.operator for spec in registry.OPERATORS
+    }

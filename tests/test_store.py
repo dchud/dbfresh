@@ -9,7 +9,12 @@ from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check, parse_expectation
 from dbfresh.config import StoreConfig
 from dbfresh.engine import Result, Status, evaluate_check
-from dbfresh.store import Store, capture_git_sha, format_bytes, resolve_store_path
+from dbfresh.store import (
+    Store,
+    capture_git_sha,
+    format_bytes,
+    resolve_store_path,
+)
 
 
 def _result(**overrides) -> Result:
@@ -102,7 +107,9 @@ def test_record_observation_round_trips_numeric_value(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     observed_at = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)  # a Friday
-    store.record_observation(run_id, _result(value=42), observed_at=observed_at)
+    store.record_observation(
+        run_id, _result(value=42), observed_at=observed_at
+    )
     row = store._conn.execute(
         "SELECT run_id, check_id, source, object, metric, label, value, "
         "value_text, status, observed_at, weekday FROM observation"
@@ -125,7 +132,9 @@ def test_record_observation_stores_non_numeric_value_as_text(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     store.record_observation(run_id, _result(value="fingerprint-xyz"))
-    row = store._conn.execute("SELECT value, value_text FROM observation").fetchone()
+    row = store._conn.execute(
+        "SELECT value, value_text FROM observation"
+    ).fetchone()
     assert row[0] is None
     assert row[1] == "fingerprint-xyz"
     store.close()
@@ -177,7 +186,9 @@ def test_record_observations_is_a_single_transaction_not_one_per_row(tmp_path):
     store.close()  # uncommitted writes are discarded here
 
     reopened = Store(db_path)
-    count = reopened._conn.execute("SELECT COUNT(*) FROM observation").fetchone()[0]
+    count = reopened._conn.execute(
+        "SELECT COUNT(*) FROM observation"
+    ).fetchone()[0]
     assert count == 0
     reopened.close()
 
@@ -189,7 +200,9 @@ def test_record_observation_uses_explicit_label_for_assertions(tmp_path):
         run_id,
         _result(metric=None, label="assert amount >= 0", value=3),
     )
-    row = store._conn.execute("SELECT metric, label FROM observation").fetchone()
+    row = store._conn.execute(
+        "SELECT metric, label FROM observation"
+    ).fetchone()
     assert row[0] is None
     assert row[1] == "assert amount >= 0"
     store.close()
@@ -239,13 +252,19 @@ def test_prune_removes_observations_older_than_retain_days(tmp_path):
     run_id = store.start_run()
     now = datetime(2026, 7, 10, tzinfo=UTC)
     store.record_observation(
-        run_id, _result(check_id="old", value=1), observed_at=now.replace(year=2025)
+        run_id,
+        _result(check_id="old", value=1),
+        observed_at=now.replace(year=2025),
     )
-    store.record_observation(run_id, _result(check_id="new", value=2), observed_at=now)
+    store.record_observation(
+        run_id, _result(check_id="new", value=2), observed_at=now
+    )
     store.prune(retain_days=30, now=now)
     remaining = {
         row[0]
-        for row in store._conn.execute("SELECT check_id FROM observation").fetchall()
+        for row in store._conn.execute(
+            "SELECT check_id FROM observation"
+        ).fetchall()
     }
     assert remaining == {"new"}
     store.close()
@@ -403,7 +422,8 @@ def test_find_checks_matches_by_object(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     store.record_observation(
-        run_id, _result(object="dbo.fct_sales", metric="row_count", check_id="a")
+        run_id,
+        _result(object="dbo.fct_sales", metric="row_count", check_id="a"),
     )
     store.record_observation(
         run_id, _result(object="dbo.other", metric="row_count", check_id="b")
@@ -413,16 +433,22 @@ def test_find_checks_matches_by_object(tmp_path):
     store.close()
 
 
-def test_find_checks_returns_multiple_candidates_for_ambiguous_object(tmp_path):
+def test_find_checks_returns_multiple_candidates_for_ambiguous_object(
+    tmp_path,
+):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     store.record_observation(
-        run_id, _result(object="dbo.fct_sales", metric="row_count", check_id="a")
+        run_id,
+        _result(object="dbo.fct_sales", metric="row_count", check_id="a"),
     )
     store.record_observation(
         run_id,
         _result(
-            object="dbo.fct_sales", metric="null_rate", check_id="b", source="other"
+            object="dbo.fct_sales",
+            metric="null_rate",
+            check_id="b",
+            source="other",
         ),
     )
     candidates = store.find_checks("dbo.fct_sales")
@@ -435,14 +461,20 @@ def test_find_checks_filters_by_source_and_metric(tmp_path):
     run_id = store.start_run()
     store.record_observation(
         run_id,
-        _result(object="t", metric="row_count", check_id="a", source="warehouse"),
+        _result(
+            object="t", metric="row_count", check_id="a", source="warehouse"
+        ),
     )
     store.record_observation(
         run_id,
         _result(object="t", metric="null_rate", check_id="b", source="other"),
     )
-    assert [c["check_id"] for c in store.find_checks("t", source="warehouse")] == ["a"]
-    assert [c["check_id"] for c in store.find_checks("t", metric="null_rate")] == ["b"]
+    assert [
+        c["check_id"] for c in store.find_checks("t", source="warehouse")
+    ] == ["a"]
+    assert [
+        c["check_id"] for c in store.find_checks("t", metric="null_rate")
+    ] == ["b"]
     store.close()
 
 
@@ -503,7 +535,9 @@ def test_observed_check_ids_returns_deduplicated_check_ids(tmp_path):
     store.close()
 
 
-def test_latest_fingerprint_observation_skips_a_value_less_skip_or_error(tmp_path):
+def test_latest_fingerprint_observation_skips_a_value_less_skip_or_error(
+    tmp_path,
+):
     # A SKIPPED (skip_off_schedule) or ERROR (unreachable source) schema
     # observation persists with no fingerprint (value_text NULL). The
     # unchanged baseline must never read one of those as "the latest
@@ -530,7 +564,9 @@ def test_latest_fingerprint_observation_skips_a_value_less_skip_or_error(tmp_pat
     store.close()
 
 
-def test_latest_fingerprint_observation_picks_the_most_recent_fingerprint(tmp_path):
+def test_latest_fingerprint_observation_picks_the_most_recent_fingerprint(
+    tmp_path,
+):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     store.record_observation(
@@ -587,7 +623,9 @@ def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
     store = Store(tmp_path / "obs.db")
     run_id = store.start_run()
     store.record_observation(run_id, result, observed_at=now)
-    row = store._conn.execute("SELECT value, value_text FROM observation").fetchone()
+    row = store._conn.execute(
+        "SELECT value, value_text FROM observation"
+    ).fetchone()
     assert row["value"] == 36000.0  # 10h lag, in seconds
     assert row["value_text"] is None
     store.close()
@@ -645,7 +683,8 @@ def test_migrate_adds_expected_and_error_to_a_legacy_store(tmp_path):
 
     store = Store(db)  # opening triggers _migrate
     columns = {
-        row["name"] for row in store._conn.execute("PRAGMA table_info(observation)")
+        row["name"]
+        for row in store._conn.execute("PRAGMA table_info(observation)")
     }
     assert {"expected", "error"} <= columns
     # The pre-existing row survives, reading back NULL for the new columns.
@@ -663,7 +702,8 @@ def test_migrate_is_idempotent_on_a_current_store(tmp_path):
     Store(db).close()  # first open creates the current schema
     store = Store(db)  # second open: columns already present, no error
     columns = {
-        row["name"] for row in store._conn.execute("PRAGMA table_info(observation)")
+        row["name"]
+        for row in store._conn.execute("PRAGMA table_info(observation)")
     }
     assert {"expected", "error"} <= columns
     store.close()
@@ -723,7 +763,9 @@ def test_latest_run_skips_an_in_progress_run(tmp_path):
     store.finish_run(
         done, Status.OK, finished_at=datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
     )
-    store.start_run(started_at=datetime(2026, 1, 2, tzinfo=UTC))  # started, unfinished
+    store.start_run(
+        started_at=datetime(2026, 1, 2, tzinfo=UTC)
+    )  # started, unfinished
     latest = store.latest_run()
     assert latest is not None
     assert latest["run_id"] == done
@@ -758,12 +800,17 @@ def test_observations_for_run_includes_expected_and_error(tmp_path):
     run_id = store.start_run()
     store.record_observation(
         run_id,
-        _result(check_id="fail", status=Status.FAIL, value=5, expected="max 1"),
+        _result(
+            check_id="fail", status=Status.FAIL, value=5, expected="max 1"
+        ),
     )
     store.record_observation(
         run_id,
         _result(
-            check_id="err", status=Status.ERROR, value=None, error="connection refused"
+            check_id="err",
+            status=Status.ERROR,
+            value=None,
+            error="connection refused",
         ),
     )
     rows = {r["check_id"]: r for r in store.observations_for_run(run_id)}
@@ -772,7 +819,9 @@ def test_observations_for_run_includes_expected_and_error(tmp_path):
     store.close()
 
 
-def test_migrate_tolerates_a_column_added_by_a_concurrent_opener(tmp_path, monkeypatch):
+def test_migrate_tolerates_a_column_added_by_a_concurrent_opener(
+    tmp_path, monkeypatch
+):
     """A duplicate-column error from a racing opener is swallowed, not raised.
 
     Forced deterministically: the store already has the new columns, but the

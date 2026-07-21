@@ -51,12 +51,17 @@ class BusinessCalendar:
             return False
         if day in self._extra:
             return True
-        return self._country_holidays is not None and day in self._country_holidays
+        return (
+            self._country_holidays is not None
+            and day in self._country_holidays
+        )
 
     def is_business_day(self, day: dt.date) -> bool:
         return day.weekday() in self.workdays and not self.is_holiday(day)
 
-    def business_time_between(self, t0: dt.datetime, t1: dt.datetime) -> dt.timedelta:
+    def business_time_between(
+        self, t0: dt.datetime, t1: dt.datetime
+    ) -> dt.timedelta:
         """Wall-clock elapsed minus 24h per non-business date strictly between
         ``t0`` and ``t1``'s calendar dates.
 
@@ -97,7 +102,9 @@ def build_calendar(raw: dict) -> BusinessCalendar:
     country = holiday_raw.get("country")
     subdivision = holiday_raw.get("subdivision")
     country_holidays = (
-        holidays_pkg.country_holidays(country, subdiv=subdivision) if country else None
+        holidays_pkg.country_holidays(country, subdiv=subdivision)
+        if country
+        else None
     )
     extra = _parse_dates(holiday_raw.get("extra"))
     remove = _parse_dates(holiday_raw.get("remove"))

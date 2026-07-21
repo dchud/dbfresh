@@ -17,7 +17,13 @@ from typing import Any
 
 import yaml
 
-from dbfresh.adapters.base import Adapter, Category, Column, Dialect, ObjectInfo
+from dbfresh.adapters.base import (
+    Adapter,
+    Category,
+    Column,
+    Dialect,
+    ObjectInfo,
+)
 
 _ROW_COUNT_MIN_RATIO = 0.5
 _ROW_COUNT_MAX_RATIO = 2.0
@@ -60,18 +66,29 @@ def pick_timestamp_column(columns: list[Column]) -> TimestampChoice:
     if not temporal:
         return TimestampChoice()
 
-    conventional = [c for c in temporal if _is_conventional_timestamp_name(c.name)]
+    conventional = [
+        c for c in temporal if _is_conventional_timestamp_name(c.name)
+    ]
     if len(conventional) == 1:
         return TimestampChoice(column=conventional[0].name)
     if len(temporal) == 1:
         return TimestampChoice(column=temporal[0].name)
 
     pool = conventional or temporal
-    return TimestampChoice(needs_choice=True, candidates=[c.name for c in pool])
+    return TimestampChoice(
+        needs_choice=True, candidates=[c.name for c in pool]
+    )
 
 
 _CATEGORY_OFFERS: dict[Category, list[str]] = {
-    Category.NUMERIC: ["null_rate", "sum", "avg", "min", "max", "duplicate_count"],
+    Category.NUMERIC: [
+        "null_rate",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "duplicate_count",
+    ],
     Category.TEMPORAL: ["freshness", "null_rate"],
     Category.STRING: ["null_rate", "duplicate_count"],
     Category.BOOLEAN: ["null_rate"],
@@ -104,7 +121,9 @@ def _proposed_metric_columns(proposed: list[dict]) -> set[tuple[str, str]]:
     for block in proposed:
         metric = block.get("metric")
         column = (
-            block.get("key") if metric == "duplicate_count" else block.get("column")
+            block.get("key")
+            if metric == "duplicate_count"
+            else block.get("column")
         )
         if metric is not None and column is not None:
             pairs.add((metric, column))
@@ -142,7 +161,11 @@ def offered_column_checks(
             and (metric, column.name) not in already
         ]
         offers.append(
-            {"column": column.name, "category": column.category.value, "checks": checks}
+            {
+                "column": column.name,
+                "category": column.category.value,
+                "checks": checks,
+            }
         )
     return offers
 
@@ -200,7 +223,11 @@ def build_offered_check(
     """
     if metric == "null_rate":
         return build_check(
-            source, obj, "null_rate", column=column, expect={"max": max_null_rate}
+            source,
+            obj,
+            "null_rate",
+            column=column,
+            expect={"max": max_null_rate},
         )
     if metric in ("sum", "avg", "min", "max"):
         guards = {
@@ -310,7 +337,11 @@ def propose_checks(
         if len(key) == 1:
             checks.append(
                 build_check(
-                    source, obj, "duplicate_count", key=key[0], expect={"max": 0}
+                    source,
+                    obj,
+                    "duplicate_count",
+                    key=key[0],
+                    expect={"max": 0},
                 )
             )
 
@@ -369,7 +400,9 @@ def probe_connection(type_: str, params: dict) -> ConnectionProbe:
     return ConnectionProbe(ok=True)
 
 
-def probe_new_source(type_: str, raw_params: dict) -> tuple[ConnectionProbe, dict]:
+def probe_new_source(
+    type_: str, raw_params: dict
+) -> tuple[ConnectionProbe, dict]:
     """Probe a brand-new source's params after resolving ``${VAR}`` tokens.
 
     ``raw_params`` is exactly what will be written to the YAML -- it may
@@ -408,7 +441,9 @@ class ExistenceCheck:
     error: str | None = None
 
 
-def check_object_exists(adapter: Adapter | None, object_name: str) -> ExistenceCheck:
+def check_object_exists(
+    adapter: Adapter | None, object_name: str
+) -> ExistenceCheck:
     """Existence-check ``object_name`` on ``adapter`` via ``describe()``.
 
     ``adapter`` is ``None`` when an already-configured source was found
@@ -522,7 +557,11 @@ def _block_end(lines: list[str], start: int) -> int:
     while j < len(lines):
         line = lines[j]
         stripped = line.strip()
-        if stripped == "" or stripped.startswith("#") or line[:1] in (" ", "\t"):
+        if (
+            stripped == ""
+            or stripped.startswith("#")
+            or line[:1] in (" ", "\t")
+        ):
             j += 1
             continue
         break
@@ -588,7 +627,9 @@ def _append_into_block(
     return "".join(lines[:end]) + insertion + "".join(lines[end:])
 
 
-def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> None:
+def add_source(
+    config_path: str | Path, name: str, type_: str, params: dict
+) -> None:
     """Write a new source definition into the root config.
 
     ``sources:`` is declared only in the root config, never an included
@@ -621,7 +662,9 @@ def add_source(config_path: str | Path, name: str, type_: str, params: dict) -> 
         sources[name] = entry
         raw["sources"] = sources
         raw.setdefault("checks", [])
-        _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
+        _write_config_text(
+            config_path, yaml.safe_dump(raw, sort_keys=False), newline
+        )
         return
     if "checks" not in raw:
         if not spliced.endswith("\n"):
@@ -693,7 +736,9 @@ def append_checks(
     """
     target_path = Path(target_path)
     existing_files = (
-        check_bearing_files(config_path) if config_path is not None else [target_path]
+        check_bearing_files(config_path)
+        if config_path is not None
+        else [target_path]
     )
     existing_ids = {
         _check_id_of(raw) for f in existing_files for raw in _raw_checks_in(f)
@@ -741,7 +786,9 @@ def _write_new_checks(target_path: Path, blocks: list[dict]) -> None:
     if spliced is None:
         raw = dict(raw)
         raw["checks"] = list(raw.get("checks") or []) + blocks
-        _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
+        _write_config_text(
+            target_path, yaml.safe_dump(raw, sort_keys=False), newline
+        )
         return
     _write_config_text(target_path, spliced, newline)
 
@@ -810,7 +857,9 @@ def _sequence_item_bounds(
             break
 
     starts = [
-        i for i in range(search_start, block_end) if lines[i][: len(marker)] == marker
+        i
+        for i in range(search_start, block_end)
+        if lines[i][: len(marker)] == marker
     ]
     return [
         (start, starts[j + 1] if j + 1 < len(starts) else block_end)
@@ -943,9 +992,15 @@ def rewrite_check_expectation(
     text, newline = _read_config_text(target_path)
     raw = yaml.safe_load(text)
     is_bare_list = isinstance(raw, list)
-    checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
+    checks_list = (
+        raw if is_bare_list else list((raw or {}).get("checks") or [])
+    )
     index = next(
-        (i for i, block in enumerate(checks_list) if _check_id_of(block) == check_id_),
+        (
+            i
+            for i, block in enumerate(checks_list)
+            if _check_id_of(block) == check_id_
+        ),
         None,
     )
     if index is None:
@@ -961,7 +1016,9 @@ def rewrite_check_expectation(
         # otherwise reach this item's greedy end and drop that run.
         # remove_check trims the same way.
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
-        spliced = _replace_nested_key_value(lines, start, end, "expect", new_expect)
+        spliced = _replace_nested_key_value(
+            lines, start, end, "expect", new_expect
+        )
         if spliced is not None:
             _write_config_text(target_path, "".join(spliced), newline)
             return True
@@ -970,7 +1027,9 @@ def rewrite_check_expectation(
         raw[index]["expect"] = new_expect
     else:
         raw["checks"][index]["expect"] = new_expect
-    _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
+    _write_config_text(
+        target_path, yaml.safe_dump(raw, sort_keys=False), newline
+    )
     return True
 
 
@@ -1026,9 +1085,15 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
     text, newline = _read_config_text(target_path)
     raw = yaml.safe_load(text)
     is_bare_list = isinstance(raw, list)
-    checks_list = raw if is_bare_list else list((raw or {}).get("checks") or [])
+    checks_list = (
+        raw if is_bare_list else list((raw or {}).get("checks") or [])
+    )
     index = next(
-        (i for i, block in enumerate(checks_list) if _check_id_of(block) == check_id_),
+        (
+            i
+            for i, block in enumerate(checks_list)
+            if _check_id_of(block) == check_id_
+        ),
         None,
     )
     if index is None:
@@ -1039,7 +1104,9 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
     if index < len(bounds):
         start, end = bounds[index]
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
-        _write_config_text(target_path, "".join(lines[:start] + lines[end:]), newline)
+        _write_config_text(
+            target_path, "".join(lines[:start] + lines[end:]), newline
+        )
         return
 
     if is_bare_list:
@@ -1050,10 +1117,14 @@ def remove_check(config_path: str | Path, check_id_: str) -> None:
         checks = list(raw.get("checks") or [])
         del checks[index]
         raw["checks"] = checks
-    _write_config_text(target_path, yaml.safe_dump(raw, sort_keys=False), newline)
+    _write_config_text(
+        target_path, yaml.safe_dump(raw, sort_keys=False), newline
+    )
 
 
-def raw_source(config_path: str | Path, name: str) -> tuple[str, dict[str, str]]:
+def raw_source(
+    config_path: str | Path, name: str
+) -> tuple[str, dict[str, str]]:
     """The ``type`` and raw, un-interpolated params of one configured
     source, straight off the root config -- ``${VAR}`` tokens intact,
     never resolved.
@@ -1131,7 +1202,9 @@ def rewrite_source(
     sources = dict(raw.get("sources") or {})
     sources[name] = entry
     raw["sources"] = sources
-    _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
+    _write_config_text(
+        config_path, yaml.safe_dump(raw, sort_keys=False), newline
+    )
 
 
 def remove_source(config_path: str | Path, name: str) -> None:
@@ -1180,11 +1253,15 @@ def remove_source(config_path: str | Path, name: str) -> None:
     if bounds is not None:
         start, end = bounds
         end = _trim_trailing_blank_or_comment_lines(lines, start, end)
-        _write_config_text(config_path, "".join(lines[:start] + lines[end:]), newline)
+        _write_config_text(
+            config_path, "".join(lines[:start] + lines[end:]), newline
+        )
         return
 
     raw = dict(raw)
     sources = dict(raw.get("sources") or {})
     del sources[name]
     raw["sources"] = sources
-    _write_config_text(config_path, yaml.safe_dump(raw, sort_keys=False), newline)
+    _write_config_text(
+        config_path, yaml.safe_dump(raw, sort_keys=False), newline
+    )

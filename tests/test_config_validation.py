@@ -52,7 +52,9 @@ checks:
 
 
 @pytest.mark.parametrize("metric", ["sum", "avg", "min", "max"])
-def test_aggregate_metric_without_column_is_a_validation_error(tmp_path, metric):
+def test_aggregate_metric_without_column_is_a_validation_error(
+    tmp_path, metric
+):
     path = _write(
         tmp_path,
         f"""
@@ -86,7 +88,9 @@ checks:
         load_config(path, env={})
 
 
-def test_freshness_column_source_without_column_is_a_validation_error(tmp_path):
+def test_freshness_column_source_without_column_is_a_validation_error(
+    tmp_path,
+):
     path = _write(
         tmp_path,
         """
@@ -202,7 +206,9 @@ checks:
     assert "severity must be" in message
 
 
-def test_check_with_no_metric_assert_or_assert_sql_is_a_validation_error(tmp_path):
+def test_check_with_no_metric_assert_or_assert_sql_is_a_validation_error(
+    tmp_path,
+):
     path = _write(
         tmp_path,
         """
@@ -213,7 +219,9 @@ checks:
     object: t
 """,
     )
-    with pytest.raises(ValueError, match="none of metric, assert, or assert_sql"):
+    with pytest.raises(
+        ValueError, match="none of metric, assert, or assert_sql"
+    ):
         load_config(path, env={})
 
 
@@ -270,7 +278,9 @@ checks:
     assert cfg.checks[0].assert_sql == "SELECT * FROM t WHERE amount < 0"
 
 
-def test_single_problem_message_is_not_wrapped_in_a_multi_error_summary(tmp_path):
+def test_single_problem_message_is_not_wrapped_in_a_multi_error_summary(
+    tmp_path,
+):
     # Exactly one problem: the message is that problem's own text, not
     # "N problems found" framing -- keeps the single-error case's message
     # identical to before this validation pass existed.

@@ -8,7 +8,9 @@ from pathlib import Path
 
 from dbfresh.config import load_config
 
-_EXAMPLE_CONFIG = Path(__file__).resolve().parent.parent / "config.example.yaml"
+_EXAMPLE_CONFIG = (
+    Path(__file__).resolve().parent.parent / "config.example.yaml"
+)
 
 _ENV = {
     "MSSQL_URL": "sqlserver://reader:pw@host:1433/WarehouseDB",

@@ -26,7 +26,10 @@ def test_weekend_is_not_business_day():
 
 def test_custom_workdays_include_saturday():
     cal = build_calendar(
-        {"timezone": "America/New_York", "workdays": ["mon", "tue", "wed", "sat"]}
+        {
+            "timezone": "America/New_York",
+            "workdays": ["mon", "tue", "wed", "sat"],
+        }
     )
     assert cal.is_business_day(date(2026, 7, 11)) is True  # Saturday
     assert cal.is_business_day(date(2026, 7, 9)) is False  # Thursday, dropped
@@ -52,12 +55,16 @@ def test_remove_overrides_extra_holiday():
 def test_country_holiday_is_recognized():
     cal = _calendar(country="US")
     assert cal.is_holiday(date(2026, 7, 4)) is True  # Independence Day
-    assert cal.is_business_day(date(2026, 7, 4)) is False  # Saturday too, but moot
+    assert (
+        cal.is_business_day(date(2026, 7, 4)) is False
+    )  # Saturday too, but moot
 
 
 def test_country_holiday_can_be_removed():
     cal = _calendar(country="US", remove=["2026-07-03"])
-    assert cal.is_holiday(date(2026, 7, 3)) is False  # observed Friday, removed
+    assert (
+        cal.is_holiday(date(2026, 7, 3)) is False
+    )  # observed Friday, removed
 
 
 def test_no_country_means_no_country_holidays():
@@ -92,7 +99,9 @@ def test_business_time_between_same_business_day_is_wall_clock():
 
 
 def test_business_time_between_subtracts_holiday_and_weekend():
-    cal = build_calendar({"timezone": "UTC", "holidays": {"extra": ["2026-07-03"]}})
+    cal = build_calendar(
+        {"timezone": "UTC", "holidays": {"extra": ["2026-07-03"]}}
+    )
     t0 = datetime(2026, 7, 2, 18, 0, tzinfo=UTC)  # Thursday
     t1 = datetime(2026, 7, 6, 7, 0, tzinfo=UTC)  # Monday
     assert cal.business_time_between(t0, t1) == timedelta(hours=13)
@@ -106,10 +115,14 @@ def test_business_time_between_uses_calendar_timezone_not_input_tz():
 
 
 @given(
-    start=st.datetimes(min_value=datetime(2020, 1, 1), max_value=datetime(2030, 1, 1)),
+    start=st.datetimes(
+        min_value=datetime(2020, 1, 1), max_value=datetime(2030, 1, 1)
+    ),
     elapsed_seconds=st.integers(min_value=0, max_value=60 * 60 * 24 * 30),
 )
-def test_business_time_between_stays_within_wall_clock_bounds(start, elapsed_seconds):
+def test_business_time_between_stays_within_wall_clock_bounds(
+    start, elapsed_seconds
+):
     """Never negative, and never more than the raw wall-clock elapsed time."""
     cal = build_calendar({"timezone": "UTC"})
     t0 = start.replace(tzinfo=UTC)
@@ -119,10 +132,14 @@ def test_business_time_between_stays_within_wall_clock_bounds(start, elapsed_sec
 
 
 @given(
-    start=st.datetimes(min_value=datetime(2020, 1, 1), max_value=datetime(2030, 1, 1)),
+    start=st.datetimes(
+        min_value=datetime(2020, 1, 1), max_value=datetime(2030, 1, 1)
+    ),
     elapsed_seconds=st.integers(min_value=0, max_value=60 * 60 * 12),
 )
-def test_business_time_between_within_one_date_is_wall_clock(start, elapsed_seconds):
+def test_business_time_between_within_one_date_is_wall_clock(
+    start, elapsed_seconds
+):
     """No date boundary is crossed, so nothing is subtracted."""
     cal = build_calendar({"timezone": "UTC"})
     t0 = start.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=UTC)

@@ -215,7 +215,8 @@ class Store:
     def _observation_columns(self) -> set[str]:
         """The observation table's current column names."""
         return {
-            row["name"] for row in self._conn.execute("PRAGMA table_info(observation)")
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(observation)")
         }
 
     def start_run(
@@ -517,7 +518,8 @@ class Store:
         if str(self._path) == ":memory:":
             return 0
         sidecars = [
-            self._path.with_name(self._path.name + suffix) for suffix in _WAL_SUFFIXES
+            self._path.with_name(self._path.name + suffix)
+            for suffix in _WAL_SUFFIXES
         ]
         total = 0
         for candidate in (self._path, *sidecars):

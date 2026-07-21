@@ -170,7 +170,9 @@ checks: []
     assert "glob matched no files" not in message
 
 
-@pytest.mark.parametrize("key", ["sources", "calendar", "store", "defaults", "include"])
+@pytest.mark.parametrize(
+    "key", ["sources", "calendar", "store", "defaults", "include"]
+)
 def test_included_file_with_disallowed_top_level_key_is_a_validation_error(
     tmp_path, key
 ):
@@ -226,7 +228,9 @@ checks:
         load_config(root, env={})
 
 
-def test_duplicate_check_id_across_two_included_files_is_a_validation_error(tmp_path):
+def test_duplicate_check_id_across_two_included_files_is_a_validation_error(
+    tmp_path,
+):
     root = _write(
         tmp_path / "config.yaml",
         _SOURCES
@@ -294,7 +298,9 @@ checks:
     assert [c.object for c in cfg.checks] == ["matched_table"]
 
 
-def test_store_path_resolves_against_root_config_dir_with_includes_present(tmp_path):
+def test_store_path_resolves_against_root_config_dir_with_includes_present(
+    tmp_path,
+):
     root = _write(
         tmp_path / "config.yaml",
         _SOURCES

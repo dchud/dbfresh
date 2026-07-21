@@ -47,7 +47,9 @@ def test_schema_metric_rejects_max_lag():
 
 def test_schema_metric_rejects_vs_previous():
     with pytest.raises(ValueError):
-        parse_expectation({"vs_previous": {"baseline": "previous"}}, metric="schema")
+        parse_expectation(
+            {"vs_previous": {"baseline": "previous"}}, metric="schema"
+        )
 
 
 def test_unchanged_describe_is_concise():

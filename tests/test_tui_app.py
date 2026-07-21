@@ -16,7 +16,9 @@ from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.dashboard import header_key, is_header_key
 from dbfresh.tui.screens import HistoryScreen, ObjectDetailScreen, ReportScreen
 
-_OBJECT_ROW_KEY = "s\x1ft"  # source "s", object "t" -- matches GridRow.key's shape
+_OBJECT_ROW_KEY = (
+    "s\x1ft"  # source "s", object "t" -- matches GridRow.key's shape
+)
 
 
 def _seed_db(path):
@@ -148,8 +150,14 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
             assert isinstance(app.screen, ObjectDetailScreen)
             detail_table = app.screen.query_one(DataTable)
             assert detail_table.row_count == 2
-            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
-            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
+            assert (
+                _overall_glyph(detail_table, check_id(_row_count_check()))
+                == "✓"
+            )
+            assert (
+                _overall_glyph(detail_table, check_id(_null_rate_check()))
+                == "✗"
+            )
 
     asyncio.run(scenario())
 
@@ -240,7 +248,9 @@ def test_home_shows_last_run_line_after_a_completed_run(tmp_path, pump_until):
     asyncio.run(scenario())
 
 
-def test_unobserved_line_shows_count_when_checks_have_no_observations(tmp_path):
+def test_unobserved_line_shows_count_when_checks_have_no_observations(
+    tmp_path,
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -256,7 +266,9 @@ def test_unobserved_line_shows_count_when_checks_have_no_observations(tmp_path):
     asyncio.run(scenario())
 
 
-def test_unobserved_line_hidden_after_refresh_once_every_check_is_observed(tmp_path):
+def test_unobserved_line_hidden_after_refresh_once_every_check_is_observed(
+    tmp_path,
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -306,7 +318,9 @@ def test_reload_toast_appends_unobserved_count_when_checks_are_unobserved(
             await pilot.pause()
             await pump_until(
                 pilot,
-                lambda: any("config reloaded" in n.message for n in app._notifications),
+                lambda: any(
+                    "config reloaded" in n.message for n in app._notifications
+                ),
             )
 
             messages = [n.message for n in app._notifications]
@@ -413,7 +427,9 @@ def test_env_hygiene_banner_shown_when_env_file_is_not_gitignored(
     asyncio.run(scenario())
 
 
-def test_env_hygiene_banner_hidden_when_env_file_is_gitignored(tmp_path, monkeypatch):
+def test_env_hygiene_banner_hidden_when_env_file_is_gitignored(
+    tmp_path, monkeypatch
+):
     async def scenario():
         _isolate_git_config(tmp_path, monkeypatch)
         _git_init(tmp_path)
@@ -451,7 +467,9 @@ def test_env_hygiene_banner_hidden_when_no_env_file(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_reload_tolerates_missing_secrets_when_no_initial_config(tmp_path, monkeypatch):
+def test_reload_tolerates_missing_secrets_when_no_initial_config(
+    tmp_path, monkeypatch
+):
     """The no-initial-config path -- on_mount's own _reload_config -- loads
     tolerantly: an unset ${VAR} leaves the app running with the banner rather
     than raising on reload (a plain load would raise on mount here)."""
@@ -471,7 +489,9 @@ def test_reload_tolerates_missing_secrets_when_no_initial_config(tmp_path, monke
     asyncio.run(scenario())
 
 
-def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypatch):
+def test_on_mount_reuses_a_preloaded_config_without_reparsing(
+    tmp_path, monkeypatch
+):
     async def scenario():
         from dbfresh.config import load_config as real_load_config
 
@@ -487,10 +507,14 @@ def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypa
                 "load_config_tolerant must not run again at mount time"
             )
 
-        monkeypatch.setattr("dbfresh.tui.app.load_config_tolerant", fail_if_called)
+        monkeypatch.setattr(
+            "dbfresh.tui.app.load_config_tolerant", fail_if_called
+        )
 
         app = DbfreshApp(
-            config_path=cfg, store_path=str(store_path), initial_config=preloaded
+            config_path=cfg,
+            store_path=str(store_path),
+            initial_config=preloaded,
         )
         async with app.run_test() as pilot:
             await pilot.pause()
@@ -499,7 +523,9 @@ def test_on_mount_reuses_a_preloaded_config_without_reparsing(tmp_path, monkeypa
     asyncio.run(scenario())
 
 
-def test_run_action_updates_dashboard_from_new_observations(tmp_path, pump_until):
+def test_run_action_updates_dashboard_from_new_observations(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -523,20 +549,29 @@ def test_run_action_updates_dashboard_from_new_observations(tmp_path, pump_until
                 pilot,
                 lambda: (
                     _overall_glyph(
-                        app.query_one("#dashboard-grid", DataTable), _OBJECT_ROW_KEY
+                        app.query_one("#dashboard-grid", DataTable),
+                        _OBJECT_ROW_KEY,
                     )
                     == "✗"
                 ),
             )
 
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # null_rate fails
+            assert (
+                _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            )  # null_rate fails
 
             await pilot.press("enter")
             await pilot.pause()
             detail_table = app.screen.query_one(DataTable)
-            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
-            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
+            assert (
+                _overall_glyph(detail_table, check_id(_row_count_check()))
+                == "✓"
+            )
+            assert (
+                _overall_glyph(detail_table, check_id(_null_rate_check()))
+                == "✗"
+            )
 
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
@@ -565,10 +600,17 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             started.set()
             assert release.wait(timeout=2), "test never released the run"
             return real_run_and_persist(
-                config, store, now=now, only=only, object_=object_, on_result=on_result
+                config,
+                store,
+                now=now,
+                only=only,
+                object_=object_,
+                on_result=on_result,
             )
 
-        monkeypatch.setattr(runner, "run_and_persist", blocking_run_and_persist)
+        monkeypatch.setattr(
+            runner, "run_and_persist", blocking_run_and_persist
+        )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
@@ -624,7 +666,9 @@ def test_run_action_error_notifies_and_leaves_app_alive(
             await pilot.pause()
             await pump_until(
                 pilot,
-                lambda: any("store locked" in n.message for n in app._notifications),
+                lambda: any(
+                    "store locked" in n.message for n in app._notifications
+                ),
             )
 
             # The app survived the worker error rather than being torn
@@ -726,12 +770,21 @@ def test_run_action_second_press_cancels_first_with_a_notice(
             if blocked_once.is_set():
                 blocked_once.clear()
                 started.set()
-                assert release.wait(timeout=2), "test never released the first run"
+                assert release.wait(timeout=2), (
+                    "test never released the first run"
+                )
             return real_run_and_persist(
-                config, store, now=now, only=only, object_=object_, on_result=on_result
+                config,
+                store,
+                now=now,
+                only=only,
+                object_=object_,
+                on_result=on_result,
             )
 
-        monkeypatch.setattr(runner, "run_and_persist", maybe_blocking_run_and_persist)
+        monkeypatch.setattr(
+            runner, "run_and_persist", maybe_blocking_run_and_persist
+        )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
@@ -762,7 +815,9 @@ def test_run_action_second_press_cancels_first_with_a_notice(
     asyncio.run(scenario())
 
 
-def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path, pump_until):
+def test_run_action_refreshes_object_detail_screen_when_on_top(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         _seed_db(db)
@@ -776,7 +831,10 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path, pump_un
             await pilot.pause()
             assert isinstance(app.screen, ObjectDetailScreen)
             detail_table = app.screen.query_one(DataTable)
-            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "·"
+            assert (
+                _overall_glyph(detail_table, check_id(_row_count_check()))
+                == "·"
+            )
 
             await pilot.press("r")
             await pilot.app.workers.wait_for_complete()
@@ -785,7 +843,8 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path, pump_un
                 pilot,
                 lambda: (
                     _overall_glyph(
-                        app.screen.query_one(DataTable), check_id(_row_count_check())
+                        app.screen.query_one(DataTable),
+                        check_id(_row_count_check()),
                     )
                     == "✓"
                 ),
@@ -795,8 +854,14 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(tmp_path, pump_un
             # its grid reflects the run that just completed.
             assert isinstance(app.screen, ObjectDetailScreen)
             detail_table = app.screen.query_one(DataTable)
-            assert _overall_glyph(detail_table, check_id(_row_count_check())) == "✓"
-            assert _overall_glyph(detail_table, check_id(_null_rate_check())) == "✗"
+            assert (
+                _overall_glyph(detail_table, check_id(_row_count_check()))
+                == "✓"
+            )
+            assert (
+                _overall_glyph(detail_table, check_id(_null_rate_check()))
+                == "✗"
+            )
 
     asyncio.run(scenario())
 
@@ -1168,7 +1233,9 @@ def _multi_object_app(tmp_path):
     return DbfreshApp(config_path=cfg, store_path=str(store_path))
 
 
-def test_toggle_non_ok_filter_hides_ok_rows_and_restores_on_second_press(tmp_path):
+def test_toggle_non_ok_filter_hides_ok_rows_and_restores_on_second_press(
+    tmp_path,
+):
     async def scenario():
         app = _multi_object_app(tmp_path)
         async with app.run_test() as pilot:
@@ -1304,7 +1371,9 @@ def test_view_status_indicator_reflects_active_controls_and_hides_when_inactive(
     asyncio.run(scenario())
 
 
-def test_search_matching_nothing_shows_no_matching_rows_not_the_empty_state(tmp_path):
+def test_search_matching_nothing_shows_no_matching_rows_not_the_empty_state(
+    tmp_path,
+):
     async def scenario():
         app = _multi_object_app(tmp_path)
         async with app.run_test() as pilot:
@@ -1415,13 +1484,17 @@ def test_home_grid_initial_cursor_skips_the_leading_header(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            row_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate
+            ).row_key
             assert row_key.value == "s\x1forders"
 
     asyncio.run(scenario())
 
 
-def test_home_grid_cursor_down_skips_a_header_row_between_two_sources(tmp_path):
+def test_home_grid_cursor_down_skips_a_header_row_between_two_sources(
+    tmp_path,
+):
     async def scenario():
         app = _two_source_app(tmp_path)
         async with app.run_test() as pilot:
@@ -1431,7 +1504,9 @@ def test_home_grid_cursor_down_skips_a_header_row_between_two_sources(tmp_path):
             # skip straight to t.items (row 3), not land on the header.
             await pilot.press("down")
             await pilot.pause()
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            row_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate
+            ).row_key
             assert row_key.value == "t\x1fitems"
             assert not is_header_key(row_key.value)
 
@@ -1444,11 +1519,15 @@ def test_home_grid_cursor_up_skips_a_header_row_between_two_sources(tmp_path):
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            await pilot.press("down")  # s.orders -> t.items (skips header("t"))
+            await pilot.press(
+                "down"
+            )  # s.orders -> t.items (skips header("t"))
             await pilot.pause()
             await pilot.press("up")  # t.items -> s.orders (skips header("t"))
             await pilot.pause()
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            row_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate
+            ).row_key
             assert row_key.value == "s\x1forders"
 
     asyncio.run(scenario())
@@ -1462,9 +1541,13 @@ def test_home_grid_cursor_up_at_the_first_object_row_does_not_move_to_the_header
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            await pilot.press("up")  # already on s.orders -- header("s") is above
+            await pilot.press(
+                "up"
+            )  # already on s.orders -- header("s") is above
             await pilot.pause()
-            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            row_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate
+            ).row_key
             assert row_key.value == "s\x1forders"
 
     asyncio.run(scenario())

@@ -173,7 +173,9 @@ def parse_expectation(expect: dict, metric: str | None = None) -> Expectation:
         )
     [(operator, operand)] = expect.items()
     if operator not in _ALL_OPERATORS:
-        raise ValueError(f"unknown or unsupported expectation operator: {operator!r}")
+        raise ValueError(
+            f"unknown or unsupported expectation operator: {operator!r}"
+        )
     if operator == "unchanged" and metric != "schema":
         raise ValueError("'unchanged' is only valid for the schema metric")
     if metric == "schema" and operator not in _SCHEMA_OPERATORS:
@@ -267,7 +269,9 @@ def describe_check(check: Check) -> str:
         return f"{check.source}.{check.object} assert_sql {check.assert_sql!r}"
     metric = check.metric or "?"
     if check.column:
-        return f"{check.source}.{check.object}/{metric} (column={check.column!r})"
+        return (
+            f"{check.source}.{check.object}/{metric} (column={check.column!r})"
+        )
     if check.key:
         return f"{check.source}.{check.object}/{metric} (key={check.key!r})"
     return f"{check.source}.{check.object}/{metric}"
@@ -289,9 +293,7 @@ def compile_metric_sql(check: Check, dialect: Any) -> str:
         guard = f"WHERE {check.key} IS NOT NULL"
         if check.where:
             guard = f"{guard} AND {check.where}"
-        return (
-            f"SELECT COUNT(*) - COUNT(DISTINCT {check.key}) FROM {check.object} {guard}"
-        )
+        return f"SELECT COUNT(*) - COUNT(DISTINCT {check.key}) FROM {check.object} {guard}"
     if check.metric in ("sum", "avg", "min", "max"):
         agg = check.metric.upper()
         return f"SELECT {agg}({check.column}) FROM {check.object}{where}"

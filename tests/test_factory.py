@@ -52,7 +52,12 @@ def test_sqlserver_type_resolves_to_the_sqlserver_adapter():
 
 
 def test_supported_types_lists_every_registered_type_sorted():
-    assert supported_types() == ["databricks", "postgres", "sqlite", "sqlserver"]
+    assert supported_types() == [
+        "databricks",
+        "postgres",
+        "sqlite",
+        "sqlserver",
+    ]
 
 
 def test_databricks_type_resolves_to_the_databricks_adapter():
@@ -63,12 +68,18 @@ def test_databricks_type_resolves_to_the_databricks_adapter():
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter(
             "databricks",
-            {"host": "x", "http_path": "/sql/1.0/warehouses/abc", "token": "t"},
+            {
+                "host": "x",
+                "http_path": "/sql/1.0/warehouses/abc",
+                "token": "t",
+            },
         )
     assert "dbfresh[databricks]" in str(exc_info.value)
 
 
-def test_create_adapter_does_not_reword_an_unrelated_missing_module(monkeypatch):
+def test_create_adapter_does_not_reword_an_unrelated_missing_module(
+    monkeypatch,
+):
     # Only the source type's own driver module is reworded; any other
     # ModuleNotFoundError (e.g. a genuinely broken import) propagates as-is.
     from dbfresh.adapters import factory

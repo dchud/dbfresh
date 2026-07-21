@@ -67,7 +67,9 @@ checks:
     assert collect_referenced_env_vars(root) == ["DB_PATH", "INCLUDED_VAR"]
 
 
-def test_collect_referenced_env_vars_ignores_environment(tmp_path, monkeypatch):
+def test_collect_referenced_env_vars_ignores_environment(
+    tmp_path, monkeypatch
+):
     # The correctness guard: a var that happens to be set on the
     # generating machine must still be listed, not silently omitted.
     monkeypatch.setenv("DB_PATH", "/somewhere/real.db")
@@ -83,13 +85,17 @@ def test_collect_referenced_env_vars_with_no_vars_returns_empty_list(tmp_path):
     assert collect_referenced_env_vars(root) == []
 
 
-def test_collect_referenced_env_vars_missing_config_file_raises_config_error(tmp_path):
+def test_collect_referenced_env_vars_missing_config_file_raises_config_error(
+    tmp_path,
+):
     missing = tmp_path / "does_not_exist.yaml"
     with pytest.raises(ConfigError, match="config file not found"):
         collect_referenced_env_vars(missing)
 
 
-def test_collect_referenced_env_vars_skips_names_only_in_var_pattern_include(tmp_path):
+def test_collect_referenced_env_vars_skips_names_only_in_var_pattern_include(
+    tmp_path,
+):
     # Known limit: an include pattern that itself contains an unresolved
     # ${VAR} is never glob-resolved (same rule as the loader), so a
     # variable referenced only inside the file it would have matched is

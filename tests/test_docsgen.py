@@ -36,11 +36,17 @@ def test_matrix_page_matches_category_offers_exactly():
     content = docsgen.render_matrix()
     for category in Category:
         offered = category_offers(category)
-        lines = [line for line in content.splitlines() if line.startswith("| `")]
-        (row,) = [line for line in lines if line.startswith(f"| `{category.value}`")]
+        lines = [
+            line for line in content.splitlines() if line.startswith("| `")
+        ]
+        (row,) = [
+            line for line in lines if line.startswith(f"| `{category.value}`")
+        ]
         cells = [cell.strip() for cell in row.strip("|").split("|")][1:]
         columns = docsgen._matrix_columns()
-        marked = {name for name, cell in zip(columns, cells, strict=True) if cell}
+        marked = {
+            name for name, cell in zip(columns, cells, strict=True) if cell
+        }
         assert marked == set(offered)
 
 

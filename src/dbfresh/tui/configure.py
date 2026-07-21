@@ -62,7 +62,10 @@ _UNSAFE_ID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
 # Threshold-bearing offered metrics get a value Input beside their checkbox,
 # pre-filled with the CLI wizard's own prompt default for that metric --
 # every other offered metric (sum, row_count, ...) takes no threshold.
-_OFFERED_VALUE_DEFAULTS: dict[str, str] = {"null_rate": "0.05", "freshness": "24h"}
+_OFFERED_VALUE_DEFAULTS: dict[str, str] = {
+    "null_rate": "0.05",
+    "freshness": "24h",
+}
 
 # An existing check's expect: operand is editable via a single text Input
 # only when it's one scalar value -- between (a [lo, hi] pair), vs_previous
@@ -218,8 +221,12 @@ class ConfigureScreen(Screen[bool]):
                     id="source-select",
                 )
                 yield Button("+ new source", id="new-source-btn")
-                yield Button("Edit source", id="edit-source-btn", disabled=True)
-                yield Button("Remove source", id="remove-source-btn", disabled=True)
+                yield Button(
+                    "Edit source", id="edit-source-btn", disabled=True
+                )
+                yield Button(
+                    "Remove source", id="remove-source-btn", disabled=True
+                )
             remove_source_confirm_row = Horizontal(
                 Label("remove this source permanently?", classes="hint"),
                 Button("Confirm remove", id="remove-source-confirm-btn"),
@@ -241,7 +248,10 @@ class ConfigureScreen(Screen[bool]):
             yield VerticalScroll(
                 Static("", id="proposal-text", markup=False),
                 Vertical(
-                    Static("Existing checks for this object", classes="section-title"),
+                    Static(
+                        "Existing checks for this object",
+                        classes="section-title",
+                    ),
                     Vertical(id="existing-checks"),
                     id="existing-section",
                     classes="panel",
@@ -283,9 +293,13 @@ class ConfigureScreen(Screen[bool]):
                 "tip: use key=${VAR} for secrets to keep them out of the YAML",
                 classes="hint",
             )
-            yield TextArea(id="new-source-params", placeholder="database=/path/to.db")
+            yield TextArea(
+                id="new-source-params", placeholder="database=/path/to.db"
+            )
             with Horizontal():
-                yield Button("Probe & add", id="new-source-add-btn", variant="primary")
+                yield Button(
+                    "Probe & add", id="new-source-add-btn", variant="primary"
+                )
                 yield Button("Cancel", id="new-source-cancel-btn")
         yield Footer()
 
@@ -338,7 +352,9 @@ class ConfigureScreen(Screen[bool]):
         after removing the last remaining source)."""
         has_selection = self._selected_source_name() is not None
         self.query_one("#edit-source-btn", Button).disabled = not has_selection
-        self.query_one("#remove-source-btn", Button).disabled = not has_selection
+        self.query_one(
+            "#remove-source-btn", Button
+        ).disabled = not has_selection
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != "source-select":
@@ -348,7 +364,11 @@ class ConfigureScreen(Screen[bool]):
         self._update_source_buttons_state()
 
     def _set_sections_visible(self, visible: bool) -> None:
-        section_ids = ("#existing-section", "#proposed-section", "#offered-section")
+        section_ids = (
+            "#existing-section",
+            "#proposed-section",
+            "#offered-section",
+        )
         for section_id in section_ids:
             self.query_one(section_id).display = visible
 
@@ -365,7 +385,9 @@ class ConfigureScreen(Screen[bool]):
         self.query_one("#propose-section", Vertical).display = not visible
         if visible:
             self._source_form_edit_name = None
-            self.query_one("#new-source-heading", Static).update("Add a new source")
+            self.query_one("#new-source-heading", Static).update(
+                "Add a new source"
+            )
             self.query_one("#new-source-add-btn", Button).label = "Probe & add"
             name_input = self.query_one("#new-source-name-input", Input)
             name_input.value = ""
@@ -441,7 +463,8 @@ class ConfigureScreen(Screen[bool]):
             self._proposed_checkboxes.append(checkbox)
             if block["metric"] == "freshness":
                 value_input = Input(
-                    value=str(block["expect"]["max_lag"]), id=f"proposed-value-{i}"
+                    value=str(block["expect"]["max_lag"]),
+                    id=f"proposed-value-{i}",
                 )
                 self._proposed_value_inputs.append(value_input)
                 container.mount(Horizontal(checkbox, value_input))
@@ -478,7 +501,11 @@ class ConfigureScreen(Screen[bool]):
             )
             for metric in offer["checks"]:
                 block = build_offered_check(
-                    source_name, object_name, offer["column"], metric, has_calendar
+                    source_name,
+                    object_name,
+                    offer["column"],
+                    metric,
+                    has_calendar,
                 )
                 checkbox = Checkbox(
                     metric,
@@ -503,7 +530,9 @@ class ConfigureScreen(Screen[bool]):
                     self._offered_value_inputs.append(value_input)
                     container.mount(Horizontal(checkbox, value_input))
 
-    def _mount_existing_checks(self, source_name: str, object_name: str) -> None:
+    def _mount_existing_checks(
+        self, source_name: str, object_name: str
+    ) -> None:
         """The object's already-written checks: read-only except for a
         single-scalar ``expect:`` operand, which gets an editable Input +
         Save button -- the edit-existing-check half of this screen (the
@@ -578,9 +607,13 @@ class ConfigureScreen(Screen[bool]):
         cid = check_id(check)
         target = find_check_file(self._config_path, cid)
         if target is None:
-            self.notify(f"could not locate check {cid} on disk", severity="error")
+            self.notify(
+                f"could not locate check {cid} on disk", severity="error"
+            )
             return
-        rewrite_check_expectation(target, cid, {check.expect.operator: new_operand})
+        rewrite_check_expectation(
+            target, cid, {check.expect.operator: new_operand}
+        )
         self._config_changed = True
         self.notify(f"saved {check_label(check)}")
 
@@ -604,7 +637,9 @@ class ConfigureScreen(Screen[bool]):
 
         self._show_new_source_form(True)
         self._source_form_edit_name = name
-        self.query_one("#new-source-heading", Static).update(f"Edit source: {name}")
+        self.query_one("#new-source-heading", Static).update(
+            f"Edit source: {name}"
+        )
         self.query_one("#new-source-add-btn", Button).label = "Probe & save"
         name_input = self.query_one("#new-source-name-input", Input)
         name_input.value = name
@@ -621,7 +656,9 @@ class ConfigureScreen(Screen[bool]):
                 [(t, t) for t in supported_types()] + [(type_, type_)]
             )
         type_select.value = type_
-        self.query_one("#new-source-params", TextArea).text = _params_to_text(params)
+        self.query_one("#new-source-params", TextArea).text = _params_to_text(
+            params
+        )
 
     def _arm_remove_source(self) -> None:
         """First press of "Remove source": reveal the confirm/cancel row
@@ -632,7 +669,9 @@ class ConfigureScreen(Screen[bool]):
         self.query_one("#remove-source-confirm-row", Horizontal).display = True
 
     def _cancel_remove_source(self) -> None:
-        self.query_one("#remove-source-confirm-row", Horizontal).display = False
+        self.query_one(
+            "#remove-source-confirm-row", Horizontal
+        ).display = False
 
     def _confirm_remove_source(self) -> None:
         """Second press: actually remove the selected source on disk via
@@ -642,7 +681,9 @@ class ConfigureScreen(Screen[bool]):
         whatever remains -- or, with nothing left, reopens the new-source
         form, mirroring the zero-sources start-up case in :meth:`on_mount`.
         """
-        self.query_one("#remove-source-confirm-row", Horizontal).display = False
+        self.query_one(
+            "#remove-source-confirm-row", Horizontal
+        ).display = False
         name = self._selected_source_name()
         if name is None:
             return
@@ -699,7 +740,10 @@ class ConfigureScreen(Screen[bool]):
         self._new_source_worker(name, type_, params, edit_name)
 
     @work(
-        thread=True, exclusive=True, group=_NEW_SOURCE_WORKER_GROUP, exit_on_error=False
+        thread=True,
+        exclusive=True,
+        group=_NEW_SOURCE_WORKER_GROUP,
+        exit_on_error=False,
     )
     def _new_source_worker(
         self, name: str, type_: str, params: dict, edit_name: str | None = None
@@ -734,7 +778,9 @@ class ConfigureScreen(Screen[bool]):
         # produces: load_config resolves ${VAR} at load time, so an existing
         # source's params are already resolved in memory.
         add_source(self._config_path, name, type_, params)
-        return _NewSourceOutcome(name=name, type_=type_, params=resolved_params)
+        return _NewSourceOutcome(
+            name=name, type_=type_, params=resolved_params
+        )
 
     def _propose(self) -> None:
         """Validate the form, then hand introspection off to a worker thread.
@@ -754,7 +800,9 @@ class ConfigureScreen(Screen[bool]):
             return
         source_name = str(select.value)
         object_name = self.query_one("#object-input", Input).value.strip()
-        timestamp_entered = self.query_one("#timestamp-input", Input).value.strip()
+        timestamp_entered = self.query_one(
+            "#timestamp-input", Input
+        ).value.strip()
 
         source = self._config.sources.get(source_name)
         if source is None:
@@ -763,9 +811,16 @@ class ConfigureScreen(Screen[bool]):
 
         self._reset_proposal()
         self.query_one("#propose-btn", Button).disabled = True
-        self._propose_worker(source_name, object_name, timestamp_entered, source)
+        self._propose_worker(
+            source_name, object_name, timestamp_entered, source
+        )
 
-    @work(thread=True, exclusive=True, group=_PROPOSE_WORKER_GROUP, exit_on_error=False)
+    @work(
+        thread=True,
+        exclusive=True,
+        group=_PROPOSE_WORKER_GROUP,
+        exit_on_error=False,
+    )
     def _propose_worker(
         self,
         source_name: str,
@@ -786,9 +841,13 @@ class ConfigureScreen(Screen[bool]):
         from dbfresh.adapters.factory import create_adapter
 
         try:
-            adapter = create_adapter(source.type, source.params, timeout=source.timeout)
+            adapter = create_adapter(
+                source.type, source.params, timeout=source.timeout
+            )
         except Exception as exc:
-            return _ProposeOutcome(error=f"could not connect to {source_name!r}: {exc}")
+            return _ProposeOutcome(
+                error=f"could not connect to {source_name!r}: {exc}"
+            )
 
         try:
             existence = check_object_exists(adapter, object_name)
@@ -826,7 +885,9 @@ class ConfigureScreen(Screen[bool]):
             key_note = key_introspection_note(adapter.dialect, existence.info)
             offered_count = sum(
                 len(offer["checks"])
-                for offer in offered_column_checks(existence.info.columns, proposed)
+                for offer in offered_column_checks(
+                    existence.info.columns, proposed
+                )
             )
         finally:
             adapter.close()
@@ -840,7 +901,9 @@ class ConfigureScreen(Screen[bool]):
         files = target_files(self._config_path)
         target_file = files[0] if files else self._config_path
         if len(files) > 1:
-            notes.append(f"writing to {target_file} (of {len(files)} included files)")
+            notes.append(
+                f"writing to {target_file} (of {len(files)} included files)"
+            )
 
         if not notes and not proposed and not offered_count:
             notes.append("no checks proposed")
@@ -864,7 +927,9 @@ class ConfigureScreen(Screen[bool]):
         elif event.worker.group == _NEW_SOURCE_WORKER_GROUP:
             self._on_new_source_worker_state_changed(event)
 
-    def _on_propose_worker_state_changed(self, event: Worker.StateChanged) -> None:
+    def _on_propose_worker_state_changed(
+        self, event: Worker.StateChanged
+    ) -> None:
         """Pick up ``_propose_worker``'s outcome and mount widgets from it.
 
         Mirrors ``DbfreshApp.on_worker_state_changed``: the introspection
@@ -894,7 +959,9 @@ class ConfigureScreen(Screen[bool]):
             # about, so there's nothing stale here to clean up.
             return
         if event.state == WorkerState.ERROR:
-            self.notify(f"propose failed: {event.worker.error}", severity="error")
+            self.notify(
+                f"propose failed: {event.worker.error}", severity="error"
+            )
             return
 
         outcome = event.worker.result
@@ -915,11 +982,15 @@ class ConfigureScreen(Screen[bool]):
             outcome.proposed,
         )
         self._target_file = outcome.target_file
-        self.query_one("#proposal-text", Static).update("\n".join(outcome.notes))
+        self.query_one("#proposal-text", Static).update(
+            "\n".join(outcome.notes)
+        )
         self.query_one("#accept-btn", Button).disabled = not self._proposed
         self._set_sections_visible(True)
 
-    def _on_new_source_worker_state_changed(self, event: Worker.StateChanged) -> None:
+    def _on_new_source_worker_state_changed(
+        self, event: Worker.StateChanged
+    ) -> None:
         """Pick up ``_new_source_worker``'s outcome: reflect a successful
         probe+write into ``self._config`` and the source Select, or surface
         a failed probe as an error toast with the form left open to retry.
@@ -931,7 +1002,9 @@ class ConfigureScreen(Screen[bool]):
         """
         if event.state == WorkerState.RUNNING:
             self.sub_title = (
-                "saving source…" if self._source_form_edit_name else "adding source…"
+                "saving source…"
+                if self._source_form_edit_name
+                else "adding source…"
             )
             return
         if event.state not in (
@@ -951,7 +1024,8 @@ class ConfigureScreen(Screen[bool]):
         if event.state == WorkerState.ERROR:
             verb = "save" if self._source_form_edit_name else "add"
             self.notify(
-                f"could not {verb} source: {event.worker.error}", severity="error"
+                f"could not {verb} source: {event.worker.error}",
+                severity="error",
             )
             return
 
@@ -965,7 +1039,9 @@ class ConfigureScreen(Screen[bool]):
             name=outcome.name, type=outcome.type_, params=outcome.params
         )
         select = self.query_one("#source-select", Select)
-        select.set_options((name, name) for name in sorted(self._config.sources))
+        select.set_options(
+            (name, name) for name in sorted(self._config.sources)
+        )
         select.value = outcome.name
         self._show_new_source_form(False)
         self._update_source_buttons_state()
@@ -990,7 +1066,10 @@ class ConfigureScreen(Screen[bool]):
             try:
                 max_null_rate = float(value)
             except ValueError:
-                return None, f"{column}: not a number for max null rate: {value!r}"
+                return (
+                    None,
+                    f"{column}: not a number for max null rate: {value!r}",
+                )
             return (
                 build_offered_check(
                     block["source"],
@@ -1056,7 +1135,9 @@ class ConfigureScreen(Screen[bool]):
             if value_input is None:
                 selected.append(block)
                 continue
-            rebuilt, error = self._rebuild_proposed_check(block, value_input.value)
+            rebuilt, error = self._rebuild_proposed_check(
+                block, value_input.value
+            )
             if error is not None:
                 errors.append(error)
                 continue
@@ -1073,7 +1154,9 @@ class ConfigureScreen(Screen[bool]):
             if value_input is None:
                 selected.append(block)
                 continue
-            rebuilt, error = self._rebuild_offered_check(block, value_input.value)
+            rebuilt, error = self._rebuild_offered_check(
+                block, value_input.value
+            )
             if error is not None:
                 errors.append(error)
                 continue
@@ -1085,7 +1168,9 @@ class ConfigureScreen(Screen[bool]):
         selected, errors = self._selected_checks()
         if errors:
             self.notify(
-                "\n".join(errors), title="Invalid check value", severity="error"
+                "\n".join(errors),
+                title="Invalid check value",
+                severity="error",
             )
             return
         if not selected:
@@ -1097,7 +1182,9 @@ class ConfigureScreen(Screen[bool]):
         written, skipped = append_checks(
             target, selected, config_path=self._config_path
         )
-        self.notify(f"wrote {written} check(s), skipped {len(skipped)} duplicate(s)")
+        self.notify(
+            f"wrote {written} check(s), skipped {len(skipped)} duplicate(s)"
+        )
         self.dismiss(True)
 
     def action_cancel(self) -> None:

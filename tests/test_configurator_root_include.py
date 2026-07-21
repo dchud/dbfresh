@@ -110,7 +110,9 @@ def test_find_check_file_locates_a_root_level_check(tmp_path):
         included_checks="- source: s2\n  object: incl_tbl\n  metric: row_count\n"
         "  expect: { max: 50 }\n",
     )
-    cid = check_id_of_block(build_check("s", "root_tbl", "row_count", expect={}))
+    cid = check_id_of_block(
+        build_check("s", "root_tbl", "row_count", expect={})
+    )
     assert find_check_file(root, cid).resolve() == root.resolve()
 
 
@@ -122,7 +124,9 @@ def test_remove_check_removes_a_root_level_check(tmp_path):
         included_checks="- source: s2\n  object: incl_tbl\n  metric: row_count\n"
         "  expect: { max: 50 }\n",
     )
-    cid = check_id_of_block(build_check("s", "root_tbl", "row_count", expect={}))
+    cid = check_id_of_block(
+        build_check("s", "root_tbl", "row_count", expect={})
+    )
     remove_check(root, cid)
     # The sole root check is gone; removing the last item leaves checks:
     # empty (which YAML reads back as None), never a spurious "not found".

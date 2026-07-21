@@ -17,7 +17,9 @@ from dbfresh.engine import Status, evaluate_check
 
 
 class _FakeDescribeAdapter:
-    def __init__(self, last_modified=None, history_last_modified=None, is_view=False):
+    def __init__(
+        self, last_modified=None, history_last_modified=None, is_view=False
+    ):
         self.dialect = DatabricksDialect()
         self._last_modified = last_modified
         self._history_last_modified = history_last_modified
@@ -26,7 +28,9 @@ class _FakeDescribeAdapter:
 
     def describe(self, obj):
         return ObjectInfo(
-            columns=[], is_view=self._is_view, last_modified=self._last_modified
+            columns=[],
+            is_view=self._is_view,
+            last_modified=self._last_modified,
         )
 
     def describe_history_last_modified(self, obj):

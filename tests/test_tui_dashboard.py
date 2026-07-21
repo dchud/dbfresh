@@ -37,7 +37,12 @@ def _checks():
         Check(source="s", object="orders", metric="row_count"),
         Check(source="s", object="orders", metric="schema"),
         Check(source="s", object="orders", metric="null_rate", column="email"),
-        Check(source="s", object="orders", metric="freshness", column="modified_at"),
+        Check(
+            source="s",
+            object="orders",
+            metric="freshness",
+            column="modified_at",
+        ),
         Check(source="t", object="items", metric="duplicate_count", key="sku"),
     ]
 
@@ -48,7 +53,11 @@ def _config(checks):
 
 def _seed(store, check, status, observed_date, value=None):
     observed_at = datetime(
-        observed_date.year, observed_date.month, observed_date.day, 12, tzinfo=UTC
+        observed_date.year,
+        observed_date.month,
+        observed_date.day,
+        12,
+        tzinfo=UTC,
     )
     _seed_at(store, check, status, observed_at, value=value)
 
@@ -94,7 +103,9 @@ def test_trailing_dates_respects_days_param():
 
 def test_bucket_by_day_maps_each_date_to_its_latest_status():
     rows = [{"observed_at": "2026-07-14T09:00:00+00:00", "status": "OK"}]
-    latest, all_statuses = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    latest, all_statuses = bucket_by_day(
+        rows, trailing_dates(_TODAY), tz=None
+    )[_TODAY]
     assert latest == Status.OK
     assert all_statuses == [Status.OK]
 
@@ -112,7 +123,9 @@ def test_bucket_by_day_same_day_takes_the_latest_not_the_worst():
         {"observed_at": "2026-07-14T11:49:00+00:00", "status": "FAIL"},
         {"observed_at": "2026-07-14T11:51:00+00:00", "status": "OK"},
     ]
-    latest, all_statuses = bucket_by_day(rows, trailing_dates(_TODAY), tz=None)[_TODAY]
+    latest, all_statuses = bucket_by_day(
+        rows, trailing_dates(_TODAY), tz=None
+    )[_TODAY]
     assert latest == Status.OK
     assert set(all_statuses) == {Status.FAIL, Status.OK}
 
@@ -152,7 +165,10 @@ def test_bucket_by_day_buckets_by_the_given_timezone():
 def test_object_rows_groups_by_source_then_object_sorted():
     store = Store(":memory:")
     rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
-    assert [(r.source, r.object) for r in rows] == [("s", "orders"), ("t", "items")]
+    assert [(r.source, r.object) for r in rows] == [
+        ("s", "orders"),
+        ("t", "items"),
+    ]
 
 
 def test_object_rows_label_is_source_dot_object():
@@ -196,8 +212,15 @@ def test_object_rows_day_marker_flags_a_same_day_recovery_on_one_check():
     # with OK (matching overall) and carry a FAIL marker, not read FAIL.
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC))
-    _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+    _seed_at(
+        store,
+        checks[2],
+        Status.FAIL,
+        datetime(2026, 7, 10, 11, 49, tzinfo=UTC),
+    )
+    _seed_at(
+        store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC)
+    )
     rows = object_rows(_config(checks), store, _TODAY, tz=None)
     orders = next(r for r in rows if r.object == "orders")
     day_index = trailing_dates(_TODAY).index(date(2026, 7, 10))
@@ -220,7 +243,9 @@ def test_check_rows_returns_one_row_per_check_in_that_object():
     checks = _checks()
     store = Store(":memory:")
     rows = check_rows("s", "orders", _config(checks), store, _TODAY, tz=None)
-    assert len(rows) == 4  # row_count, schema, null_rate, freshness -- not items/sku
+    assert (
+        len(rows) == 4
+    )  # row_count, schema, null_rate, freshness -- not items/sku
 
 
 def test_check_rows_label_disambiguates_column_or_key():
@@ -272,26 +297,48 @@ def _row_count_day(store, checks):
 def test_check_rows_day_marker_recovery_shows_latest_glyph_and_fail_marker():
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+    _seed_at(
+        store,
+        checks[0],
+        Status.FAIL,
+        datetime(2026, 7, 10, 11, 49, tzinfo=UTC),
+    )
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.OK, Status.FAIL)
 
 
 def test_check_rows_day_marker_fail_takes_priority_over_warn_and_error():
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.WARN, datetime(2026, 7, 10, 10, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.ERROR, datetime(2026, 7, 10, 11, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    _seed_at(
+        store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store, checks[0], Status.WARN, datetime(2026, 7, 10, 10, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store,
+        checks[0],
+        Status.ERROR,
+        datetime(2026, 7, 10, 11, 0, tzinfo=UTC),
+    )
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.OK, Status.FAIL)
 
 
 def test_check_rows_day_marker_warn_when_no_fail_present():
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.WARN, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    _seed_at(
+        store, checks[0], Status.WARN, datetime(2026, 7, 10, 9, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.OK, Status.WARN)
 
 
@@ -302,16 +349,24 @@ def test_check_rows_day_marker_error_alone_still_marks_but_reads_neutral():
     # dot rather than ERROR's own alarming blue glyph.
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.ERROR, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    _seed_at(
+        store, checks[0], Status.ERROR, datetime(2026, 7, 10, 9, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.OK, Status.ERROR)
 
 
 def test_check_rows_day_marker_uniformly_ok_day_has_no_marker():
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 9, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store, checks[0], Status.OK, datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.OK, None)
 
 
@@ -321,8 +376,12 @@ def test_check_rows_day_marker_still_failing_day_has_no_marker():
     # observations that day.
     checks = _checks()
     store = Store(":memory:")
-    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC))
-    _seed_at(store, checks[0], Status.FAIL, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+    _seed_at(
+        store, checks[0], Status.FAIL, datetime(2026, 7, 10, 9, 0, tzinfo=UTC)
+    )
+    _seed_at(
+        store, checks[0], Status.FAIL, datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+    )
     assert _row_count_day(store, checks) == (Status.FAIL, None)
 
 
@@ -350,12 +409,16 @@ def test_check_label_table_level_metric_has_no_parenthetical():
 
 
 def test_check_label_column_level_metric_includes_column():
-    check = Check(source="s", object="orders", metric="null_rate", column="email")
+    check = Check(
+        source="s", object="orders", metric="null_rate", column="email"
+    )
     assert check_label(check) == "null_rate (email)"
 
 
 def test_check_label_key_level_metric_includes_key():
-    check = Check(source="s", object="orders", metric="duplicate_count", key="sku")
+    check = Check(
+        source="s", object="orders", metric="duplicate_count", key="sku"
+    )
     assert check_label(check) == "duplicate_count (sku)"
 
 
@@ -402,7 +465,9 @@ def test_last_run_line_is_none_while_a_run_is_still_in_progress():
 def test_last_run_line_reports_check_count_and_time():
     store = Store(":memory:")
     check = Check(source="s", object="orders", metric="row_count")
-    run_id = store.start_run(started_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC))
+    run_id = store.start_run(
+        started_at=datetime(2026, 7, 15, 14, 0, tzinfo=UTC)
+    )
     store.record_observation(
         run_id,
         Result(
@@ -415,7 +480,9 @@ def test_last_run_line_reports_check_count_and_time():
         ),
     )
     store.finish_run(
-        run_id, Status.OK, finished_at=datetime(2026, 7, 15, 14, 2, 30, tzinfo=UTC)
+        run_id,
+        Status.OK,
+        finished_at=datetime(2026, 7, 15, 14, 2, 30, tzinfo=UTC),
     )
     line = last_run_line(store, tz=UTC)
     assert line == "last run: 2026-07-15 14:02 · 1 checks · all ok"
@@ -447,7 +514,9 @@ def test_last_run_line_summarizes_non_ok_counts():
         ),
     )
     store.finish_run(
-        run_id, Status.FAIL, finished_at=datetime(2026, 7, 15, 14, 2, tzinfo=UTC)
+        run_id,
+        Status.FAIL,
+        finished_at=datetime(2026, 7, 15, 14, 2, tzinfo=UTC),
     )
     line = last_run_line(store, tz=UTC)
     assert line == "last run: 2026-07-15 14:02 · 2 checks · 1 failed"
@@ -474,7 +543,9 @@ def test_last_run_line_reflects_that_runs_own_observations_not_current_status():
     store.finish_run(
         first, Status.OK, finished_at=datetime(2026, 7, 15, 14, 2, tzinfo=UTC)
     )
-    store.start_run(started_at=datetime(2026, 7, 15, 15, 0, tzinfo=UTC))  # unfinished
+    store.start_run(
+        started_at=datetime(2026, 7, 15, 15, 0, tzinfo=UTC)
+    )  # unfinished
 
     line = last_run_line(store, tz=UTC)
     assert line == "last run: 2026-07-15 14:02 · 1 checks · all ok"
@@ -605,9 +676,17 @@ def test_populate_grid_day_cell_renders_latest_glyph_plus_marker():
         checks = _checks()
         store = Store(":memory:")
         _seed_at(
-            store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC)
+            store,
+            checks[2],
+            Status.FAIL,
+            datetime(2026, 7, 10, 11, 49, tzinfo=UTC),
         )
-        _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+        _seed_at(
+            store,
+            checks[2],
+            Status.OK,
+            datetime(2026, 7, 10, 11, 51, tzinfo=UTC),
+        )
         rows = object_rows(_config(checks), store, _TODAY, tz=None)
         app = _GridTestApp()
         async with app.run_test():
@@ -641,9 +720,17 @@ def test_populate_grid_overall_column_never_carries_a_marker():
         checks = _checks()
         store = Store(":memory:")
         _seed_at(
-            store, checks[2], Status.FAIL, datetime(2026, 7, 10, 11, 49, tzinfo=UTC)
+            store,
+            checks[2],
+            Status.FAIL,
+            datetime(2026, 7, 10, 11, 49, tzinfo=UTC),
         )
-        _seed_at(store, checks[2], Status.OK, datetime(2026, 7, 10, 11, 51, tzinfo=UTC))
+        _seed_at(
+            store,
+            checks[2],
+            Status.OK,
+            datetime(2026, 7, 10, 11, 51, tzinfo=UTC),
+        )
         rows = object_rows(_config(checks), store, _TODAY, tz=None)
         app = _GridTestApp()
         async with app.run_test():
@@ -678,7 +765,9 @@ def test_populate_grid_ungrouped_label_is_full_source_dot_object():
 def test_populate_grid_grouped_inserts_one_header_row_per_source():
     async def scenario():
         store = Store(":memory:")
-        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)  # sources s, t
+        rows = object_rows(
+            _config(_checks()), store, _TODAY, tz=None
+        )  # sources s, t
         app = _GridTestApp()
         async with app.run_test():
             table = app.query_one(DataTable)
@@ -765,7 +854,9 @@ def test_is_header_key_true_only_for_a_header_key():
 
 def _view_row(label: str, overall: Status | None) -> GridRow:
     source, obj = label.split(".", 1)
-    return GridRow(key=f"{source}\x1f{obj}", label=label, overall=overall, days=[])
+    return GridRow(
+        key=f"{source}\x1f{obj}", label=label, overall=overall, days=[]
+    )
 
 
 def _view_rows() -> list[GridRow]:

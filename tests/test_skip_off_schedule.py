@@ -19,7 +19,9 @@ def _calendar():
 
 
 def test_skip_off_schedule_skips_on_weekend():
-    a = _rows_adapter(0)  # would ERROR/FAIL if evaluated: null_rate-free row_count ok
+    a = _rows_adapter(
+        0
+    )  # would ERROR/FAIL if evaluated: null_rate-free row_count ok
     check = Check(
         source="s",
         object="t",
@@ -42,7 +44,9 @@ def test_skip_off_schedule_skips_on_holiday():
         expect=parse_expectation({"min": 1}),
         skip_off_schedule=True,
     )
-    cal = build_calendar({"timezone": "UTC", "holidays": {"extra": ["2026-07-06"]}})
+    cal = build_calendar(
+        {"timezone": "UTC", "holidays": {"extra": ["2026-07-06"]}}
+    )
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday holiday
     result = evaluate_check(check, a, now=now, calendar=cal)
     assert result.status == Status.SKIPPED
@@ -60,7 +64,9 @@ def test_skip_off_schedule_runs_normally_on_business_day():
     )
     now = datetime(2026, 7, 6, 12, 0, tzinfo=UTC)  # Monday, a business day
     result = evaluate_check(check, a, now=now, calendar=_calendar())
-    assert result.status == Status.FAIL  # evaluated normally, 0 rows fails min:1
+    assert (
+        result.status == Status.FAIL
+    )  # evaluated normally, 0 rows fails min:1
     a.close()
 
 

@@ -45,7 +45,9 @@ def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
     """
     if when.tzinfo is None:
         when = when.replace(tzinfo=UTC)
-    when = when.astimezone(tz if tz is not None else UTC).replace(microsecond=0)
+    when = when.astimezone(tz if tz is not None else UTC).replace(
+        microsecond=0
+    )
     text = when.isoformat()
     return text[: -len("+00:00")] + "Z" if text.endswith("+00:00") else text
 
@@ -99,7 +101,9 @@ def display_timezone(calendar: BusinessCalendar | None) -> tzinfo:
     if calendar is not None:
         return calendar.zone
     local = datetime.now().astimezone().tzinfo
-    assert local is not None  # astimezone() on an aware datetime always sets it
+    assert (
+        local is not None
+    )  # astimezone() on an aware datetime always sets it
     return local
 
 
@@ -186,7 +190,11 @@ def render_digest(
     for result in run.results:
         if result.status in (Status.OK, Status.SKIPPED):
             continue
-        obj = f"{result.source}.{result.object}" if result.source else result.object
+        obj = (
+            f"{result.source}.{result.object}"
+            if result.source
+            else result.object
+        )
         label = result.label or result.metric or "assert"
         header = f"✗ {obj} · {label}"
         if result.expected:
@@ -202,9 +210,13 @@ def render_digest(
         elif result.samples is not None:
             lines.append(f"    {result.value} row(s) violate the constraint")
             for row in result.samples[:10]:
-                cells = "  ".join(f"{key}={value}" for key, value in row.items())
+                cells = "  ".join(
+                    f"{key}={value}" for key, value in row.items()
+                )
                 lines.append(f"      {cells}")
-        elif result.metric == "freshness" and isinstance(result.value, (int, float)):
+        elif result.metric == "freshness" and isinstance(
+            result.value, (int, float)
+        ):
             observed = _format_freshness_observed(result.value, reference, tz)
             lines.append(f"    observed: {observed}")
         else:
@@ -236,7 +248,9 @@ def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
             metric=obs["metric"],
             label=obs["label"],
             status=Status(obs["status"]),
-            value=obs["value"] if obs["value"] is not None else obs["value_text"],
+            value=obs["value"]
+            if obs["value"] is not None
+            else obs["value_text"],
             expected=obs["expected"],
             error=obs["error"],
             check_id=obs["check_id"],
@@ -249,7 +263,9 @@ def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
         status=Status(run["status"]),
         run_id=run["run_id"],
         started_at=datetime.fromisoformat(run["started_at"]),
-        finished_at=datetime.fromisoformat(finished_at) if finished_at else None,
+        finished_at=datetime.fromisoformat(finished_at)
+        if finished_at
+        else None,
     )
 
 
@@ -280,10 +296,14 @@ def _optional_timestamp(when: datetime | None) -> str | None:
 
 def render_candidates(object_: str, candidates: list[dict]) -> str:
     """List ambiguous check_id matches for ``dbfresh history OBJECT``."""
-    lines = [f"multiple checks match {object_!r} — narrow with --source/--metric:"]
+    lines = [
+        f"multiple checks match {object_!r} — narrow with --source/--metric:"
+    ]
     for c in candidates:
         label = c["metric"] or c["label"]
-        lines.append(f"  {c['source']}.{c['object']} · {label} ({c['check_id']})")
+        lines.append(
+            f"  {c['source']}.{c['object']} · {label} ({c['check_id']})"
+        )
     return "\n".join(lines)
 
 
@@ -300,7 +320,9 @@ def _summarize_fingerprint(fingerprint: str) -> str:
     return f"{n} col{'s' if n != 1 else ''}"
 
 
-def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) -> str:
+def render_history(
+    candidate: dict, rows: list[dict], tz: tzinfo | None = None
+) -> str:
     """A check's recent values, expectations, and statuses.
 
     ``check_id`` rides along in the header line as a parenthetical -- still
@@ -315,7 +337,9 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
     columns rather than truncating it to fit one, since it is the row's
     most important content when present.
     """
-    header = f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
+    header = (
+        f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
+    )
     lines = [f"CHECK HISTORY — {header} ({candidate['check_id']})"]
     if not rows:
         lines.append("")
@@ -334,7 +358,9 @@ def render_history(candidate: dict, rows: list[dict], tz: tzinfo | None = None) 
     for row in rows:
         value = row["value"] if row["value"] is not None else row["value_text"]
         observed_at = row["observed_at"]
-        observed = format_timestamp_friendly(datetime.fromisoformat(observed_at), tz)
+        observed = format_timestamp_friendly(
+            datetime.fromisoformat(observed_at), tz
+        )
         if metric == "freshness" and isinstance(value, (int, float)):
             # The reconstructed absolute last-update time the digest also
             # shows (_format_freshness_observed): this row's own observed_at

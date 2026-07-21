@@ -20,7 +20,12 @@ from dataclasses import replace
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 
-from dbfresh.adapters.base import Category, Dialect, ObjectInfo, SqlAlchemyAdapter
+from dbfresh.adapters.base import (
+    Category,
+    Dialect,
+    ObjectInfo,
+    SqlAlchemyAdapter,
+)
 
 # PostgreSQL-native type names that SQLAlchemy's generic isinstance checks
 # (base.category_for) do not already resolve. MONEY is the one case: it does

@@ -142,7 +142,9 @@ checks: []
         load_config(path, env={})
 
 
-def test_unknown_source_type_is_not_flagged_here_only_at_connect_time(tmp_path):
+def test_unknown_source_type_is_not_flagged_here_only_at_connect_time(
+    tmp_path,
+):
     # A bad `type:` is a connect-time concern (create_adapter already
     # raises there); config validation must not also reject it, since an
     # unreferenced or intentionally-unreachable source must not block a

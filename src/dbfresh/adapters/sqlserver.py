@@ -21,7 +21,12 @@ from dataclasses import replace
 from sqlalchemy import create_engine
 from sqlalchemy.engine import URL
 
-from dbfresh.adapters.base import Category, Dialect, ObjectInfo, SqlAlchemyAdapter
+from dbfresh.adapters.base import (
+    Category,
+    Dialect,
+    ObjectInfo,
+    SqlAlchemyAdapter,
+)
 from dbfresh.connection import parse_sqlserver_url
 
 
@@ -81,7 +86,9 @@ class SqlServerAdapter(SqlAlchemyAdapter):
         )
         # pymssql's connection-attempt timeout is `login_timeout` (its
         # `timeout` kwarg instead caps query execution).
-        connect_args = {"login_timeout": timeout} if timeout is not None else {}
+        connect_args = (
+            {"login_timeout": timeout} if timeout is not None else {}
+        )
         engine = create_engine(engine_url, connect_args=connect_args)
         super().__init__(engine, TSqlDialect())
 

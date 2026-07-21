@@ -63,7 +63,9 @@ def test_row_count_uses_last_same_weekday_baseline_when_calendar_configured():
     info = a.describe("fct")
     proposals = propose_checks("s", "fct", info, a.dialect, has_calendar=True)
     row_count = next(p for p in proposals if p["metric"] == "row_count")
-    assert row_count["expect"]["vs_previous"]["baseline"] == "last_same_weekday"
+    assert (
+        row_count["expect"]["vs_previous"]["baseline"] == "last_same_weekday"
+    )
     a.close()
 
 
@@ -103,8 +105,18 @@ def test_key_introspection_note_explains_when_engine_cannot_say():
 def test_composite_keys_are_skipped():
     info = ObjectInfo(
         columns=[
-            Column(name="a", type="INTEGER", nullable=False, category=Category.NUMERIC),
-            Column(name="b", type="INTEGER", nullable=False, category=Category.NUMERIC),
+            Column(
+                name="a",
+                type="INTEGER",
+                nullable=False,
+                category=Category.NUMERIC,
+            ),
+            Column(
+                name="b",
+                type="INTEGER",
+                nullable=False,
+                category=Category.NUMERIC,
+            ),
         ],
         keys=[["a", "b"]],
     )
@@ -116,12 +128,16 @@ def test_each_single_column_key_gets_its_own_duplicate_count_proposal():
     info = ObjectInfo(
         columns=[
             _col("id"),
-            _col("email", category=Category.STRING, nullable=True, type_="TEXT"),
+            _col(
+                "email", category=Category.STRING, nullable=True, type_="TEXT"
+            ),
         ],
         keys=[["id"], ["email"]],
     )
     proposals = propose_checks("s", "t", info, Dialect())
-    dup_keys = {p["key"] for p in proposals if p["metric"] == "duplicate_count"}
+    dup_keys = {
+        p["key"] for p in proposals if p["metric"] == "duplicate_count"
+    }
     assert dup_keys == {"id", "email"}
 
 
@@ -163,7 +179,9 @@ def test_databricks_table_with_no_candidate_falls_back_to_describe_history():
 
 def test_view_with_no_candidate_gets_no_freshness_proposal_even_on_databricks():
     info = ObjectInfo(columns=[_col("id")])
-    proposals = propose_checks("s", "t", info, DatabricksDialect(), is_view=True)
+    proposals = propose_checks(
+        "s", "t", info, DatabricksDialect(), is_view=True
+    )
     assert not [p for p in proposals if p["metric"] == "freshness"]
 
 
@@ -190,7 +208,8 @@ def test_offered_checks_exclude_what_the_propose_flow_already_covers():
     proposals = propose_checks("s", "fct", info, a.dialect)
 
     offers = {
-        o["column"]: o["checks"] for o in offered_column_checks(info.columns, proposals)
+        o["column"]: o["checks"]
+        for o in offered_column_checks(info.columns, proposals)
     }
     assert "freshness" not in offers["modified_at"]
     assert "duplicate_count" not in offers["id"]

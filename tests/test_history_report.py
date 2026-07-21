@@ -271,7 +271,11 @@ def test_render_history_tolerates_rows_without_expected_or_error_keys():
         "label": "row_count",
     }
     rows = [
-        {"observed_at": "2026-07-08T00:00:00+00:00", "status": "OK", "value": 10000.0}
+        {
+            "observed_at": "2026-07-08T00:00:00+00:00",
+            "status": "OK",
+            "value": 10000.0,
+        }
     ]
     text = render_history(candidate, rows)
     assert "10000" in text

@@ -19,9 +19,15 @@ def test_dburl_style_path_segment_is_database():
 def test_native_style_query_database_makes_path_the_instance():
     # `?database=` present: the path segment is a named instance instead,
     # and the port is omitted (SQL Server resolves it dynamically).
-    params = parse_sqlserver_url("sqlserver://user:pass@host/prod?database=mydb")
+    params = parse_sqlserver_url(
+        "sqlserver://user:pass@host/prod?database=mydb"
+    )
     assert params == SqlServerConnectionParams(
-        server="host\\prod", port=None, database="mydb", user="user", password="pass"
+        server="host\\prod",
+        port=None,
+        database="mydb",
+        user="user",
+        password="pass",
     )
 
 
@@ -36,7 +42,9 @@ def test_explicit_port_is_respected():
 
 
 def test_named_instance_omits_port_even_if_explicit_port_given():
-    params = parse_sqlserver_url("sqlserver://user:pass@host:1500/prod?database=mydb")
+    params = parse_sqlserver_url(
+        "sqlserver://user:pass@host:1500/prod?database=mydb"
+    )
     assert params.server == "host\\prod"
     assert params.port is None
 
@@ -63,7 +71,9 @@ def test_url_encoded_database_path_segment_is_decoded():
 
 
 def test_url_encoded_database_query_param_is_decoded():
-    params = parse_sqlserver_url("sqlserver://user:pass@host/prod?database=my%20db")
+    params = parse_sqlserver_url(
+        "sqlserver://user:pass@host/prod?database=my%20db"
+    )
     assert params.database == "my db"
 
 

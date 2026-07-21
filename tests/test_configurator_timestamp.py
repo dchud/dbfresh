@@ -5,7 +5,9 @@ from dbfresh.configurator import pick_timestamp_column
 
 
 def _col(name, category=Category.TEMPORAL):
-    return Column(name=name, type="TIMESTAMP", nullable=True, category=category)
+    return Column(
+        name=name, type="TIMESTAMP", nullable=True, category=category
+    )
 
 
 def test_no_temporal_columns_yields_no_candidate():
@@ -28,7 +30,13 @@ def test_conventional_name_preferred_among_several_temporal_columns():
 
 
 def test_all_listed_conventional_names_are_recognized():
-    for name in ("modified_at", "updated_at", "loaded_at", "load_ts", "created_at"):
+    for name in (
+        "modified_at",
+        "updated_at",
+        "loaded_at",
+        "load_ts",
+        "created_at",
+    ):
         result = pick_timestamp_column([_col(name), _col("dt1")])
         assert result.column == name
 

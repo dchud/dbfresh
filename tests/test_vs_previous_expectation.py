@@ -22,7 +22,13 @@ def test_vs_previous_parses_with_baseline_previous_and_ratio_guards():
 
 def test_vs_previous_defaults_on_missing_to_pass():
     e = parse_expectation(
-        {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2.0}},
+        {
+            "vs_previous": {
+                "baseline": "previous",
+                "min_ratio": 0.5,
+                "max_ratio": 2.0,
+            }
+        },
         metric="row_count",
     )
     assert e.operand["on_missing"] == "pass"
@@ -46,7 +52,13 @@ def test_vs_previous_accepts_explicit_on_missing():
 
 def test_vs_previous_accepts_delta_guards_only():
     e = parse_expectation(
-        {"vs_previous": {"baseline": "previous", "min_delta": -10, "max_delta": 10}},
+        {
+            "vs_previous": {
+                "baseline": "previous",
+                "min_delta": -10,
+                "max_delta": 10,
+            }
+        },
         metric="row_count",
     )
     assert e.operand["min_delta"] == -10
@@ -58,7 +70,13 @@ def test_vs_previous_accepts_delta_guards_only():
 def test_vs_previous_rejects_unknown_baseline():
     with pytest.raises(ValueError):
         parse_expectation(
-            {"vs_previous": {"baseline": "bogus", "min_ratio": 0.5, "max_ratio": 2.0}},
+            {
+                "vs_previous": {
+                    "baseline": "bogus",
+                    "min_ratio": 0.5,
+                    "max_ratio": 2.0,
+                }
+            },
             metric="row_count",
         )
 
@@ -97,7 +115,13 @@ def test_vs_previous_requires_at_least_one_guard():
 def test_vs_previous_rejected_for_freshness():
     with pytest.raises(ValueError):
         parse_expectation(
-            {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2}},
+            {
+                "vs_previous": {
+                    "baseline": "previous",
+                    "min_ratio": 0.5,
+                    "max_ratio": 2,
+                }
+            },
             metric="freshness",
         )
 
@@ -105,7 +129,13 @@ def test_vs_previous_rejected_for_freshness():
 def test_vs_previous_rejected_for_schema():
     with pytest.raises(ValueError):
         parse_expectation(
-            {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2}},
+            {
+                "vs_previous": {
+                    "baseline": "previous",
+                    "min_ratio": 0.5,
+                    "max_ratio": 2,
+                }
+            },
             metric="schema",
         )
 
@@ -127,7 +157,13 @@ def test_vs_previous_rejected_combined_with_another_operator():
 
 def test_vs_previous_describe_mentions_baseline_and_ratio():
     e = parse_expectation(
-        {"vs_previous": {"baseline": "previous", "min_ratio": 0.5, "max_ratio": 2.0}},
+        {
+            "vs_previous": {
+                "baseline": "previous",
+                "min_ratio": 0.5,
+                "max_ratio": 2.0,
+            }
+        },
         metric="row_count",
     )
     described = e.describe()
