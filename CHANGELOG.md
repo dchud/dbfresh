@@ -33,3 +33,6 @@ once releases are tagged.
 
 - A freshness check on a `date`-typed column no longer crashes; a
   date-only value is treated as midnight in the source timezone.
+- The `databricks` extra now installs `pyarrow` (optional in
+  databricks-sql-connector since 4.0), so `dbfresh[databricks]` can fetch
+  query results out of the box.
