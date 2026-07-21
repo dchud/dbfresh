@@ -606,10 +606,19 @@ class DbfreshApp(App):
             self.last_run = run
             self.refresh_dashboard()
             self._refresh_topmost_screen()
+            message = _run_summary(run)
+            needs_review = run.status in (
+                Status.WARN,
+                Status.FAIL,
+                Status.ERROR,
+            )
+            if needs_review:
+                message = f"{message} -- press 'p' for the report"
             self.notify(
-                _run_summary(run),
+                message,
                 title="Run complete",
                 severity=_RUN_TOAST_SEVERITY[run.status],
+                timeout=10 if needs_review else None,
             )
         elif event.state == WorkerState.ERROR:
             self.notify(
