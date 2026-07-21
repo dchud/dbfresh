@@ -43,6 +43,7 @@ sqlserver = [
 ]
 databricks = [
     "databricks-sql-connector>=4.3.0",
+    "databricks-sdk>=0.20",
 ]
 
 [build-system]
