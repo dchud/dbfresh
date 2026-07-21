@@ -28,3 +28,8 @@ once releases are tagged.
 - The config is located by walking up from the current directory to find
   `config.yaml`, and via a `DBFRESH_CONFIG` environment variable —
   previously only `./config.yaml` or an explicit `-c PATH`.
+
+### Fixed
+
+- A freshness check on a `date`-typed column no longer crashes; a
+  date-only value is treated as midnight in the source timezone.
