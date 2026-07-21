@@ -35,6 +35,19 @@ From a checkout, add `--extra sqlserver` (or `--extra databricks`) to
 `uv sync`. Without the extra, adding such a source fails with a hint that
 names the extra to install.
 
+Before that PyPI release, to install a global `dbfresh` command from a
+checkout -- rather than prefixing every call with `uv run` -- install the
+local project itself, pointed at the clone with `.` and including the extra
+you need:
+
+```bash
+uv tool install ".[databricks]"   # run inside the clone; add -e for editable
+```
+
+The bare `uv tool install "dbfresh[databricks]"` resolves `dbfresh` from
+PyPI, so before the release it fails with an unsatisfiable-requirement
+error -- use the `".[...]"` local-path form until dbfresh is published.
+
 ## A minimal config
 
 A config is one YAML file: `sources:` (where to connect) and `checks:` (what
