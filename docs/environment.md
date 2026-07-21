@@ -33,11 +33,19 @@ per environment.
 
 ## Databricks (`type: databricks`)
 
-| field       | example variable          | value shape                              | where to get it / notes                                                                                       |
-| ----------- | -------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `host`      | `${DATABRICKS_HOST}`       | `dbc-abc12345-6789.cloud.databricks.com` | The SQL warehouse's server hostname, from its **Connection Details** tab in the Databricks UI.                    |
-| `http_path` | `${DATABRICKS_HTTP_PATH}`  | `/sql/1.0/warehouses/abcdef0123456789`   | The same warehouse's HTTP path, also from **Connection Details**.                                                  |
-| `token`     | `${DATABRICKS_TOKEN}`      | `dapi` + 32 hex chars                    | A personal access token, generated under the user's **Settings -> Developer -> Access tokens**. Treat as a secret. |
+`auth_type` chooses the auth method: `pat` (the default, used when
+omitted) authenticates with `token`; `oauth_m2m` authenticates with a
+Databricks-account-managed service principal's `client_id` and
+`client_secret` instead. Set exactly one pair -- `token` for `pat`, or
+`client_id`/`client_secret` for `oauth_m2m` -- not both.
+
+| field           | example variable                | value shape                              | where to get it / notes                                                                                                                |
+| --------------- | --------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `host`          | `${DATABRICKS_HOST}`              | `dbc-abc12345-6789.cloud.databricks.com` | The SQL warehouse's server hostname, from its **Connection Details** tab in the Databricks UI.                                          |
+| `http_path`     | `${DATABRICKS_HTTP_PATH}`         | `/sql/1.0/warehouses/abcdef0123456789`   | The same warehouse's HTTP path, also from **Connection Details**.                                                                        |
+| `token`         | `${DATABRICKS_TOKEN}`             | `dapi` + 32 hex chars                    | `auth_type: pat` (default). A personal access token, generated under the user's **Settings -> Developer -> Access tokens**. A secret.    |
+| `client_id`     | `${DATABRICKS_CLIENT_ID}`         | a UUID                                   | `auth_type: oauth_m2m`. The service principal's application ID, from the Databricks account console. A secret.                           |
+| `client_secret` | `${DATABRICKS_CLIENT_SECRET}`     | an opaque secret string                  | `auth_type: oauth_m2m`. Generated alongside the service principal's OAuth secret in the account console. A secret.                       |
 
 ## SQLite (`type: sqlite`)
 

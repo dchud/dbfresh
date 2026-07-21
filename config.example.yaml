@@ -23,7 +23,10 @@ sources:
     type: databricks
     host: ${DATABRICKS_HOST}
     http_path: ${DATABRICKS_HTTP_PATH}
-    token: ${DATABRICKS_TOKEN}
+    token: ${DATABRICKS_TOKEN} # auth_type: pat (default); or oauth_m2m:
+    # auth_type: oauth_m2m
+    # client_id: ${DATABRICKS_CLIENT_ID}
+    # client_secret: ${DATABRICKS_CLIENT_SECRET}
 
 defaults: # merged into every check when absent; supports
   severity: error #   severity, calendar, where, allow_empty, skip_off_schedule

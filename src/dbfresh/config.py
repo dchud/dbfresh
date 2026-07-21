@@ -597,6 +597,62 @@ def _validate_checks(
     return errors
 
 
+def _validate_databricks_auth(name: str, params: dict) -> list[ValueError]:
+    """Auth-param coherence for a databricks source, at config-load time.
+
+    auth_type selects the method: 'pat' (the default) uses token;
+    'oauth_m2m' uses a service principal's client_id and client_secret.
+    This checks the *combination*, which name-based signature validation
+    can't -- so a contradictory or half-specified config fails at load
+    rather than as a confusing connect-time error, and a leftover token
+    can't silently shadow an intended service-principal login.
+    """
+    auth_type = params.get("auth_type")
+    if auth_type not in (None, "pat", "oauth_m2m"):
+        return [
+            ValueError(
+                f"source {name!r}: auth_type must be 'pat' or "
+                f"'oauth_m2m', got {auth_type!r}"
+            )
+        ]
+    has_token = "token" in params
+    has_id = "client_id" in params
+    has_secret = "client_secret" in params
+    errors: list[ValueError] = []
+    if auth_type == "oauth_m2m":
+        if not (has_id and has_secret):
+            errors.append(
+                ValueError(
+                    f"source {name!r}: auth_type: oauth_m2m requires "
+                    "both client_id and client_secret"
+                )
+            )
+        if has_token:
+            errors.append(
+                ValueError(
+                    f"source {name!r}: auth_type: oauth_m2m does not "
+                    "use token -- remove it"
+                )
+            )
+    else:  # pat (explicit or default)
+        if not has_token:
+            errors.append(
+                ValueError(
+                    f"source {name!r}: a databricks source needs "
+                    "token, or auth_type: oauth_m2m with client_id "
+                    "and client_secret"
+                )
+            )
+        if has_id or has_secret:
+            errors.append(
+                ValueError(
+                    f"source {name!r}: client_id/client_secret "
+                    "require auth_type: oauth_m2m"
+                )
+            )
+    return errors
+
+
 def _validate_sources(sources: dict[str, SourceConfig]) -> list[ValueError]:
     """Reject a genuinely-unknown source parameter with a clean error.
 
@@ -641,6 +697,8 @@ def _validate_sources(sources: dict[str, SourceConfig]) -> list[ValueError]:
                     f"{unknown}; expected one of {sorted(valid_params)}"
                 )
             )
+        if source.type == "databricks":
+            errors.extend(_validate_databricks_auth(name, source.params))
     return errors
 
 

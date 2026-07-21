@@ -77,6 +77,27 @@ def test_databricks_type_resolves_to_the_databricks_adapter():
     assert "dbfresh[databricks]" in str(exc_info.value)
 
 
+def test_create_adapter_rewords_a_missing_submodule_of_the_driver_package(
+    monkeypatch,
+):
+    # The oauth_m2m path imports databricks.sdk, a submodule of the same
+    # "databricks" driver package as databricks.sql -- a workspace with
+    # only the connector installed hits this, not the exact "databricks"
+    # top-level name the plain equality check was written for.
+    from dbfresh.adapters import factory
+
+    class _MissingSdkSubmodule:
+        def __init__(self, **kwargs):
+            raise ModuleNotFoundError(
+                "No module named 'databricks.sdk'", name="databricks.sdk"
+            )
+
+    monkeypatch.setitem(factory._ADAPTERS, "databricks", _MissingSdkSubmodule)
+    with pytest.raises(MissingDriverError) as exc_info:
+        create_adapter("databricks", {"host": "x"})
+    assert "dbfresh[databricks]" in str(exc_info.value)
+
+
 def test_create_adapter_does_not_reword_an_unrelated_missing_module(
     monkeypatch,
 ):

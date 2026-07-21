@@ -96,7 +96,10 @@ def create_adapter(
         # import. Reword it into an actionable hint; anything else (an
         # unrelated missing module) propagates unchanged.
         driver = _DRIVER_EXTRAS.get(type_)
-        if driver is not None and exc.name == driver[0]:
+        if driver is not None and (
+            exc.name == driver[0]
+            or (exc.name or "").startswith(driver[0] + ".")
+        ):
             module, extra = driver
             raise MissingDriverError(
                 f"{type_!r} sources need the optional '{module}' driver, which "
