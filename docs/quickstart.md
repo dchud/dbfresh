@@ -31,17 +31,25 @@ uv tool install "dbfresh[sqlserver]"    # SQL Server (pymssql)
 uv tool install "dbfresh[databricks]"   # Databricks
 ```
 
-From a checkout, add `--extra sqlserver` (or `--extra databricks`) to
-`uv sync`. Without the extra, adding such a source fails with a hint that
-names the extra to install.
+From a checkout, add the matching extra to `uv sync`. `uv sync` makes the
+environment match *exactly* the extras you pass, so `--extra databricks`
+alone uninstalls the `sqlserver` extra (and vice versa) -- to use more than
+one source type, pass them together:
+
+```bash
+uv sync --extra sqlserver --extra databricks   # or: uv sync --all-extras
+```
+
+Without an extra, adding such a source fails with a hint that names the
+extra to install.
 
 Before that PyPI release, to install a global `dbfresh` command from a
 checkout -- rather than prefixing every call with `uv run` -- install the
-local project itself, pointed at the clone with `.` and including the extra
-you need:
+local project itself, pointed at the clone with `.` and including the
+extras you need (comma-separated in the brackets):
 
 ```bash
-uv tool install ".[databricks]"   # run inside the clone; add -e for editable
+uv tool install ".[sqlserver,databricks]"   # -e for editable
 ```
 
 The bare `uv tool install "dbfresh[databricks]"` resolves `dbfresh` from
