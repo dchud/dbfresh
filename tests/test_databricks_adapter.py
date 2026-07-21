@@ -615,6 +615,28 @@ def test_describe_history_last_modified_none_when_no_data_operations():
     )
 
 
+def test_describe_history_counts_non_write_data_operations():
+    # A table rebuilt nightly by CREATE OR REPLACE TABLE AS SELECT (not a
+    # WRITE) is a data change; only maintenance operations are excluded.
+    ctas = datetime(2026, 1, 5)
+    adapter = _make_bare_adapter(
+        [
+            (
+                "DESCRIBE HISTORY",
+                _desc("timestamp", "operation"),
+                [
+                    (datetime(2026, 1, 6), "OPTIMIZE"),
+                    (ctas, "CREATE OR REPLACE TABLE AS SELECT"),
+                ],
+            )
+        ]
+    )
+    assert (
+        adapter.describe_history_last_modified("main.gold.customer_360")
+        == ctas
+    )
+
+
 def test_validate_freshness_source_accepts_describe_forms_on_a_table():
     validate_freshness_source(
         "describe_history", DatabricksDialect(), is_view=False

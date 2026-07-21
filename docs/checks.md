@@ -97,9 +97,38 @@ computed in Python, then compared via `max_lag:`. `freshness_source:`
 selects the timestamp origin:
 
 - `column` (default) -- `MAX(column)`; requires `column:`.
-- `describe_history` / `describe_detail` -- Databricks-only, table-only
-  (see below); read Delta table metadata instead of querying a column at
-  all, so no `column:` is needed.
+- `describe_history` -- Databricks-only, table-only (see below). The most
+  recent data-changing commit from `DESCRIBE HISTORY` -- every operation
+  except maintenance (`OPTIMIZE`, `VACUUM`, `FSCK`, `CONVERT`), so any write
+  counts (`WRITE`, `MERGE`, `STREAMING UPDATE`, `COPY INTO`, `CREATE OR
+  REPLACE TABLE AS SELECT`, ...) while maintenance can't make a stale table
+  look fresh. No `column:` needed.
+- `describe_detail` -- Databricks-only, table-only (see below). The table's
+  `lastModified` from `DESCRIBE DETAIL` -- a single cheap metadata read, but
+  it advances on *any* commit, including `OPTIMIZE`/`VACUUM`, so a
+  maintenance job can mask staleness. No `column:` needed.
+
+Both DESCRIBE forms read Delta table metadata rather than a timestamp
+column, so they suit a table with no reliable modified-at column. Prefer
+`describe_history` when maintenance jobs run against the table (it tracks
+real data changes); `describe_detail` is the lighter option when they don't.
+
+```yaml
+checks:
+  # most recent data-changing commit; ignores OPTIMIZE/VACUUM maintenance
+  - source: warehouse
+    object: main.sales.orders
+    metric: freshness
+    freshness_source: describe_history
+    expect: { max_lag: 26h }
+
+  # the table's lastModified metadata (advances on any commit)
+  - source: warehouse
+    object: main.sales.orders
+    metric: freshness
+    freshness_source: describe_detail
+    expect: { max_lag: 26h }
+```
 
 Freshness can opt into the business calendar (`calendar: business`) instead
 of wall-clock lag -- see [Calendar & scheduling](calendar.md).
