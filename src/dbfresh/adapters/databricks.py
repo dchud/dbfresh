@@ -11,8 +11,9 @@ always ``None`` (Unity Catalog exposes no constraint metadata here), and
 
 Freshness metadata has two origins beyond a trusted timestamp column,
 both table-only (a view has no Delta storage to describe): ``DESCRIBE
-HISTORY`` filtered to data operations (excludes ``OPTIMIZE``/``VACUUM``
-noise), and ``DESCRIBE DETAIL``'s ``lastModified``. Never
+HISTORY`` (the newest commit that changed data -- every operation except
+maintenance like ``OPTIMIZE``/``VACUUM``), and ``DESCRIBE DETAIL``'s
+``lastModified``. Never
 ``information_schema.tables``' last-altered column for data freshness --
 it tracks DDL only, not inserts/updates/deletes.
 
@@ -79,7 +80,14 @@ class DatabricksDialect(Dialect):
     introspection_capabilities = frozenset({"stats"})
 
 
-_HISTORY_DATA_OPERATIONS = frozenset({"WRITE", "MERGE", "DELETE", "UPDATE"})
+# DESCRIBE HISTORY operations that don't change table data. Every other
+# operation is a data write -- WRITE/MERGE/DELETE/UPDATE, but also
+# STREAMING UPDATE, COPY INTO, CREATE/REPLACE TABLE AS SELECT, TRUNCATE,
+# RESTORE, CLONE -- so freshness excludes this maintenance set rather than
+# allow-listing writes (which silently missed the non-WRITE forms).
+_HISTORY_MAINTENANCE_OPERATIONS = frozenset(
+    {"OPTIMIZE", "VACUUM", "VACUUM START", "VACUUM END", "FSCK", "CONVERT"}
+)
 # DESCRIBE HISTORY returns rows newest-first; recent operations are all
 # that matter for a max-timestamp scan, so the fetch is bounded rather
 # than pulling the table's full retained history.
@@ -312,12 +320,15 @@ class DatabricksAdapter:
     def describe_history_last_modified(self, obj: str) -> datetime | None:
         """The most recent data-operation timestamp from ``DESCRIBE HISTORY``.
 
-        Filtered to ``WRITE``/``MERGE``/``DELETE``/``UPDATE`` so
-        ``OPTIMIZE``/``VACUUM`` maintenance noise never masks staleness.
-        ``None`` when the table has no matching history entry (or none at
-        all -- history retention is finite). The fetch is bounded to the
-        most recent entries -- history retention can span the table's
-        whole lifetime, and only recent operations matter for staleness.
+        Counts every operation except maintenance (``OPTIMIZE``,
+        ``VACUUM``, ``FSCK``, ``CONVERT``), so any data write -- ``WRITE``,
+        ``MERGE``, ``STREAMING UPDATE``, ``COPY INTO``, ``CREATE OR REPLACE
+        TABLE AS SELECT``, and so on -- keeps the table fresh while
+        maintenance noise never does. ``None`` when the fetched window
+        holds only maintenance operations (or the table has no history).
+        The fetch is bounded to the most recent entries -- history can span
+        the table's whole lifetime, and only the newest data change
+        matters.
         """
         history = self.rows(
             f"DESCRIBE HISTORY {obj} LIMIT {_HISTORY_FETCH_LIMIT}"
@@ -325,7 +336,7 @@ class DatabricksAdapter:
         timestamps = [
             row["timestamp"]
             for row in history
-            if row.get("operation") in _HISTORY_DATA_OPERATIONS
+            if row.get("operation") not in _HISTORY_MAINTENANCE_OPERATIONS
         ]
         return max(timestamps) if timestamps else None
 

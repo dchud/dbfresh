@@ -36,3 +36,7 @@ once releases are tagged.
 - The `databricks` extra now installs `pyarrow` (optional in
   databricks-sql-connector since 4.0), so `dbfresh[databricks]` can fetch
   query results out of the box.
+- `freshness_source: describe_history` counts every Databricks data
+  operation (e.g. `CREATE OR REPLACE TABLE AS SELECT`, `STREAMING UPDATE`,
+  `COPY INTO`), not just `WRITE`/`MERGE`/`DELETE`/`UPDATE`, so a table
+  written by one of those no longer reports no observation.

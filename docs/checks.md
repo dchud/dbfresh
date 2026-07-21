@@ -98,9 +98,11 @@ selects the timestamp origin:
 
 - `column` (default) -- `MAX(column)`; requires `column:`.
 - `describe_history` -- Databricks-only, table-only (see below). The most
-  recent *data*-changing operation from `DESCRIBE HISTORY`, filtered to
-  `WRITE`/`MERGE`/`DELETE`/`UPDATE` so maintenance operations (`OPTIMIZE`,
-  `VACUUM`) can't make a stale table look fresh. No `column:` needed.
+  recent data-changing commit from `DESCRIBE HISTORY` -- every operation
+  except maintenance (`OPTIMIZE`, `VACUUM`, `FSCK`, `CONVERT`), so any write
+  counts (`WRITE`, `MERGE`, `STREAMING UPDATE`, `COPY INTO`, `CREATE OR
+  REPLACE TABLE AS SELECT`, ...) while maintenance can't make a stale table
+  look fresh. No `column:` needed.
 - `describe_detail` -- Databricks-only, table-only (see below). The table's
   `lastModified` from `DESCRIBE DETAIL` -- a single cheap metadata read, but
   it advances on *any* commit, including `OPTIMIZE`/`VACUUM`, so a
@@ -113,7 +115,7 @@ real data changes); `describe_detail` is the lighter option when they don't.
 
 ```yaml
 checks:
-  # last real data change (WRITE/MERGE/DELETE/UPDATE); ignores OPTIMIZE/VACUUM
+  # most recent data-changing commit; ignores OPTIMIZE/VACUUM maintenance
   - source: warehouse
     object: main.sales.orders
     metric: freshness
