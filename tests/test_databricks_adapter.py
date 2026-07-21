@@ -10,6 +10,8 @@ is skipped unless those env vars are set.
 from __future__ import annotations
 
 import os
+import sys
+import types
 from datetime import datetime
 
 import pytest
@@ -25,6 +27,10 @@ from dbfresh.adapters.sqlserver import TSqlDialect
 DATABRICKS_HOST = os.environ.get("DBFRESH_DATABRICKS_HOST")
 DATABRICKS_HTTP_PATH = os.environ.get("DBFRESH_DATABRICKS_HTTP_PATH")
 DATABRICKS_TOKEN = os.environ.get("DBFRESH_DATABRICKS_TOKEN")
+DATABRICKS_CLIENT_ID = os.environ.get("DBFRESH_DATABRICKS_CLIENT_ID")
+DATABRICKS_CLIENT_SECRET = os.environ.get(
+    "DBFRESH_DATABRICKS_CLIENT_SECRET"
+)
 
 
 def test_module_imports_without_databricks_sql_connector_installed():
@@ -40,6 +46,104 @@ def test_constructing_adapter_needs_databricks_sql_connector_only_at_connect_tim
         DatabricksAdapter(
             host="x", http_path="/sql/1.0/warehouses/abc", token="t"
         )
+
+
+class _FakeSqlConnection:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def _install_fake_databricks_sql(monkeypatch) -> list[dict]:
+    """Fake ``databricks.sql``: ``connect(**kwargs)`` records its kwargs and
+    returns a stub connection, so ``DatabricksAdapter.__init__`` can run
+    without the real ``databricks-sql-connector`` installed.
+    """
+    calls: list[dict] = []
+
+    def connect(**kwargs):
+        calls.append(kwargs)
+        return _FakeSqlConnection()
+
+    package = types.ModuleType("databricks")
+    module = types.ModuleType("databricks.sql")
+    module.connect = connect
+    monkeypatch.setitem(sys.modules, "databricks", package)
+    monkeypatch.setitem(sys.modules, "databricks.sql", module)
+    return calls
+
+
+class _FakeConfig:
+    """Stands in for ``databricks.sdk.core.Config``: records its kwargs."""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+
+def _install_fake_databricks_sdk_core(monkeypatch) -> tuple[list, object]:
+    """Fake ``databricks.sdk.core``: ``Config`` records the kwargs it's built
+    with; ``oauth_service_principal`` records the ``Config`` it receives and
+    returns a sentinel, so the credentials-provider path can run without the
+    real ``databricks-sdk`` installed.
+    """
+    calls: list = []
+    sentinel = object()
+
+    def oauth_service_principal(config):
+        calls.append(config)
+        return sentinel
+
+    package = types.ModuleType("databricks.sdk")
+    module = types.ModuleType("databricks.sdk.core")
+    module.Config = _FakeConfig
+    module.oauth_service_principal = oauth_service_principal
+    monkeypatch.setitem(sys.modules, "databricks.sdk", package)
+    monkeypatch.setitem(sys.modules, "databricks.sdk.core", module)
+    return calls, sentinel
+
+
+def test_pat_auth_calls_connect_with_access_token(monkeypatch):
+    connect_calls = _install_fake_databricks_sql(monkeypatch)
+    DatabricksAdapter(host="h", http_path="p", token="dapi-xyz")
+    assert connect_calls == [
+        {
+            "server_hostname": "h",
+            "http_path": "p",
+            "access_token": "dapi-xyz",
+        }
+    ]
+
+
+def test_oauth_m2m_auth_calls_connect_with_credentials_provider(monkeypatch):
+    connect_calls = _install_fake_databricks_sql(monkeypatch)
+    sp_calls, sentinel = _install_fake_databricks_sdk_core(monkeypatch)
+    DatabricksAdapter(
+        host="h",
+        http_path="p",
+        client_id="cid",
+        client_secret="csec",
+        auth_type="oauth_m2m",
+    )
+    assert len(connect_calls) == 1
+    kwargs = connect_calls[0]
+    assert kwargs["server_hostname"] == "h"
+    assert kwargs["http_path"] == "p"
+    assert "access_token" not in kwargs
+    provider = kwargs["credentials_provider"]
+    assert callable(provider)
+    assert sp_calls == []  # not called yet -- connect() only stores it
+
+    result = provider()
+
+    assert result is sentinel
+    assert len(sp_calls) == 1
+    assert sp_calls[0].kwargs == {
+        "host": "https://h",
+        "client_id": "cid",
+        "client_secret": "csec",
+    }
 
 
 def test_dialect_freshness_capabilities():
@@ -551,6 +655,35 @@ def test_live_describe_reflects_columns_and_last_modified():
         host=DATABRICKS_HOST,
         http_path=DATABRICKS_HTTP_PATH,
         token=DATABRICKS_TOKEN,
+    )
+    try:
+        info = adapter.describe("main.default.dbfresh_probe")
+        assert info.columns
+        assert info.keys is None
+    finally:
+        adapter.close()
+
+
+@pytest.mark.skipif(
+    not (
+        DATABRICKS_HOST
+        and DATABRICKS_HTTP_PATH
+        and DATABRICKS_CLIENT_ID
+        and DATABRICKS_CLIENT_SECRET
+    ),
+    reason=(
+        "set DBFRESH_DATABRICKS_HOST/_HTTP_PATH/_CLIENT_ID/_CLIENT_SECRET "
+        "to run against a live Databricks SQL warehouse via a service "
+        "principal"
+    ),
+)
+def test_live_describe_via_service_principal():
+    adapter = DatabricksAdapter(
+        host=DATABRICKS_HOST,
+        http_path=DATABRICKS_HTTP_PATH,
+        client_id=DATABRICKS_CLIENT_ID,
+        client_secret=DATABRICKS_CLIENT_SECRET,
+        auth_type="oauth_m2m",
     )
     try:
         info = adapter.describe("main.default.dbfresh_probe")
