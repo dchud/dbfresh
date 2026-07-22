@@ -7,10 +7,14 @@ text/style output directly, without needing a running app.
 
 from __future__ import annotations
 
-from dbfresh.models import Status
-from dbfresh.report import render_history
+from dbfresh.models import Result, RunResult, Status
+from dbfresh.report import render_digest, render_history
 from dbfresh.tui.dashboard import status_glyph, status_style
-from dbfresh.tui.screens import _colorized_history
+from dbfresh.tui.screens import (
+    _colorized_digest,
+    _colorized_history,
+    _digest_segments,
+)
 
 _CANDIDATE = {
     "check_id": "aaa111222333444555",
@@ -169,3 +173,131 @@ def test_colorized_history_freshness_row_stays_aligned():
         segment.strip().startswith(glyph) and "FAIL" in segment
         for segment in segments
     )
+
+
+# --- _digest_segments / _colorized_digest ----------------------------------
+
+
+def _mixed_status_run() -> RunResult:
+    """One OK, one FAIL, one WARN -- enough to check that the OK check is
+    skipped and the two non-OK blocks come back in ``run.results`` order,
+    each paired with its own ``check_id``."""
+    return RunResult(
+        results=[
+            Result(
+                source="s",
+                object="a",
+                metric="row_count",
+                status=Status.OK,
+                value=5,
+                check_id="ok-check",
+            ),
+            Result(
+                source="s",
+                object="b",
+                metric="null_rate",
+                status=Status.FAIL,
+                value=0.2,
+                expected="max 0.01",
+                check_id="fail-check",
+            ),
+            Result(
+                source="s",
+                object="c",
+                metric="row_count",
+                status=Status.WARN,
+                value=0,
+                expected="between 1 and 10",
+                check_id="warn-check",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+
+
+def test_digest_segments_splits_non_ok_blocks_with_check_ids():
+    run = _mixed_status_run()
+    header, segments = _digest_segments(run, tz=None)
+
+    assert "3 checks" in header.plain
+    assert "1 passed" in header.plain
+    assert "1 failed" in header.plain
+    assert "1 warned" in header.plain
+
+    assert len(segments) == 2
+    (fail_result, fail_block), (warn_result, warn_block) = segments
+    assert fail_result.check_id == "fail-check"
+    assert warn_result.check_id == "warn-check"
+    assert "s.b · null_rate" in fail_block.plain
+    assert "s.c · row_count" in warn_block.plain
+
+
+def test_digest_segments_all_ok_run_has_no_segments():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="a",
+                metric="row_count",
+                status=Status.OK,
+                value=5,
+                check_id="ok-check",
+            ),
+        ],
+        status=Status.OK,
+    )
+    header, segments = _digest_segments(run, tz=None)
+
+    assert segments == []
+    assert "DATA CHECK REPORT" in header.plain
+
+
+def test_colorized_digest_preserves_render_digest_lines_verbatim():
+    """``_colorized_digest`` is now built on top of ``_digest_segments`` --
+    guard that the rebuild still reproduces ``render_digest``'s own plain
+    text unchanged, line for line, except each block header's leading
+    literal ``✗`` -- which was already swapped for the status's own glyph
+    (``status_glyph``, e.g. WARN's ``!``) before this refactor too, so
+    that substitution is not new behavior here, just preserved.
+
+    The very first line (the "DATA CHECK REPORT — <timestamp>" header)
+    is excluded: both functions resolve their own "now" independently, so
+    comparing it verbatim would be a rare source of flakiness for no
+    reason -- everything after it is deterministic from ``run`` alone.
+    """
+    run = _mixed_status_run()
+    plain_lines = render_digest(run, tz=None).split("\n")
+    colorized_lines = _colorized_digest(run, tz=None).plain.split("\n")
+    assert len(plain_lines) == len(colorized_lines)
+    for plain_line, colorized_line in zip(
+        plain_lines[1:], colorized_lines[1:], strict=True
+    ):
+        if plain_line.startswith("✗ "):
+            assert colorized_line[1:] == plain_line[1:]
+        else:
+            assert colorized_line == plain_line
+
+
+def test_colorized_digest_recolors_each_blocks_header_line():
+    run = _mixed_status_run()
+    text = _colorized_digest(run, tz=None)
+
+    fail_style = status_style(Status.FAIL)
+    fail_glyph = status_glyph(Status.FAIL)
+    colored = [
+        text.plain[span.start : span.end]
+        for span in text.spans
+        if span.style == fail_style
+    ]
+    assert any(segment.startswith(fail_glyph) for segment in colored)
+
+
+def test_colorized_digest_swaps_the_literal_fail_glyph_for_warns_own():
+    """render_digest prefixes every non-OK block with the same literal
+    "✗ ", regardless of status -- WARN's block is recolored with its own
+    glyph ("!"), not left reading as a FAIL."""
+    run = _mixed_status_run()
+    text = _colorized_digest(run, tz=None).plain
+    assert "✗ s.c · row_count" not in text
+    assert "! s.c · row_count" in text
+    assert "✗ s.b · null_rate" in text  # FAIL's own glyph is "✗" already
