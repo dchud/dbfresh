@@ -114,3 +114,36 @@ def test_freshness_on_a_non_temporal_value_is_a_clear_error():
     result = evaluate_check(_freshness_check(), a, now=now)
     assert result.status == Status.ERROR
     assert "not a date or datetime" in (result.error or "")
+
+
+def test_freshness_on_a_numeric_column_is_rejected_before_the_query_runs():
+    a = SqliteAdapter()
+    a.rows("CREATE TABLE t (created_at INTEGER)")
+    a.rows("INSERT INTO t (created_at) VALUES (20260710)")
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)
+    result = evaluate_check(_freshness_check(), a, now=now)
+    assert result.status == Status.ERROR
+    assert "created_at" in (result.error or "")
+    assert "INTEGER" in (result.error or "")
+    # The describe-time check must fire before MAX() runs -- not the
+    # runtime _to_aware_utc guard, which would say "returned a int".
+    assert "returned a int" not in (result.error or "")
+    a.close()
+
+
+class _DescribeRaisingSqliteAdapter(SqliteAdapter):
+    """A SqliteAdapter whose ``describe`` always fails -- simulates a source
+    with query access but no metadata/catalog access."""
+
+    def describe(self, obj):
+        raise RuntimeError("metadata unavailable")
+
+
+def test_freshness_column_check_is_best_effort_when_describe_fails():
+    a = _DescribeRaisingSqliteAdapter()
+    a.rows("CREATE TABLE t (created_at TEXT)")
+    a.rows("INSERT INTO t (created_at) VALUES ('2026-07-10 10:00:00')")
+    now = datetime(2026, 7, 10, 20, 0, tzinfo=UTC)  # 10h later
+    result = evaluate_check(_freshness_check(), a, now=now)
+    assert result.status == Status.OK
+    a.close()

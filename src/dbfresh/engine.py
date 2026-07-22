@@ -12,6 +12,7 @@ import structlog
 
 from dbfresh.adapters.base import (
     Adapter,
+    Column,
     HistoryAwareAdapter,
     validate_freshness_source,
 )
@@ -258,8 +259,11 @@ def _evaluate_assert_sql(check: Check, adapter: Adapter) -> Result:
 def _freshness_raw(check: Check, adapter: Adapter) -> Any:
     """The observed freshness timestamp, dispatched on ``check.freshness_source``.
 
-    ``column`` runs the usual ``MAX(column)`` query. The two DESCRIBE origins
-    are metadata-only (no column) and table-only: ``describe()`` supplies the
+    ``column`` runs the usual ``MAX(column)`` query, first resolving the
+    column's described type (best-effort, via
+    :func:`_described_freshness_column`) to reject a clearly-invalid
+    category before the query runs. The two DESCRIBE origins are
+    metadata-only (no column) and table-only: ``describe()`` supplies the
     object's ``is_view`` flag, validated here against the origin and the
     dialect's declared capability (a view must use ``column`` instead) --
     static capability is already enforced at config-validation time, but
@@ -268,6 +272,11 @@ def _freshness_raw(check: Check, adapter: Adapter) -> Any:
     call for its timestamp; ``describe_history`` reads it separately.
     """
     if check.freshness_source == "column":
+        described = _described_freshness_column(check, adapter)
+        if described is not None:
+            validate_freshness_source(
+                check.freshness_source, adapter.dialect, column=described
+            )
         sql = compile_metric_sql(check, adapter.dialect)
         return adapter.scalar(sql)
     info = adapter.describe(check.object)
@@ -283,6 +292,26 @@ def _freshness_raw(check: Check, adapter: Adapter) -> Any:
     return cast(HistoryAwareAdapter, adapter).describe_history_last_modified(
         check.object
     )
+
+
+def _described_freshness_column(
+    check: Check, adapter: Adapter
+) -> Column | None:
+    """The described column a freshness check reads, or None when it can't be
+    resolved: the check names no column, ``describe()`` is unsupported or
+    fails, or the column isn't in the returned metadata. Matched
+    case-insensitively. A missing column or a source without metadata access
+    then surfaces through the query itself, exactly as before -- this lookup
+    only enables the earlier type check, it never introduces a new failure.
+    """
+    if check.column is None:
+        return None
+    try:
+        info = adapter.describe(check.object)
+    except Exception:
+        return None
+    lowered = check.column.lower()
+    return next((c for c in info.columns if c.name.lower() == lowered), None)
 
 
 def _evaluate_freshness(
