@@ -32,6 +32,8 @@ once releases are tagged.
   screen when a run has failures to review.
 - The object-detail screen shows the highlighted check's error (or
   expected vs observed) inline, without drilling into its history.
+- The run report's failing checks are selectable — pressing Enter on one
+  opens that check's history.
 
 ### Fixed
 
