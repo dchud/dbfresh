@@ -682,7 +682,12 @@ class DbfreshApp(App):
 
         tz = display_timezone(self._require_config().calendar)
         self.push_screen(
-            ReportScreen(self.last_run, self._require_store(), tz=tz)
+            ReportScreen(
+                self.last_run,
+                self._require_store(),
+                tz=tz,
+                checks=self._require_config().checks,
+            )
         )
 
     def action_store(self) -> None:

@@ -4,7 +4,7 @@ import subprocess
 import threading
 from datetime import UTC, datetime
 
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, OptionList, Static
 
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -1131,9 +1131,17 @@ def test_report_action_shows_last_in_session_run_digest(tmp_path, pump_until):
             await pilot.pause()
 
             assert isinstance(app.screen, ReportScreen)
-            text = str(app.screen.query_one("#report-text").content)
-            assert "DATA CHECK REPORT" in text
-            assert "null_rate" in text  # the one failing check is listed
+            header_text = str(app.screen.query_one("#report-text").content)
+            assert "DATA CHECK REPORT" in header_text
+
+            # The one failing check (null_rate) is its own selectable
+            # option on the report, resolvable back to a Check via its
+            # check_id.
+            options = app.screen.query_one("#report-options", OptionList)
+            assert options.option_count == 1
+            option = options.get_option_at_index(0)
+            assert "null_rate" in str(option.prompt)
+            assert option.id == check_id(_null_rate_check())
 
     asyncio.run(scenario())
 
@@ -1157,6 +1165,43 @@ def test_report_action_before_any_run_shows_placeholder(tmp_path):
             assert isinstance(app.screen, ReportScreen)
             text = str(app.screen.query_one("#report-text").content)
             assert "no runs recorded yet" in text
+
+    asyncio.run(scenario())
+
+
+def test_report_gains_selectable_options_once_a_run_completes_while_open(
+    tmp_path, pump_until
+):
+    """Report is opened before any run this session (the placeholder --
+    no OptionList exists yet), then a run completes while it's still on
+    top: refresh_report has to mount a fresh OptionList, not just update
+    one, since compose() never built one for the placeholder."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            assert not app.screen.query("#report-options")
+
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+
+            assert isinstance(app.screen, ReportScreen)
+            assert app.screen._run is app.last_run
+            options = app.screen.query_one("#report-options", OptionList)
+            assert options.option_count == 1
+            assert "null_rate" in str(options.get_option_at_index(0).prompt)
 
     asyncio.run(scenario())
 
@@ -1254,9 +1299,169 @@ def test_report_action_prefers_in_session_run_over_store(tmp_path, pump_until):
 
             assert isinstance(app.screen, ReportScreen)
             assert app.screen._run is app.last_run
-            text = str(app.screen.query_one("#report-text").content)
-            assert "null_rate" in text  # the in-session run's failing check
-            assert "reconstructed from stored observations" not in text
+            header_text = str(app.screen.query_one("#report-text").content)
+            assert "reconstructed from stored observations" not in header_text
+
+            options = app.screen.query_one("#report-options", OptionList)
+            assert options.option_count == 1
+            # the in-session run's failing check
+            assert "null_rate" in str(options.get_option_at_index(0).prompt)
+
+    asyncio.run(scenario())
+
+
+def test_selecting_a_report_option_opens_that_checks_history(
+    tmp_path, pump_until
+):
+    """A run this session with a failing check makes the Report's digest
+    selectable (see ReportScreen._report_widgets) -- picking the failing
+    check's block jumps straight to its History, the same destination
+    ObjectDetailScreen's own row selection reaches.
+
+    No explicit focus call on the OptionList: ReportScreen.AUTO_FOCUS
+    already lands there on push (see its own docstring), so a plain
+    "p" then "enter" is the whole real interaction."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            options = app.screen.query_one("#report-options", OptionList)
+            assert options.option_count == 1
+            assert options.has_focus
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, HistoryScreen)
+            assert check_id(app.screen._check) == check_id(_null_rate_check())
+
+    asyncio.run(scenario())
+
+
+def test_selecting_a_report_option_for_a_check_no_longer_in_config_notifies(
+    tmp_path, pump_until
+):
+    """A check_id a run's block carries can outlive the check itself (a
+    config edit removed it between the run and now) -- ReportScreen
+    resolves the option's id against the *current* config's checks (see
+    ReportScreen._checks_by_id), so a stale id notifies instead of
+    crashing trying to push History for a Check it doesn't have."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            # Simulate the failing check having since been removed from
+            # config -- e.g. edited away in another window -- without
+            # needing a second app instance or a config reload roundtrip.
+            app.screen._checks_by_id.clear()
+
+            options = app.screen.query_one("#report-options", OptionList)
+            options.focus()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)  # no navigation
+            assert any(
+                "not in the current config" in n.message
+                for n in app._notifications
+            )
+
+    asyncio.run(scenario())
+
+
+def test_escape_still_returns_home_with_the_report_options_focused(
+    tmp_path, pump_until
+):
+    """OptionList owns 'enter'/click for its own selection, but not
+    'escape' -- confirm the Report's own Back binding still reaches Home
+    with the OptionList (rather than the screen itself) focused."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            options = app.screen.query_one("#report-options", OptionList)
+            assert options.has_focus
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert len(app.screen_stack) == 1  # back to Home
+
+    asyncio.run(scenario())
+
+
+def test_report_action_on_an_all_ok_run_has_no_selectable_options(
+    tmp_path, pump_until, seed_row_count_db, row_count_config
+):
+    """An all-OK in-session run's digest has no non-OK blocks -- the
+    Report shows just the header, with no OptionList to select from."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        seed_row_count_db(db)
+        cfg = row_count_config(
+            tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+        )
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("r")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+            await pilot.press("p")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ReportScreen)
+            assert app.last_run.status == Status.OK
+            header_text = str(app.screen.query_one("#report-text").content)
+            assert "DATA CHECK REPORT" in header_text
+            assert not app.screen.query("#report-options")
 
     asyncio.run(scenario())
 

@@ -18,8 +18,10 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    OptionList,
     Static,
 )
+from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import Check, check_id, parse_duration
@@ -29,7 +31,7 @@ from dbfresh.configurator import (
     remove_check,
     rewrite_check_expectation,
 )
-from dbfresh.models import RunResult, Status
+from dbfresh.models import Result, RunResult, Status
 from dbfresh.report import (
     _format_freshness_observed,
     _format_observed,
@@ -80,26 +82,26 @@ _HISTORY_OBSERVED_WIDTH = 28
 _HISTORY_STATUS_WIDTH = 8
 
 
-def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
-    """:func:`render_digest`'s plain text, recolored by status severity for
-    the Report screen.
+def _digest_segments(
+    run: RunResult, tz: tzinfo | None
+) -> tuple[Text, list[tuple[Result, Text]]]:
+    """The colorized digest split for the Report screen: the 2-line header,
+    and one ``(result, block)`` pair per non-OK/SKIPPED check.
 
-    ``render_digest`` prefixes every non-OK/SKIPPED block with the same
-    literal glyph ("✗ "), so WARN, FAIL, and ERROR read identically in the
-    plain-text digest the CLI prints -- that text stays untouched here.
-    This walks the same non-OK/SKIPPED results in the same order
-    ``render_digest`` iterates ``run.results`` to recover each block's
-    status, then recolors that block's header line with the grid's own
-    glyph/style for that status (:func:`~dbfresh.tui.dashboard.status_glyph`,
-    :func:`~dbfresh.tui.dashboard.status_style`).
+    Same walk :func:`_colorized_digest` builds on top of this for -- see
+    its own docstring for the recoloring rule and the defensive fallback --
+    just grouped into per-check blocks instead of one joined ``Text``, so
+    the Report screen can offer each block as its own selectable
+    ``OptionList`` option rather than one static paragraph.
 
-    The walk is defensive: if it ever falls out of step with the digest
-    text -- a future change to ``render_digest``'s line format -- the
-    affected line falls back to uncolored rather than raising.
-
-    ``render_digest``'s own first line (the "DATA CHECK REPORT — ..."
-    header, shared verbatim with the CLI's own digest) is bolded here on
-    the TUI side only -- the plain-text CLI output itself is untouched.
+    ``render_digest`` always emits a blank line right before every ``✗
+    ``-prefixed block header and never inside a block's own body lines
+    (see its own loop), so grouping on blank lines recovers exactly the
+    same blocks :func:`_colorized_digest` would recolor line-by-line. A
+    ``✗ `` line the ``blocks`` walk can't match to a result (the same
+    out-of-step case ``_colorized_digest`` guards) has nothing to pair it
+    with here and is dropped from the segment list -- unreachable today,
+    same as there.
     """
     plain = render_digest(run, tz=tz)
     blocks = iter(
@@ -107,23 +109,65 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
         for result in run.results
         if result.status not in (Status.OK, Status.SKIPPED)
     )
-    lines: list[Text] = []
-    for i, line in enumerate(plain.split("\n")):
-        if i == 0:
-            lines.append(Text(line, style="bold"))
+    plain_lines = plain.split("\n")
+    header = Text("\n").join(
+        [Text(plain_lines[0], style="bold"), Text(plain_lines[1])]
+    )
+
+    segments: list[tuple[Result, Text]] = []
+    current_result: Result | None = None
+    current_lines: list[Text] = []
+
+    def _flush() -> None:
+        if current_result is not None and current_lines:
+            segments.append((current_result, Text("\n").join(current_lines)))
+
+    for line in plain_lines[2:]:
+        if line == "":
+            _flush()
+            current_result = None
+            current_lines = []
             continue
-        if line.startswith("✗ "):
+        if line.startswith("✗ ") and not current_lines:
             result = next(blocks, None)
+            current_result = result
             if result is not None:
                 styled = Text(
                     status_glyph(result.status),
                     style=status_style(result.status),
                 )
                 styled.append(line[1:])
-                lines.append(styled)
-                continue
-        lines.append(Text(line))
-    return Text("\n").join(lines)
+                current_lines.append(styled)
+            else:
+                current_lines.append(Text(line))
+            continue
+        current_lines.append(Text(line))
+    _flush()
+    return header, segments
+
+
+def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
+    """:func:`render_digest`'s plain text, recolored by status severity for
+    the Report screen.
+
+    ``render_digest`` prefixes every non-OK/SKIPPED block with the same
+    literal glyph ("✗ "), so WARN, FAIL, and ERROR read identically in the
+    plain-text digest the CLI prints -- that text stays untouched here.
+    Built on top of :func:`_digest_segments` -- the same header-plus-blocks
+    split the Report screen's selectable ``OptionList`` uses -- rejoined
+    into one ``Text`` here for the non-interactive (reconstructed-run,
+    no-run) rendering paths that still show the whole digest as one block.
+
+    ``render_digest``'s own first line (the "DATA CHECK REPORT — ..."
+    header, shared verbatim with the CLI's own digest) is bolded here on
+    the TUI side only -- the plain-text CLI output itself is untouched.
+    """
+    header, segments = _digest_segments(run, tz=tz)
+    parts: list[Text] = [header]
+    for _result, block in segments:
+        parts.append(Text(""))
+        parts.append(block)
+    return Text("\n").join(parts)
 
 
 def _colorized_history(
@@ -197,29 +241,83 @@ class ReportScreen(Screen):
     is prefixed with a note saying so. Only when the store has no completed
     run either -- a genuinely fresh install -- is :data:`_NO_RUN_MESSAGE`
     shown.
+
+    An in-session run's non-OK/SKIPPED blocks are individually selectable
+    (see :meth:`_report_widgets`, :meth:`on_option_list_option_selected`):
+    picking one opens that check's :class:`HistoryScreen`. The
+    reconstructed and no-run digests stay plain text -- their checks are
+    not guaranteed to still exist in the current config.
     """
 
     TITLE = "Report"
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
+    # The enclosing VerticalScroll is itself focusable by default (so it
+    # can be scrolled from the keyboard) and precedes the OptionList in
+    # DOM order -- left to Textual's own default auto-focus, that
+    # container would win focus instead of the OptionList, and a plain
+    # "p" then Enter would do nothing. A no-op when there's no
+    # "#report-options" to find (the reconstructed/no-run fallbacks),
+    # same as no auto-focus at all -- mirrors ObjectDetailScreen's own
+    # override of the same default for the same reason.
+    AUTO_FOCUS = "#report-options"
+
     def __init__(
         self,
         run: RunResult | None,
         store: Store | None = None,
         tz: tzinfo | None = None,
+        checks: list[Check] | None = None,
     ) -> None:
         super().__init__()
         self._run = run
         self._store = store
         self._tz = tz
+        self._checks_by_id = {check_id(c): c for c in (checks or [])}
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Report", classes="screen-heading")
-        body = Static(self._render_body(), id="report-text", markup=False)
-        yield VerticalScroll(body)
+        yield VerticalScroll(*self._report_widgets())
         yield Footer()
+
+    def _report_widgets(self) -> list[Static | OptionList]:
+        """The Report's scrollable body.
+
+        An in-session run (the only case where every block's
+        :class:`~dbfresh.models.Result` still has a live
+        :class:`~dbfresh.checks.Check` behind it, via
+        ``self._checks_by_id``) renders the colorized 2-line header as
+        its own ``Static`` followed by a selectable ``OptionList`` -- one
+        option per non-OK/SKIPPED block, via :func:`_digest_segments` --
+        so picking one can jump straight to that check's History. An
+        all-OK in-session run has no segments, so no ``OptionList`` at
+        all -- just the header. The reconstructed-from-store and no-run
+        fallbacks stay exactly as before: the single plain-text ``Static``
+        :meth:`_render_body` has always rendered, unselectable -- a
+        reconstruction's checks aren't guaranteed to still be in the
+        current config (see :meth:`on_option_list_option_selected`).
+        """
+        if self._run is None:
+            return [
+                Static(self._render_body(), id="report-text", markup=False)
+            ]
+        header, segments = _digest_segments(self._run, tz=self._tz)
+        widgets: list[Static | OptionList] = [
+            Static(header, id="report-text", markup=False)
+        ]
+        if segments:
+            widgets.append(
+                OptionList(
+                    *(
+                        Option(block, id=result.check_id)
+                        for result, block in segments
+                    ),
+                    id="report-options",
+                )
+            )
+        return widgets
 
     def _render_body(self) -> str | Text:
         if self._run is not None:
@@ -236,13 +334,64 @@ class ReportScreen(Screen):
                 return Text.assemble(note, "\n\n", digest)
         return _NO_RUN_MESSAGE
 
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Enter (or a click) on a selectable report block: jump to that
+        check's :class:`HistoryScreen`, the same destination
+        :meth:`ObjectDetailScreen.on_data_table_row_selected` reaches from
+        a grid row.
+
+        The option's id is the block's ``check_id`` (see
+        :meth:`_report_widgets`), resolved against ``self._checks_by_id``
+        (the current config's checks, keyed by :func:`~dbfresh.checks.check_id`
+        -- passed in at push time) rather than trusted as-is, since a check
+        could be removed from config between when a run produced this
+        result and now. No match notifies instead of crashing.
+        """
+        cid = event.option.id
+        check = self._checks_by_id.get(cid) if cid is not None else None
+        if check is None:
+            self.notify(
+                "no history: check is not in the current config",
+                severity="warning",
+            )
+            return
+        assert self._store is not None  # every real caller supplies one
+        self.app.push_screen(HistoryScreen(self._store, check, tz=self._tz))
+
     def refresh_report(self, run: RunResult | None) -> None:
         """Re-render from ``run`` -- the app's Run action calls this on a
         completed run when this screen is the one currently on top, since
         ``compose`` above only ever renders once, at push time, off of
-        whatever ``run`` its constructor was given."""
+        whatever ``run`` its constructor was given.
+
+        When ``run`` is set, the header ``Static`` and the ``OptionList``
+        options are rebuilt from its segments in place; a screen pushed
+        without one yet (the reconstructed/no-run fallback had nothing to
+        select) gets a fresh ``OptionList`` mounted the first time a run
+        arrives. The no-run case is unchanged: :meth:`_render_body`
+        re-renders the same lone ``Static`` it always has.
+        """
         self._run = run
-        self.query_one("#report-text", Static).update(self._render_body())
+        if run is None:
+            self.query_one("#report-text", Static).update(self._render_body())
+            return
+        header, segments = _digest_segments(run, tz=self._tz)
+        self.query_one("#report-text", Static).update(header)
+        options = [
+            Option(block, id=result.check_id) for result, block in segments
+        ]
+        option_list = self.query_one_optional("#report-options", OptionList)
+        if option_list is not None:
+            option_list.clear_options()
+            if options:
+                option_list.add_options(options)
+            option_list.display = bool(options)
+        elif options:
+            self.query_one(VerticalScroll).mount(
+                OptionList(*options, id="report-options")
+            )
 
     def action_dismiss_screen(self) -> None:
         self.app.pop_screen()
