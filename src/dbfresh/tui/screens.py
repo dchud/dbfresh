@@ -18,8 +18,10 @@ from textual.widgets import (
     Header,
     Input,
     Label,
+    OptionList,
     Static,
 )
+from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import Check, check_id, parse_duration
@@ -239,29 +241,83 @@ class ReportScreen(Screen):
     is prefixed with a note saying so. Only when the store has no completed
     run either -- a genuinely fresh install -- is :data:`_NO_RUN_MESSAGE`
     shown.
+
+    An in-session run's non-OK/SKIPPED blocks are individually selectable
+    (see :meth:`_report_widgets`, :meth:`on_option_list_option_selected`):
+    picking one opens that check's :class:`HistoryScreen`. The
+    reconstructed and no-run digests stay plain text -- their checks are
+    not guaranteed to still exist in the current config.
     """
 
     TITLE = "Report"
 
     BINDINGS = [Binding("escape", "dismiss_screen", "Back")]
 
+    # The enclosing VerticalScroll is itself focusable by default (so it
+    # can be scrolled from the keyboard) and precedes the OptionList in
+    # DOM order -- left to Textual's own default auto-focus, that
+    # container would win focus instead of the OptionList, and a plain
+    # "p" then Enter would do nothing. A no-op when there's no
+    # "#report-options" to find (the reconstructed/no-run fallbacks),
+    # same as no auto-focus at all -- mirrors ObjectDetailScreen's own
+    # override of the same default for the same reason.
+    AUTO_FOCUS = "#report-options"
+
     def __init__(
         self,
         run: RunResult | None,
         store: Store | None = None,
         tz: tzinfo | None = None,
+        checks: list[Check] | None = None,
     ) -> None:
         super().__init__()
         self._run = run
         self._store = store
         self._tz = tz
+        self._checks_by_id = {check_id(c): c for c in (checks or [])}
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("Report", classes="screen-heading")
-        body = Static(self._render_body(), id="report-text", markup=False)
-        yield VerticalScroll(body)
+        yield VerticalScroll(*self._report_widgets())
         yield Footer()
+
+    def _report_widgets(self) -> list[Static | OptionList]:
+        """The Report's scrollable body.
+
+        An in-session run (the only case where every block's
+        :class:`~dbfresh.models.Result` still has a live
+        :class:`~dbfresh.checks.Check` behind it, via
+        ``self._checks_by_id``) renders the colorized 2-line header as
+        its own ``Static`` followed by a selectable ``OptionList`` -- one
+        option per non-OK/SKIPPED block, via :func:`_digest_segments` --
+        so picking one can jump straight to that check's History. An
+        all-OK in-session run has no segments, so no ``OptionList`` at
+        all -- just the header. The reconstructed-from-store and no-run
+        fallbacks stay exactly as before: the single plain-text ``Static``
+        :meth:`_render_body` has always rendered, unselectable -- a
+        reconstruction's checks aren't guaranteed to still be in the
+        current config (see :meth:`on_option_list_option_selected`).
+        """
+        if self._run is None:
+            return [
+                Static(self._render_body(), id="report-text", markup=False)
+            ]
+        header, segments = _digest_segments(self._run, tz=self._tz)
+        widgets: list[Static | OptionList] = [
+            Static(header, id="report-text", markup=False)
+        ]
+        if segments:
+            widgets.append(
+                OptionList(
+                    *(
+                        Option(block, id=result.check_id)
+                        for result, block in segments
+                    ),
+                    id="report-options",
+                )
+            )
+        return widgets
 
     def _render_body(self) -> str | Text:
         if self._run is not None:
@@ -278,13 +334,64 @@ class ReportScreen(Screen):
                 return Text.assemble(note, "\n\n", digest)
         return _NO_RUN_MESSAGE
 
+    def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
+        """Enter (or a click) on a selectable report block: jump to that
+        check's :class:`HistoryScreen`, the same destination
+        :meth:`ObjectDetailScreen.on_data_table_row_selected` reaches from
+        a grid row.
+
+        The option's id is the block's ``check_id`` (see
+        :meth:`_report_widgets`), resolved against ``self._checks_by_id``
+        (the current config's checks, keyed by :func:`~dbfresh.checks.check_id`
+        -- passed in at push time) rather than trusted as-is, since a check
+        could be removed from config between when a run produced this
+        result and now. No match notifies instead of crashing.
+        """
+        cid = event.option.id
+        check = self._checks_by_id.get(cid) if cid is not None else None
+        if check is None:
+            self.notify(
+                "no history: check is not in the current config",
+                severity="warning",
+            )
+            return
+        assert self._store is not None  # every real caller supplies one
+        self.app.push_screen(HistoryScreen(self._store, check, tz=self._tz))
+
     def refresh_report(self, run: RunResult | None) -> None:
         """Re-render from ``run`` -- the app's Run action calls this on a
         completed run when this screen is the one currently on top, since
         ``compose`` above only ever renders once, at push time, off of
-        whatever ``run`` its constructor was given."""
+        whatever ``run`` its constructor was given.
+
+        When ``run`` is set, the header ``Static`` and the ``OptionList``
+        options are rebuilt from its segments in place; a screen pushed
+        without one yet (the reconstructed/no-run fallback had nothing to
+        select) gets a fresh ``OptionList`` mounted the first time a run
+        arrives. The no-run case is unchanged: :meth:`_render_body`
+        re-renders the same lone ``Static`` it always has.
+        """
         self._run = run
-        self.query_one("#report-text", Static).update(self._render_body())
+        if run is None:
+            self.query_one("#report-text", Static).update(self._render_body())
+            return
+        header, segments = _digest_segments(run, tz=self._tz)
+        self.query_one("#report-text", Static).update(header)
+        options = [
+            Option(block, id=result.check_id) for result, block in segments
+        ]
+        option_list = self.query_one_optional("#report-options", OptionList)
+        if option_list is not None:
+            option_list.clear_options()
+            if options:
+                option_list.add_options(options)
+            option_list.display = bool(options)
+        elif options:
+            self.query_one(VerticalScroll).mount(
+                OptionList(*options, id="report-options")
+            )
 
     def action_dismiss_screen(self) -> None:
         self.app.pop_screen()
