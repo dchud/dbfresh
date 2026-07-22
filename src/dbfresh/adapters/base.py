@@ -93,8 +93,21 @@ _DESCRIBE_FRESHNESS_SOURCES = frozenset(
 )
 
 
+# Column categories a freshness check can never read a timestamp from.
+# STRING is allowed (a text column may hold ISO-formatted timestamps, which
+# the engine parses); TEMPORAL is allowed (a dateless TIME column is temporal
+# but caught by the engine's value guard, not here).
+_NON_TEMPORAL_FRESHNESS_CATEGORIES = frozenset(
+    {Category.NUMERIC, Category.BOOLEAN, Category.OTHER}
+)
+
+
 def validate_freshness_source(
-    freshness_source: str, dialect: Dialect, is_view: bool = False
+    freshness_source: str,
+    dialect: Dialect,
+    is_view: bool = False,
+    *,
+    column: Column | None = None,
 ) -> None:
     """Validate a ``freshness_source`` against dialect capability and object kind.
 
@@ -105,6 +118,11 @@ def validate_freshness_source(
     a view must use a timestamp ``column`` instead. Generic across every
     engine: the DESCRIBE forms happen to be Databricks-only today only
     because no other dialect declares them in ``freshness_sources``.
+
+    When ``column`` is given for a ``column`` source, also rejects a column
+    whose type category can never yield a timestamp (``NUMERIC``,
+    ``BOOLEAN``, ``OTHER``); ``STRING`` and ``TEMPORAL`` are left to the
+    engine. ``column=None`` (the default) skips this check entirely.
     """
     if freshness_source not in dialect.freshness_sources:
         raise ValueError(
@@ -115,6 +133,15 @@ def validate_freshness_source(
         raise ValueError(
             f"freshness_source {freshness_source!r} is not valid for a view; "
             "views must use a timestamp column"
+        )
+    if (
+        freshness_source == "column"
+        and column is not None
+        and column.category in _NON_TEMPORAL_FRESHNESS_CATEGORIES
+    ):
+        raise ValueError(
+            f"freshness column {column.name!r} is {column.type} "
+            f"({column.category.value}), not a date or datetime type"
         )
 
 

@@ -34,6 +34,9 @@ once releases are tagged.
   expected vs observed) inline, without drilling into its history.
 - The run report's failing checks are selectable — pressing Enter on one
   opens that check's history.
+- A `freshness` check on a numeric, boolean, or other non-date/datetime
+  column fails with a message naming the column and its type, before the
+  query runs. A text column holding ISO timestamps stays valid.
 
 ### Fixed
 
