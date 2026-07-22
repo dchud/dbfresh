@@ -16,7 +16,7 @@ from datetime import datetime
 
 import pytest
 
-from dbfresh.adapters.base import Category, validate_freshness_source
+from dbfresh.adapters.base import Category, Column, validate_freshness_source
 from dbfresh.adapters.databricks import (
     DatabricksAdapter,
     DatabricksDialect,
@@ -661,6 +661,47 @@ def test_validate_freshness_source_rejects_describe_forms_on_a_view(source):
 def test_validate_freshness_source_rejects_capability_lacking_engine(source):
     with pytest.raises(ValueError, match="tsql"):
         validate_freshness_source(source, TSqlDialect(), is_view=False)
+
+
+@pytest.mark.parametrize(
+    ("column", "expected_type"),
+    [
+        (Column("row_count", "INTEGER", False, Category.NUMERIC), "INTEGER"),
+        (Column("is_active", "BOOLEAN", False, Category.BOOLEAN), "BOOLEAN"),
+        (Column("payload", "JSON", False, Category.OTHER), "JSON"),
+    ],
+)
+def test_validate_freshness_source_rejects_non_temporal_column_categories(
+    column, expected_type
+):
+    with pytest.raises(ValueError) as excinfo:
+        validate_freshness_source(
+            "column", TSqlDialect(), is_view=False, column=column
+        )
+    assert column.name in str(excinfo.value)
+    assert expected_type in str(excinfo.value)
+
+
+def test_validate_freshness_source_accepts_temporal_column():
+    column = Column("created_at", "DATETIME", False, Category.TEMPORAL)
+    validate_freshness_source(
+        "column", TSqlDialect(), is_view=False, column=column
+    )
+
+
+def test_validate_freshness_source_accepts_string_column():
+    # A STRING column may hold ISO-formatted timestamps, which the engine
+    # parses -- rejecting it would be a regression.
+    column = Column("created_at", "TEXT", False, Category.STRING)
+    validate_freshness_source(
+        "column", TSqlDialect(), is_view=False, column=column
+    )
+
+
+def test_validate_freshness_source_with_no_column_does_not_raise():
+    # column=None is the default, and how every DESCRIBE-source caller
+    # invokes it today -- behavior must be unchanged.
+    validate_freshness_source("column", TSqlDialect(), is_view=False)
 
 
 @pytest.mark.skipif(
