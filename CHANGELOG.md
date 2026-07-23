@@ -37,8 +37,15 @@ once releases are tagged.
 - A `freshness` check on a numeric, boolean, or other non-date/datetime
   column fails with a message naming the column and its type, before the
   query runs. A text column holding ISO timestamps stays valid.
+- The object-detail screen's run affordance is labeled "Run these checks"
+  (was "Run this object").
 
 ### Fixed
+
+- The run-complete toast no longer offers `p` for the report after a run
+  finished from a screen where the report can't be opened — the report is
+  Home-only, so a run started from the object-detail screen now completes
+  without a dead hint.
 
 - A freshness check on a `date`-typed column no longer crashes; a
   date-only value is treated as midnight in the source timezone.

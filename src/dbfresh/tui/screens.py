@@ -527,11 +527,11 @@ class ObjectDetailScreen(Screen[bool]):
 
     BINDINGS = [
         Binding("escape", "dismiss_screen", "Back"),
-        Binding("O", "run_object", "Run this object"),
+        Binding("O", "run_object", "Run these checks"),
     ]
 
     # Textual's default auto-focus (App.AUTO_FOCUS = "*") lands on the
-    # first focusable widget in DOM order -- since the "Run this object"
+    # first focusable widget in DOM order -- since the "Run these checks"
     # button above the grid (see compose()) is focusable too, without this
     # it would steal initial focus from the grid instead, breaking Enter's
     # row-drill-in as the screen's own opening behavior.
@@ -566,7 +566,7 @@ class ObjectDetailScreen(Screen[bool]):
         yield Static(
             f"{self._source}.{self._object}", id="object-detail-heading"
         )
-        yield Horizontal(Button("Run this object", id=_RUN_OBJECT_BUTTON_ID))
+        yield Horizontal(Button("Run these checks", id=_RUN_OBJECT_BUTTON_ID))
         yield DrillDownTable(
             id=_DETAIL_GRID_ID,
             cursor_type="row",
@@ -673,7 +673,7 @@ class ObjectDetailScreen(Screen[bool]):
         line.display = True
 
     def action_run_object(self) -> None:
-        """Run only this object's checks (the "Run this object" button's
+        """Run only this object's checks (the "Run these checks" button's
         binding) -- distinct from the global 'r' (run every check), which
         stays bound to ``DbfreshApp.action_run_checks`` and keeps working
         unchanged from this screen.
@@ -1177,7 +1177,7 @@ Home only
   enter    open the selected object
 
 Object detail
-  O        run this object's checks
+  O        run these checks
   enter    open the selected check's history
 
 Any other screen

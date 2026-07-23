@@ -749,7 +749,7 @@ def test_object_detail_never_observed_check_hides_the_line(tmp_path):
     asyncio.run(scenario())
 
 
-# -- "Run this object" (object-scoped run) -----------------------------------
+# -- "Run these checks" (object-scoped run) ----------------------------------
 
 
 def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
