@@ -749,7 +749,7 @@ def test_object_detail_never_observed_check_hides_the_line(tmp_path):
     asyncio.run(scenario())
 
 
-# -- "Run this object" (object-scoped run) -----------------------------------
+# -- "Run these checks" (object-scoped run) ----------------------------------
 
 
 def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
@@ -884,6 +884,99 @@ def test_object_detail_inline_save_is_used_by_an_immediate_scoped_run(
                 r for r in app.last_run.results if r.metric == "row_count"
             )
             assert result.status == Status.FAIL
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_run_label_is_plural_for_multiple_checks(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)  # three checks on t
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            button = app.screen.query_one("#detail-run-object-btn", Button)
+            assert str(button.label) == "Run these checks"
+            assert (
+                app.screen.active_bindings["O"].binding.description
+                == "Run these checks"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_run_label_is_singular_for_one_check(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "checks:\n"
+            "  - source: s\n"
+            "    object: t\n"
+            "    metric: row_count\n"
+            "    expect: { between: [1, 1000] }\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            button = app.screen.query_one("#detail-run-object-btn", Button)
+            assert str(button.label) == "Run this check"
+            assert (
+                app.screen.active_bindings["O"].binding.description
+                == "Run this check"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_run_label_becomes_singular_after_delete(tmp_path):
+    """Deleting a check down to one flips the run affordance's label -- both
+    the button and the footer binding -- from plural to singular, via
+    refresh_grid."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "checks:\n"
+            "  - source: s\n"
+            "    object: t\n"
+            "    metric: row_count\n"
+            "    expect: { between: [1, 1000] }\n"
+            "  - source: s\n"
+            "    object: t\n"
+            "    metric: null_rate\n"
+            "    column: email\n"
+            "    expect: { max: 0.05 }\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            button = app.screen.query_one("#detail-run-object-btn", Button)
+            assert str(button.label) == "Run these checks"
+
+            # Delete the null_rate check, leaving a single check on t.
+            app.screen.query_one("#detail-delete-1", Button).press()
+            await pilot.pause()
+            app.screen.query_one("#detail-confirm-1", Button).press()
+            await pilot.pause()
+
+            assert str(button.label) == "Run this check"
+            assert (
+                app.screen.active_bindings["O"].binding.description
+                == "Run this check"
+            )
 
     asyncio.run(scenario())
 

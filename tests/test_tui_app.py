@@ -783,6 +783,49 @@ def test_run_action_success_toast_omits_report_hint_on_an_all_ok_run(
     asyncio.run(scenario())
 
 
+def test_run_object_toast_omits_report_hint_from_the_object_screen(
+    tmp_path, pump_until
+):
+    """A run started from the object-detail screen completes with that screen
+    still on top, where the report action is disabled -- it is Home-only (see
+    _HOME_ONLY_ACTIONS). The failing run still needs review, but the toast
+    must not point at 'p': pressing it there does nothing."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")  # Home -> ObjectDetailScreen (object t)
+            await pilot.pause()
+            assert isinstance(app.screen, ObjectDetailScreen)
+
+            await pilot.press("O")  # run these checks (scoped)
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot,
+                lambda: any(
+                    n.title == "Run complete" for n in app._notifications
+                ),
+            )
+
+            assert isinstance(app.screen, ObjectDetailScreen)
+            notification = next(
+                n for n in app._notifications if n.title == "Run complete"
+            )
+            # object t's null_rate check fails, so the run needs review --
+            # yet the report is unreachable here, so no 'p' hint is offered.
+            assert "failed" in notification.message
+            assert "press 'p'" not in notification.message
+
+    asyncio.run(scenario())
+
+
 def test_run_action_wires_per_check_progress_into_the_header(
     tmp_path, monkeypatch, pump_until
 ):

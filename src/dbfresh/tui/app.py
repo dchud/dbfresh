@@ -612,7 +612,14 @@ class DbfreshApp(App):
                 Status.FAIL,
                 Status.ERROR,
             )
-            if needs_review:
+            # Only point at 'p' when the report can actually be opened from
+            # here: it is a Home-only action (see _HOME_ONLY_ACTIONS), so a
+            # run that finishes with a screen pushed on top of Home -- e.g. a
+            # scoped run started from the object-detail screen -- has no
+            # reachable report to offer. Reuse check_action so the hint and
+            # the binding can never disagree.
+            report_reachable = self.check_action("report", ()) is True
+            if needs_review and report_reachable:
                 message = f"{message} -- press 'p' for the report"
             self.notify(
                 message,

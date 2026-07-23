@@ -31,7 +31,7 @@ def filter_checks(
     also given.
 
     ``object_`` mirrors ``only``'s shape one level down -- it's how the
-    TUI's "run this object" affordance
+    TUI's "run these checks" affordance
     (:class:`~dbfresh.tui.screens.ObjectDetailScreen`) scopes a run to
     exactly the checks shown on that screen. The CLI's own ``--only`` flag
     never sets it, so ``dbfresh run --only``'s existing source-scoped

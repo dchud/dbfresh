@@ -364,7 +364,7 @@ def test_help_overlay_opens_from_home_with_bindings_and_status_legend(
             assert "reload config" in bindings_text
             assert "non-OK filter" in bindings_text
             assert "search by object" in bindings_text
-            assert "run this object" in bindings_text
+            assert "run these checks" in bindings_text
             legend_text = str(app.screen.query_one("#help-legend").render())
             assert "ok" in legend_text and "never observed" in legend_text
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
-from textual.binding import Binding
+from textual.binding import ActiveBinding, Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
@@ -527,15 +528,44 @@ class ObjectDetailScreen(Screen[bool]):
 
     BINDINGS = [
         Binding("escape", "dismiss_screen", "Back"),
-        Binding("O", "run_object", "Run this object"),
+        Binding("O", "run_object", "Run these checks"),
     ]
 
     # Textual's default auto-focus (App.AUTO_FOCUS = "*") lands on the
-    # first focusable widget in DOM order -- since the "Run this object"
+    # first focusable widget in DOM order -- since the "Run these checks"
     # button above the grid (see compose()) is focusable too, without this
     # it would steal initial focus from the grid instead, breaking Enter's
     # row-drill-in as the screen's own opening behavior.
     AUTO_FOCUS = f"#{_DETAIL_GRID_ID}"
+
+    def _run_object_label(self) -> str:
+        """The run affordance's label, singular when this object has exactly
+        one check ("Run this check") and plural otherwise ("Run these
+        checks"). Used for both the button and the footer binding."""
+        count = sum(
+            1
+            for c in self._config.checks
+            if c.source == self._source and c.object == self._object
+        )
+        return "Run this check" if count == 1 else "Run these checks"
+
+    @property
+    def active_bindings(self) -> dict[str, ActiveBinding]:
+        """Reflect the object's check count in the footer's run-affordance
+        label the same way the button does -- the class binding's static
+        "Run these checks" is shown as the singular form for a lone check.
+        Only the description changes; the key and action stay intact."""
+        label = self._run_object_label()
+        return {
+            key: (
+                active._replace(
+                    binding=replace(active.binding, description=label)
+                )
+                if active.binding.action == "run_object"
+                else active
+            )
+            for key, active in super().active_bindings.items()
+        }
 
     def __init__(
         self,
@@ -566,7 +596,9 @@ class ObjectDetailScreen(Screen[bool]):
         yield Static(
             f"{self._source}.{self._object}", id="object-detail-heading"
         )
-        yield Horizontal(Button("Run this object", id=_RUN_OBJECT_BUTTON_ID))
+        yield Horizontal(
+            Button(self._run_object_label(), id=_RUN_OBJECT_BUTTON_ID)
+        )
         yield DrillDownTable(
             id=_DETAIL_GRID_ID,
             cursor_type="row",
@@ -620,6 +652,12 @@ class ObjectDetailScreen(Screen[bool]):
         populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
         self._sync_check_detail_line(self._current_row_key(table))
+        # A delete can change the check count; keep the button label and the
+        # footer's run-affordance label (see active_bindings) in step with it.
+        self.query_one(
+            f"#{_RUN_OBJECT_BUTTON_ID}", Button
+        ).label = self._run_object_label()
+        self.refresh_bindings()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
@@ -673,7 +711,7 @@ class ObjectDetailScreen(Screen[bool]):
         line.display = True
 
     def action_run_object(self) -> None:
-        """Run only this object's checks (the "Run this object" button's
+        """Run only this object's checks (the "Run these checks" button's
         binding) -- distinct from the global 'r' (run every check), which
         stays bound to ``DbfreshApp.action_run_checks`` and keeps working
         unchanged from this screen.
@@ -1177,7 +1215,7 @@ Home only
   enter    open the selected object
 
 Object detail
-  O        run this object's checks
+  O        run these checks
   enter    open the selected check's history
 
 Any other screen
