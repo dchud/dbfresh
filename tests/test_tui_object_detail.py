@@ -848,6 +848,46 @@ def test_object_detail_run_object_binding_matches_the_button(
     asyncio.run(scenario())
 
 
+def test_object_detail_inline_save_is_used_by_an_immediate_scoped_run(
+    tmp_path, seed_row_count_db, row_count_config, pump_until
+):
+    """An inline Save must land in the *running app's* config, not just
+    this screen's own copy -- otherwise pressing 'O' right after Save,
+    without ever dismissing this screen, runs the stale expectation. 3
+    rows passes ``[1, 10]`` but fails ``[5, 10]``: editing the lower bound
+    to 5 and running immediately must come back FAIL, not OK.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        seed_row_count_db(db)
+        cfg = row_count_config(
+            tmp_path / "config.yaml", db, "{ between: [1, 10] }"
+        )
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            app.screen.query_one("#detail-lo-0").value = "5"
+            app.screen.query_one("#detail-save-0", Button).press()
+            await pilot.pause()
+
+            await pilot.press("O")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+
+            assert app.last_run is not None
+            result = next(
+                r for r in app.last_run.results if r.metric == "row_count"
+            )
+            assert result.status == Status.FAIL
+
+    asyncio.run(scenario())
+
+
 def test_global_run_from_object_detail_still_runs_every_object(
     tmp_path, pump_until
 ):
