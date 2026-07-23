@@ -725,6 +725,26 @@ class DbfreshApp(App):
             self._on_object_detail_dismissed,
         )
 
+    def reload_config_from_disk(self) -> Config | None:
+        """Re-read config_path into self.config after a write this session
+        made, and bring the dashboard back in step. Returns the reloaded
+        Config, or None (after surfacing a toast) when the reload failed,
+        leaving the prior config in place. Shared by the object-detail
+        dismiss path and by an inline save there, so an immediate scoped run
+        reads the just-saved values rather than the stale in-memory config."""
+        try:
+            self._reload_config()
+        except Exception as exc:
+            self.notify(
+                f"config reload failed after write: {exc}",
+                title="Reload failed",
+                severity="error",
+                timeout=10,
+            )
+            return None
+        self.refresh_dashboard()
+        return self._require_config()
+
     def _on_object_detail_dismissed(self, changed: bool | None) -> None:
         """Mirrors :meth:`_on_configure_dismissed`: an edit or delete made
         from the drill-in already wrote straight to disk (unlike Configure's
@@ -736,17 +756,7 @@ class DbfreshApp(App):
         """
         if not changed:
             return
-        try:
-            self._reload_config()
-        except Exception as exc:
-            self.notify(
-                f"config reload failed after write: {exc}",
-                title="Reload failed",
-                severity="error",
-                timeout=10,
-            )
-            return
-        self.refresh_dashboard()
+        self.reload_config_from_disk()
 
     def on_unmount(self) -> None:
         if self.store is not None:
