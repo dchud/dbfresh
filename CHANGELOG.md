@@ -49,3 +49,6 @@ once releases are tagged.
   operation (e.g. `CREATE OR REPLACE TABLE AS SELECT`, `STREAMING UPDATE`,
   `COPY INTO`), not just `WRITE`/`MERGE`/`DELETE`/`UPDATE`, so a table
   written by one of those no longer reports no observation.
+- Editing a check's threshold on the object-detail screen and running that
+  object's checks immediately now uses the new value; the running app's
+  config is refreshed on save, not only when you leave the screen.

@@ -25,7 +25,7 @@ from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import Check, check_id, parse_duration
-from dbfresh.config import Config, load_config_tolerant
+from dbfresh.config import Config
 from dbfresh.configurator import (
     find_check_file,
     remove_check,
@@ -998,20 +998,18 @@ class ObjectDetailScreen(Screen[bool]):
         await self._reload_and_refresh()
 
     async def _reload_and_refresh(self) -> None:
-        """Reload config from disk after a write this screen just made, and
-        re-render both the grid and the edit panel from it -- so an edit or
-        delete is reflected here immediately rather than only once the user
-        pops back to Home and drills in again."""
-        try:
-            self._config, _missing = load_config_tolerant(self._config_path)
-        except Exception as exc:
-            self.notify(
-                f"config reload failed after write: {exc}",
-                title="Reload failed",
-                severity="error",
-                timeout=10,
-            )
+        """Reload config into the running app after a write this screen just
+        made -- so an immediate scoped run (the 'Run these checks' affordance)
+        uses the new values, not the stale in-memory config -- then re-render
+        this screen's grid and edit panel from it."""
+        from dbfresh.tui.app import DbfreshApp
+
+        app = self.app
+        assert isinstance(app, DbfreshApp)
+        reloaded = app.reload_config_from_disk()
+        if reloaded is None:  # reload failed; app surfaced the toast
             return
+        self._config = reloaded
         self.refresh_grid()
         await self._mount_edit_checks()
 
