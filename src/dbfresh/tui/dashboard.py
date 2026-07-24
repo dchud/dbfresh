@@ -55,6 +55,12 @@ _STATUS_STYLE: dict[Status | None, str] = {
 # cell just changed", never a check's own status.
 HIGHLIGHT_BG = "#5b6078"
 
+# How long flash_cell's highlight stays up before it restores the plain
+# cell. A module global (rather than a bare default baked into flash_cell's
+# signature) so a test can monkeypatch it down to run the flash-timing
+# tests fast, without changing the delay any real caller sees.
+DEFAULT_FLASH_DELAY = 0.4
+
 # A day/overall cell is one glyph, not a word -- the grid's whole point is
 # fitting many rows/columns in limited width. FAIL ("bad data": the check
 # ran and the value failed its expectation) and ERROR ("source unreachable":
@@ -595,7 +601,7 @@ def flash_cell(
     owner: MessagePump,
     timers: dict[tuple[str, str], Timer],
     *,
-    delay: float = 0.4,
+    delay: float | None = None,
 ) -> None:
     """Write ``cell`` (built by ``_status_cell``/``_day_cell``) with a
     brief neutral highlight background, then restore the plain ``cell``
@@ -609,7 +615,15 @@ def flash_cell(
     own, so a stale clear can never fire later and revert the cell to a
     status this same cell has already moved past (e.g. the Home overall
     changing again as more of an object's checks land).
+
+    ``delay`` defaults to :data:`DEFAULT_FLASH_DELAY`, read at call time
+    (not bound as a default argument) so a test's
+    ``monkeypatch.setattr(dashboard, "DEFAULT_FLASH_DELAY", ...)`` takes
+    effect on every call made after the patch.
     """
+    if delay is None:
+        delay = DEFAULT_FLASH_DELAY
+
     key = (row_key, column_key)
     pending = timers.pop(key, None)
     if pending is not None:
