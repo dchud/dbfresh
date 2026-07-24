@@ -789,6 +789,88 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
     asyncio.run(scenario())
 
 
+def test_object_detail_overall_cell_updates_live_via_apply_live_result(
+    tmp_path,
+):
+    """Asserted at the handler level -- calling apply_live_result directly
+    with a synthetic Result -- rather than racing the worker thread for a
+    genuine mid-run snapshot, which is flaky.
+
+    The check's own row flips the instant its result arrives; an
+    unrelated check on the same object, with no result yet, is
+    untouched."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            null_rate_id = check_id(_null_rate_check())
+            row_count_id = check_id(_row_count_check())
+            assert _overall_glyph(detail_table, null_rate_id) == "·"
+
+            app.screen.apply_live_result(
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.FAIL,
+                    source="s",
+                    check_id=null_rate_id,
+                )
+            )
+            await pilot.pause()
+
+            assert _overall_glyph(detail_table, null_rate_id) == "✗"
+            assert _overall_glyph(detail_table, row_count_id) == "·"
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_apply_live_result_ignores_a_different_objects_check(
+    tmp_path,
+):
+    """A full run touches every object, not just the one this screen is
+    showing -- a result for a different source/object must never reach
+    into this screen's grid (there is no row for it to land on)."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)  # drills into s.t
+            detail_table = app.screen.query_one(DataTable)
+            row_count_id = check_id(
+                Check(source="s", object="t", metric="row_count")
+            )
+            assert _overall_glyph(detail_table, row_count_id) == "·"
+
+            app.screen.apply_live_result(
+                Result(
+                    object="u",
+                    metric="row_count",
+                    status=Status.OK,
+                    source="s",
+                    check_id=check_id(
+                        Check(source="s", object="u", metric="row_count")
+                    ),
+                )
+            )
+            await pilot.pause()
+
+            assert _overall_glyph(detail_table, row_count_id) == "·"
+
+    asyncio.run(scenario())
+
+
 def test_object_detail_run_this_object_also_refreshes_the_home_grid(
     tmp_path, pump_until
 ):

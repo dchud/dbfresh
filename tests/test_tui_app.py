@@ -12,7 +12,7 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import load_config_tolerant
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
-from dbfresh.tui.app import DbfreshApp
+from dbfresh.tui.app import DbfreshApp, RunProgress
 from dbfresh.tui.dashboard import header_key, is_header_key
 from dbfresh.tui.screens import HistoryScreen, ObjectDetailScreen, ReportScreen
 
@@ -57,6 +57,10 @@ def _null_rate_check():
 
 def _overall_glyph(table, row_key):
     return table.get_cell(row_key, "overall").plain
+
+
+def _day_glyph(table, row_key, day):
+    return table.get_cell(row_key, day.isoformat()).plain
 
 
 def _multi_object_config(path):
@@ -857,6 +861,190 @@ def test_run_action_wires_per_check_progress_into_the_header(
             # on that source's one connection (see dbfresh.engine.run_checks)
             # -- one RunProgress message per completed check, counting up.
             assert seen == [(1, 2), (2, 2)]
+
+    asyncio.run(scenario())
+
+
+def test_home_overall_and_day_cell_update_live_as_results_arrive(
+    tmp_path, monkeypatch
+):
+    """Asserted at the handler level -- calling on_run_progress directly
+    with a synthetic Result -- rather than racing the worker thread for a
+    genuine mid-run snapshot, which is flaky.
+
+    Two checks on object s.t: after only the first (passing) result
+    arrives, the object's overall (and today's day cell, which shares the
+    same worst-or-unknown rule) reads OK; once the second (failing)
+    result arrives too, both flip to the worse status -- the same rollup
+    a completed run would produce from the store, computed here from
+    this run's own in-memory results instead.
+    """
+    from dbfresh.report import display_timezone
+
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        today = datetime.now(display_timezone(None)).date()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "·"
+
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.OK,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
+            assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "✓"
+
+            app.on_run_progress(
+                RunProgress(
+                    2,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="null_rate",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=check_id(_null_rate_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_home_live_update_leaves_a_filtered_out_row_untouched(tmp_path):
+    """A row currently hidden by the non-OK filter has no cell to update
+    surgically -- update_cell would raise for a row key the table doesn't
+    currently hold. The live handler must recognize this (via
+    self._rows_by_key, the same set refresh_dashboard populates) and skip
+    it rather than crash; the end-of-run authoritative refresh reconciles
+    it once the run finishes."""
+
+    async def scenario():
+        app = _multi_object_app(tmp_path)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("f")  # hide_ok: orders (OK) drops out
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert "s\x1forders" not in _row_order(table)
+
+            check = Check(source="s", object="orders", metric="row_count")
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    1,
+                    result=Result(
+                        object="orders",
+                        metric="row_count",
+                        status=Status.OK,
+                        source="s",
+                        check_id=check_id(check),
+                    ),
+                )
+            )
+            await pilot.pause()  # no crash
+
+            assert "s\x1forders" not in _row_order(table)
+
+    asyncio.run(scenario())
+
+
+def test_home_glyph_flips_before_the_run_completes(
+    tmp_path, monkeypatch, pump_until
+):
+    """An end-to-end (bonus, per the brief) confirmation that the live path
+    is actually wired into a real run: row_count (passing) is gated to
+    finish and be observed on the grid before null_rate (failing) -- the
+    still-in-flight second check -- is allowed to proceed, proving the
+    glyph flips mid-run rather than only once the whole run completes."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        release = threading.Event()
+        real_run_and_persist = runner.run_and_persist
+
+        def gated_run_and_persist(
+            config, store, now=None, only=None, object_=None, on_result=None
+        ):
+            def gated_on_result(result):
+                on_result(result)
+                if result.metric == "row_count":
+                    assert release.wait(timeout=2), (
+                        "test never released the run"
+                    )
+
+            return real_run_and_persist(
+                config,
+                store,
+                now=now,
+                only=only,
+                object_=object_,
+                on_result=gated_on_result,
+            )
+
+        monkeypatch.setattr(runner, "run_and_persist", gated_run_and_persist)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+
+            await pilot.press("r")
+            await pilot.pause()
+
+            # row_count has been observed and posted, but is gated inside
+            # gated_on_result before null_rate (the still-failing check)
+            # even starts -- the run is nowhere near done.
+            await pump_until(
+                pilot,
+                lambda: (
+                    _overall_glyph(
+                        app.query_one("#dashboard-grid", DataTable),
+                        _OBJECT_ROW_KEY,
+                    )
+                    == "✓"
+                ),
+            )
+            assert app.last_run is None
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(pilot, lambda: app.last_run is not None)
+
+            # Final, authoritative state: null_rate fails, so the object's
+            # overall is the worse of the two -- matching what the live
+            # path already showed building up to it.
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
 
     asyncio.run(scenario())
 
