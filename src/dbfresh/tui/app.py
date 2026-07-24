@@ -43,6 +43,7 @@ from dbfresh.tui.dashboard import (
     _day_cell,
     _status_cell,
     _worst_or_unknown,
+    cancel_flashes,
     flash_cell,
     is_header_key,
     last_run_line,
@@ -419,6 +420,10 @@ class DbfreshApp(App):
         store = self._require_store()
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
+        # A pending flash_cell restore() from a live update just before
+        # this repaint would otherwise fire afterward and overwrite a cell
+        # populate_grid below just freshly painted -- see cancel_flashes.
+        cancel_flashes(self._cell_flash_timers)
         rows = object_rows(config, store, today, tz)
         visible = self._view.apply(rows)
         populate_grid(

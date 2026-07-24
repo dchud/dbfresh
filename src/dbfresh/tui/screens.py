@@ -46,6 +46,7 @@ from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
     _status_cell,
+    cancel_flashes,
     check_label,
     check_rows,
     flash_cell,
@@ -649,6 +650,10 @@ class ObjectDetailScreen(Screen[bool]):
         """
         table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
         today = datetime.now(self._tz or UTC).date()
+        # A pending flash_cell restore() from a live update just before
+        # this repaint would otherwise fire afterward and overwrite a cell
+        # populate_grid below just freshly painted -- see cancel_flashes.
+        cancel_flashes(self._cell_flash_timers)
         rows = check_rows(
             self._source,
             self._object,

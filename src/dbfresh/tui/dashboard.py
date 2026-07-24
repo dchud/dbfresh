@@ -630,6 +630,22 @@ def flash_cell(
     timers[key] = owner.set_timer(delay, restore)
 
 
+def cancel_flashes(timers: dict[tuple[str, str], Timer]) -> None:
+    """Stop every pending :func:`flash_cell` clear timer in ``timers`` and
+    empty the dict.
+
+    Call this right before a full :func:`populate_grid` repaint. That
+    repaint already repaints every cell from scratch, so no highlight is
+    lost by cancelling here -- this only prevents a still-pending
+    ``restore()`` from firing afterwards and overwriting a cell the
+    repaint just freshly painted (e.g. a same-day marker computed from
+    the store) with the stale plain cell it had queued before the repaint.
+    """
+    for timer in timers.values():
+        timer.stop()
+    timers.clear()
+
+
 def populate_grid(
     table: DataTable,
     rows: list[GridRow],
