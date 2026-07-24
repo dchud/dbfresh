@@ -1041,6 +1041,184 @@ def test_home_live_update_leaves_a_filtered_out_row_untouched(tmp_path):
     asyncio.run(scenario())
 
 
+def test_home_live_update_flashes_the_overall_and_day_cells(
+    tmp_path, monkeypatch
+):
+    """The two cells a live result touches (overall, today's day cell) come
+    up with the flash_cell highlight background the instant the result
+    lands -- not just the plain status glyph a completed run would leave
+    behind."""
+    from dbfresh.report import display_timezone
+    from dbfresh.tui.dashboard import HIGHLIGHT_BG, _day_cell, _status_cell
+
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        today = datetime.now(display_timezone(None)).date()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.OK,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+
+            expected_overall = _status_cell(Status.OK)
+            expected_overall.stylize(f"on {HIGHLIGHT_BG}")
+            expected_day = _day_cell(Status.OK, None)
+            expected_day.stylize(f"on {HIGHLIGHT_BG}")
+
+            assert (
+                table.get_cell(_OBJECT_ROW_KEY, "overall") == expected_overall
+            )
+            assert (
+                table.get_cell(_OBJECT_ROW_KEY, today.isoformat())
+                == expected_day
+            )
+            # Confirms the highlight is an overlay, not a status color of
+            # its own -- the plain glyph underneath is unchanged.
+            assert table.get_cell(_OBJECT_ROW_KEY, "overall").plain == "✓"
+
+    asyncio.run(scenario())
+
+
+def test_home_live_update_highlight_clears_after_the_delay(
+    tmp_path, monkeypatch
+):
+    """Once flash_cell's delay has elapsed, the overall cell reads exactly
+    as the plain (un-highlighted) status cell again -- the highlight is a
+    brief cue, not a lasting background."""
+    from dbfresh.tui.dashboard import _status_cell
+
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.OK,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+            assert table.get_cell(_OBJECT_ROW_KEY, "overall") != _status_cell(
+                Status.OK
+            )
+
+            await pilot.pause(0.5)  # past flash_cell's 0.4s default delay
+
+            assert table.get_cell(_OBJECT_ROW_KEY, "overall") == _status_cell(
+                Status.OK
+            )
+
+    asyncio.run(scenario())
+
+
+def test_home_live_update_re_flash_cancels_the_stale_clear(
+    tmp_path, monkeypatch
+):
+    """A second live update to the same object within the flash window
+    (as more of its checks land) must not let the first update's clear
+    fire later and briefly revert the cell to the older, now-stale
+    status -- the second flash's own clear is what settles it, and it
+    settles on the newer status."""
+    from dbfresh.tui.dashboard import _status_cell
+
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            table = app.query_one("#dashboard-grid", DataTable)
+
+            # t=0: row_count passes -- overall OK, clear due at t=0.4.
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.OK,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause(0.2)  # t=0.2, well before the first clear
+
+            # t=0.2: null_rate fails -- overall worsens to FAIL, which must
+            # cancel the first clear and reschedule its own for t=0.6.
+            app.on_run_progress(
+                RunProgress(
+                    2,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="null_rate",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=check_id(_null_rate_check()),
+                    ),
+                )
+            )
+            await pilot.pause(0.3)  # t=0.5: past the stale 0.4 deadline,
+            # before the real one at 0.6 -- a live stale clear would have
+            # reverted this to the first (OK) status by now.
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert table.get_cell(_OBJECT_ROW_KEY, "overall") != _status_cell(
+                Status.FAIL
+            )  # still highlighted -- not yet settled
+
+            await pilot.pause(0.3)  # t=0.8: past the real clear at 0.6
+
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert table.get_cell(_OBJECT_ROW_KEY, "overall") == _status_cell(
+                Status.FAIL
+            )
+
+    asyncio.run(scenario())
+
+
 def test_home_glyph_flips_before_the_run_completes(
     tmp_path, monkeypatch, pump_until
 ):
