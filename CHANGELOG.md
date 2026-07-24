@@ -40,6 +40,9 @@ once releases are tagged.
 - The object-detail screen's run affordance is labeled "Run these checks",
   or "Run this check" when the object has a single check (was "Run this
   object").
+- During a run, each check's status glyph updates as its result arrives —
+  on the Home dashboard (per object) and the object-detail screen (per
+  check) — instead of all at once when the run finishes.
 
 ### Fixed
 
