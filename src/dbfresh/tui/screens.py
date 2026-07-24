@@ -12,6 +12,7 @@ from textual.app import ComposeResult
 from textual.binding import ActiveBinding, Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     DataTable,
@@ -47,6 +48,7 @@ from dbfresh.tui.dashboard import (
     _status_cell,
     check_label,
     check_rows,
+    flash_cell,
     populate_grid,
     status_glyph,
     status_legend,
@@ -590,6 +592,11 @@ class ObjectDetailScreen(Screen[bool]):
         self._edit_lo_inputs: list[Input | None] = []
         self._edit_hi_inputs: list[Input | None] = []
         self._config_changed = False
+        # Pending flash_cell clear timers for this screen's grid, keyed by
+        # (row_key, column_key) -- see flash_cell's own docstring for why
+        # a re-flash of the same cell must cancel its predecessor's timer
+        # here rather than let it fire later.
+        self._cell_flash_timers: dict[tuple[str, str], Timer] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -679,8 +686,13 @@ class ObjectDetailScreen(Screen[bool]):
         if result.check_id is None or result.check_id not in self._rows_by_key:
             return
         table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
-        table.update_cell(
-            result.check_id, "overall", _status_cell(result.status)
+        flash_cell(
+            table,
+            result.check_id,
+            "overall",
+            _status_cell(result.status),
+            self,
+            self._cell_flash_timers,
         )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
