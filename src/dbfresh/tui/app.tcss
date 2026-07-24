@@ -167,6 +167,24 @@ Select > SelectCurrent {
     margin: 0 1 0 1;
 }
 
+/* Fills as a run's checks complete (DbfreshApp.on_run_progress) -- neutral
+ * chrome, never a status color: $accent (this theme's pink) is not one of
+ * the OK/WARN/FAIL/ERROR/SKIPPED hexes in dashboard._STATUS_STYLE, unlike
+ * the bundled ProgressBar's own default ($primary while filling, $success
+ * -- this theme's OK green -- once complete), so both states are
+ * overridden here rather than just one. Hidden (display in app.py) except
+ * while a run is in progress.
+ */
+#run-progress {
+    margin: 0 1 0 1;
+}
+
+#run-progress > Bar > .bar--bar,
+#run-progress > Bar > .bar--complete {
+    color: $accent;
+    background: $surface;
+}
+
 /* Same muted metadata tone as the legend above, not a status color --
  * see dbfresh.tui.dashboard.last_run_line. Sits directly under the legend
  * (no top margin of its own) at the same left gutter, so the two read as
