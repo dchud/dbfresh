@@ -43,6 +43,8 @@ once releases are tagged.
 - During a run, each check's status glyph updates as its result arrives —
   on the Home dashboard (per object) and the object-detail screen (per
   check) — instead of all at once when the run finishes.
+- The Home dashboard shows a progress bar that fills as a run's checks
+  complete, alongside the existing "running checks: N/total" subtitle.
 
 ### Fixed
 

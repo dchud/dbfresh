@@ -20,7 +20,14 @@ from textual.binding import Binding
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.notifications import SeverityLevel
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.widgets import (
+    DataTable,
+    Footer,
+    Header,
+    Input,
+    ProgressBar,
+    Static,
+)
 from textual.worker import Worker, WorkerState
 
 from dbfresh.checks import check_id
@@ -45,6 +52,7 @@ from dbfresh.tui.dashboard import (
 )
 
 _GRID_ID = "dashboard-grid"
+_RUN_PROGRESS_ID = "run-progress"
 _RUN_WORKER_GROUP = "run-checks"
 _SEARCH_INPUT_ID = "grid-search"
 
@@ -282,6 +290,18 @@ class DbfreshApp(App):
         )
         yield Static(status_legend(), id="status-legend")
         yield Static("", id="view-status")
+        # Fills as a run's checks complete (on_run_progress); hidden here
+        # so nothing shows while idle -- on_worker_state_changed's RUNNING
+        # branch reveals it and resets it to 0 when a run starts, and its
+        # SUCCESS/CANCELLED/ERROR branches hide it again once the run
+        # finishes. The subtitle above already carries the "N/total" words
+        # (see on_run_progress), so the bar shows percentage, not a second
+        # copy of that count.
+        progress_bar = ProgressBar(
+            id=_RUN_PROGRESS_ID, show_percentage=True, show_eta=False
+        )
+        progress_bar.display = False
+        yield progress_bar
         yield Static("", id="last-run-line")
         yield Static("", id="unobserved-line")
         yield Static(_EMPTY_STATE_MESSAGE, id="empty-state")
@@ -592,8 +612,14 @@ class DbfreshApp(App):
         finally:
             store.close()
 
+    def _run_progress_bar(self) -> ProgressBar:
+        return self.query_one(f"#{_RUN_PROGRESS_ID}", ProgressBar)
+
     def on_run_progress(self, message: RunProgress) -> None:
         self.sub_title = f"running checks: {message.count}/{message.total}"
+        self._run_progress_bar().update(
+            total=message.total, progress=message.count
+        )
         if message.result is not None:
             self._apply_live_result(message.result)
 
@@ -689,8 +715,15 @@ class DbfreshApp(App):
             # previous run (or one cancelled mid-flight) must never
             # contribute to this run's live rollup on either grid.
             self._live_results = {}
+            bar = self._run_progress_bar()
+            bar.display = True
+            # The total isn't known yet at this point -- filter_checks
+            # hasn't run -- so only progress resets here; the first
+            # RunProgress message (on_run_progress) sets the total.
+            bar.update(progress=0)
             return
         if event.state == WorkerState.CANCELLED:
+            self._run_progress_bar().display = False
             self.notify(
                 "run cancelled -- a newer run started",
                 title="Run cancelled",
@@ -699,6 +732,7 @@ class DbfreshApp(App):
             return
 
         self.sub_title = ""
+        self._run_progress_bar().display = False
         if event.state == WorkerState.SUCCESS:
             run = event.worker.result
             assert run is not None
