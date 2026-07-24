@@ -23,6 +23,7 @@ from textual.notifications import SeverityLevel
 from textual.widgets import DataTable, Footer, Header, Input, Static
 from textual.worker import Worker, WorkerState
 
+from dbfresh.checks import check_id
 from dbfresh.config import Config, StoreConfig, load_config_tolerant
 from dbfresh.env_hygiene import committable_env_file
 from dbfresh.models import Result, RunResult, Status
@@ -31,6 +32,9 @@ from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
     GridView,
+    _day_cell,
+    _status_cell,
+    _worst_or_unknown,
     is_header_key,
     last_run_line,
     object_rows,
@@ -133,11 +137,21 @@ class RunProgress(Message):
     is safe to call from any thread, unlike setting a reactive attribute or
     touching a widget directly, so the progress callback posts one of
     these per check instead of updating the header itself.
+
+    ``result`` carries that just-completed check's own ``Result`` --
+    ``on_run_progress`` uses it to flip that check's glyph on whichever
+    grid(s) show it live, in addition to advancing the count/total in the
+    header. It is not persisted yet (``run_and_persist`` writes
+    observations only once the whole run finishes), so it is the only
+    source of this run's results until then.
     """
 
-    def __init__(self, count: int, total: int) -> None:
+    def __init__(
+        self, count: int, total: int, result: Result | None = None
+    ) -> None:
         self.count = count
         self.total = total
+        self.result = result
         super().__init__()
 
 
@@ -198,6 +212,13 @@ class DbfreshApp(App):
         self.store: Store | None = None
         self.last_run: RunResult | None = None
         self._rows_by_key: dict[str, GridRow] = {}
+        # This run's results so far, keyed by check_id -- reset each time a
+        # new run starts (see on_worker_state_changed's RUNNING branch) and
+        # filled in as RunProgress messages arrive (on_run_progress), so a
+        # live grid update can roll up an object's checks from what this
+        # run has produced without waiting for run_and_persist's end-of-run
+        # write to the store.
+        self._live_results: dict[str, Result] = {}
         self._view = GridView()
         self.missing_secrets: tuple[str, ...] = tuple(
             sorted(set(missing_secrets or ()))
@@ -549,12 +570,12 @@ class DbfreshApp(App):
         lock = threading.Lock()
         count = 0
 
-        def on_result(_result: Result) -> None:
+        def on_result(result: Result) -> None:
             nonlocal count
             with lock:
                 count += 1
                 current = count
-            self.post_message(RunProgress(current, total))
+            self.post_message(RunProgress(current, total, result=result))
 
         # Persist through a fresh Store on this worker thread rather than the
         # app's shared self.store. on_unmount closes self.store from the main
@@ -573,6 +594,80 @@ class DbfreshApp(App):
 
     def on_run_progress(self, message: RunProgress) -> None:
         self.sub_title = f"running checks: {message.count}/{message.total}"
+        if message.result is not None:
+            self._apply_live_result(message.result)
+
+    def _apply_live_result(self, result: Result) -> None:
+        """Flip ``result``'s own check glyph live, on whichever grid(s)
+        show it, the moment it arrives -- rather than waiting for the
+        end-of-run authoritative refresh (``on_worker_state_changed``'s
+        SUCCESS branch), which only runs once the whole run (every
+        source, every check) has finished.
+
+        Recorded into ``self._live_results`` first, keyed by ``check_id``,
+        so the Home rollup below always has every one of this run's
+        results-so-far for the object, not just the one that just
+        arrived. A result with no ``check_id`` (shouldn't happen for a
+        real run -- every check gets one -- but nothing here depends on
+        it) is ignored rather than corrupting the map with a ``None``
+        key.
+        """
+        if result.check_id is None:
+            return
+        self._live_results[result.check_id] = result
+        self._apply_live_result_to_home(result)
+
+        from dbfresh.tui.screens import ObjectDetailScreen
+
+        if isinstance(self.screen, ObjectDetailScreen):
+            self.screen.apply_live_result(result)
+
+    def _apply_live_result_to_home(self, result: Result) -> None:
+        """Update the Home grid's object row for ``result``: its
+        ``overall`` cell and today's day cell together, both from the same
+        worst-or-unknown rollup over this run's results-so-far for that
+        object -- the same invariant ``_rollup`` keeps for a completed
+        run (an object's ``overall`` and its latest-of-day both use that
+        one rule), so the two never read differently mid-run either.
+
+        A no-op when the row isn't currently in ``self._rows_by_key`` --
+        hidden by the non-OK filter or a search, or the grid not yet
+        populated -- since there is then no cell to update surgically;
+        ``DataTable.update_cell`` would raise for a row key the table
+        doesn't hold. The end-of-run refresh reconciles a hidden row from
+        the store regardless, so it is never left stale, only
+        un-animated while hidden.
+        """
+        row_key = f"{result.source}\x1f{result.object}"
+        if row_key not in self._rows_by_key:
+            return
+        config = self._require_config()
+        object_check_ids = {
+            check_id(c)
+            for c in config.checks
+            if c.source == result.source and c.object == result.object
+        }
+        statuses = [
+            live.status
+            for cid, live in self._live_results.items()
+            if cid in object_check_ids
+        ]
+        overall = _worst_or_unknown(statuses)
+        table = self.query_one(f"#{_GRID_ID}", DataTable)
+        table.update_cell(row_key, "overall", _status_cell(overall))
+
+        from dbfresh.report import display_timezone
+
+        tz = display_timezone(config.calendar)
+        today = datetime.now(tz).date()
+        # No marker: a day cell's trailing marker flags a worse status the
+        # object also saw earlier that same day (see _day_marker), which
+        # needs today's full history -- only available from the store,
+        # not this run's own in-memory results. The end-of-run
+        # refresh_dashboard() recomputes the marker from the store; a live
+        # update between now and then just shows this run's current state
+        # without one.
+        table.update_cell(row_key, today.isoformat(), _day_cell(overall, None))
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
@@ -590,6 +685,10 @@ class DbfreshApp(App):
             return
         if event.state == WorkerState.RUNNING:
             self.sub_title = "running checks…"
+            # A fresh map per run: a stale result left over from a
+            # previous run (or one cancelled mid-flight) must never
+            # contribute to this run's live rollup on either grid.
+            self._live_results = {}
             return
         if event.state == WorkerState.CANCELLED:
             self.notify(
