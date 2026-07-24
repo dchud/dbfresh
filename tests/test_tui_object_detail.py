@@ -871,6 +871,147 @@ def test_object_detail_apply_live_result_ignores_a_different_objects_check(
     asyncio.run(scenario())
 
 
+def test_object_detail_live_update_flashes_the_overall_cell(tmp_path):
+    """apply_live_result's overall-cell write carries the flash_cell
+    highlight background immediately, not just the plain status glyph."""
+    from dbfresh.tui.dashboard import HIGHLIGHT_BG, _status_cell
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            null_rate_id = check_id(_null_rate_check())
+
+            app.screen.apply_live_result(
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.FAIL,
+                    source="s",
+                    check_id=null_rate_id,
+                )
+            )
+            await pilot.pause()
+
+            expected = _status_cell(Status.FAIL)
+            expected.stylize(f"on {HIGHLIGHT_BG}")
+            assert detail_table.get_cell(null_rate_id, "overall") == expected
+            assert detail_table.get_cell(null_rate_id, "overall").plain == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_live_update_highlight_clears_after_the_delay(
+    tmp_path, monkeypatch
+):
+    """Once flash_cell's delay has elapsed, the check's overall cell reads
+    exactly as the plain status cell again."""
+    from dbfresh.tui.dashboard import _status_cell
+
+    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            null_rate_id = check_id(_null_rate_check())
+
+            app.screen.apply_live_result(
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.FAIL,
+                    source="s",
+                    check_id=null_rate_id,
+                )
+            )
+            await pilot.pause()
+            assert detail_table.get_cell(
+                null_rate_id, "overall"
+            ) != _status_cell(Status.FAIL)
+
+            await pilot.pause(0.15)  # past the injected 0.05s delay
+
+            assert detail_table.get_cell(
+                null_rate_id, "overall"
+            ) == _status_cell(Status.FAIL)
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_re_flash_cancels_the_stale_clear(tmp_path, monkeypatch):
+    """A second live update to the same check within the flash window must
+    not let the first update's clear fire later and briefly revert the
+    cell to the older, now-stale status."""
+    from dbfresh.tui.dashboard import _status_cell
+
+    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            null_rate_id = check_id(_null_rate_check())
+
+            # t=0: fails -- clear due at t=0.05.
+            app.screen.apply_live_result(
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.FAIL,
+                    source="s",
+                    check_id=null_rate_id,
+                )
+            )
+            await pilot.pause(0.03)  # t=0.03, well before the first clear
+
+            # t=0.03: re-evaluated as ok (e.g. re-run) -- must cancel the
+            # first clear and reschedule its own for t=0.08.
+            app.screen.apply_live_result(
+                Result(
+                    object="t",
+                    metric="null_rate",
+                    status=Status.OK,
+                    source="s",
+                    check_id=null_rate_id,
+                )
+            )
+            await pilot.pause(0.035)  # t=0.065: past the stale 0.05
+            # deadline, before the real one at 0.08 -- a live stale clear
+            # would have reverted this to the first (FAIL) status by now.
+            assert _overall_glyph(detail_table, null_rate_id) == "✓"
+            assert detail_table.get_cell(
+                null_rate_id, "overall"
+            ) != _status_cell(Status.OK)  # still highlighted -- not settled
+
+            await pilot.pause(0.045)  # t=0.11: past the real clear at 0.08
+
+            assert _overall_glyph(detail_table, null_rate_id) == "✓"
+            assert detail_table.get_cell(
+                null_rate_id, "overall"
+            ) == _status_cell(Status.OK)
+
+    asyncio.run(scenario())
+
+
 def test_object_detail_run_this_object_also_refreshes_the_home_grid(
     tmp_path, pump_until
 ):

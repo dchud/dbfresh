@@ -13,13 +13,17 @@ losing that information outright.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
 from rich.text import Text
 from textual.binding import Binding
 from textual.coordinate import Coordinate
+from textual.message_pump import MessagePump
+from textual.timer import Timer
 from textual.widgets import DataTable
+from textual.widgets.data_table import CellDoesNotExist
 
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
@@ -44,6 +48,18 @@ _STATUS_STYLE: dict[Status | None, str] = {
     Status.SKIPPED: "#8bd5ca",  # teal -- distinct from never-observed
     None: "#6e738d",  # overlay0 -- muted, never observed
 }
+
+# Background flash_cell overlays on a cell that just changed -- Catppuccin
+# Macchiato "surface2" (see app.tcss's $surface2, the same neutral tone used
+# there for panel borders), not one of the hexes above: this marks "this
+# cell just changed", never a check's own status.
+HIGHLIGHT_BG = "#5b6078"
+
+# How long flash_cell's highlight stays up before it restores the plain
+# cell. A module global (rather than a bare default baked into flash_cell's
+# signature) so a test can monkeypatch it down to run the flash-timing
+# tests fast, without changing the delay any real caller sees.
+DEFAULT_FLASH_DELAY = 0.4
 
 # A day/overall cell is one glyph, not a word -- the grid's whole point is
 # fitting many rows/columns in limited width. FAIL ("bad data": the check
@@ -575,6 +591,73 @@ def _day_cell(latest: Status | None, marker: Status | None) -> Text:
     text.append(glyph, style=style)
     text.justify = "left"
     return text
+
+
+def flash_cell(
+    table: DataTable,
+    row_key: str,
+    column_key: str,
+    cell: Text,
+    owner: MessagePump,
+    timers: dict[tuple[str, str], Timer],
+    *,
+    delay: float | None = None,
+) -> None:
+    """Write ``cell`` (built by ``_status_cell``/``_day_cell``) with a
+    brief neutral highlight background, then restore the plain ``cell``
+    after ``delay`` seconds -- a live update's own cue, since a DataTable
+    cell is not a widget and so can't fade via CSS.
+
+    ``owner`` is the ``Widget``/``Screen``/``App`` whose ``set_timer``
+    schedules the clear. ``timers`` is a dict the caller owns, keyed by
+    ``(row_key, column_key)``: a second flash of the same cell within the
+    window stops the pending clear it finds there before scheduling its
+    own, so a stale clear can never fire later and revert the cell to a
+    status this same cell has already moved past (e.g. the Home overall
+    changing again as more of an object's checks land).
+
+    ``delay`` defaults to :data:`DEFAULT_FLASH_DELAY`, read at call time
+    (not bound as a default argument) so a test's
+    ``monkeypatch.setattr(dashboard, "DEFAULT_FLASH_DELAY", ...)`` takes
+    effect on every call made after the patch.
+    """
+    if delay is None:
+        delay = DEFAULT_FLASH_DELAY
+
+    key = (row_key, column_key)
+    pending = timers.pop(key, None)
+    if pending is not None:
+        pending.stop()
+
+    highlighted = cell.copy()
+    highlighted.stylize(f"on {HIGHLIGHT_BG}")
+    table.update_cell(row_key, column_key, highlighted)
+
+    def restore() -> None:
+        timers.pop(key, None)
+        # The grid may have been rebuilt, or this row filtered out,
+        # between scheduling and firing -- nothing left to restore then,
+        # so a CellDoesNotExist here is not an error.
+        with contextlib.suppress(CellDoesNotExist):
+            table.update_cell(row_key, column_key, cell)
+
+    timers[key] = owner.set_timer(delay, restore)
+
+
+def cancel_flashes(timers: dict[tuple[str, str], Timer]) -> None:
+    """Stop every pending :func:`flash_cell` clear timer in ``timers`` and
+    empty the dict.
+
+    Call this right before a full :func:`populate_grid` repaint. That
+    repaint already repaints every cell from scratch, so no highlight is
+    lost by cancelling here -- this only prevents a still-pending
+    ``restore()`` from firing afterwards and overwriting a cell the
+    repaint just freshly painted (e.g. a same-day marker computed from
+    the store) with the stale plain cell it had queued before the repaint.
+    """
+    for timer in timers.values():
+        timer.stop()
+    timers.clear()
 
 
 def populate_grid(

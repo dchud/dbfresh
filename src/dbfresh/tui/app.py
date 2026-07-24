@@ -20,6 +20,7 @@ from textual.binding import Binding
 from textual.coordinate import Coordinate
 from textual.message import Message
 from textual.notifications import SeverityLevel
+from textual.timer import Timer
 from textual.widgets import (
     DataTable,
     Footer,
@@ -42,6 +43,8 @@ from dbfresh.tui.dashboard import (
     _day_cell,
     _status_cell,
     _worst_or_unknown,
+    cancel_flashes,
+    flash_cell,
     is_header_key,
     last_run_line,
     object_rows,
@@ -227,6 +230,11 @@ class DbfreshApp(App):
         # run has produced without waiting for run_and_persist's end-of-run
         # write to the store.
         self._live_results: dict[str, Result] = {}
+        # Pending flash_cell clear timers for the Home grid, keyed by
+        # (row_key, column_key) -- see flash_cell's own docstring for why
+        # a re-flash of the same cell must cancel its predecessor's timer
+        # here rather than let it fire later.
+        self._cell_flash_timers: dict[tuple[str, str], Timer] = {}
         self._view = GridView()
         self.missing_secrets: tuple[str, ...] = tuple(
             sorted(set(missing_secrets or ()))
@@ -412,6 +420,10 @@ class DbfreshApp(App):
         store = self._require_store()
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
+        # A pending flash_cell restore() from a live update just before
+        # this repaint would otherwise fire afterward and overwrite a cell
+        # populate_grid below just freshly painted -- see cancel_flashes.
+        cancel_flashes(self._cell_flash_timers)
         rows = object_rows(config, store, today, tz)
         visible = self._view.apply(rows)
         populate_grid(
@@ -680,7 +692,14 @@ class DbfreshApp(App):
         ]
         overall = _worst_or_unknown(statuses)
         table = self.query_one(f"#{_GRID_ID}", DataTable)
-        table.update_cell(row_key, "overall", _status_cell(overall))
+        flash_cell(
+            table,
+            row_key,
+            "overall",
+            _status_cell(overall),
+            self,
+            self._cell_flash_timers,
+        )
 
         from dbfresh.report import display_timezone
 
@@ -693,7 +712,14 @@ class DbfreshApp(App):
         # refresh_dashboard() recomputes the marker from the store; a live
         # update between now and then just shows this run's current state
         # without one.
-        table.update_cell(row_key, today.isoformat(), _day_cell(overall, None))
+        flash_cell(
+            table,
+            row_key,
+            today.isoformat(),
+            _day_cell(overall, None),
+            self,
+            self._cell_flash_timers,
+        )
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
