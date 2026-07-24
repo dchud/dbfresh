@@ -44,6 +44,7 @@ from dbfresh.store import Store, format_bytes
 from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
+    _status_cell,
     check_label,
     check_rows,
     populate_grid,
@@ -658,6 +659,29 @@ class ObjectDetailScreen(Screen[bool]):
             f"#{_RUN_OBJECT_BUTTON_ID}", Button
         ).label = self._run_object_label()
         self.refresh_bindings()
+
+    def apply_live_result(self, result: Result) -> None:
+        """Flip one check row's ``overall`` glyph the moment its
+        ``Result`` arrives mid-run, without rebuilding the rest of the
+        grid (``refresh_grid``'s full ``populate_grid`` rebuild, still
+        used for the end-of-run authoritative refresh, would reset this
+        screen's cursor on every single check that finishes).
+
+        Called by ``DbfreshApp._apply_live_result`` only while this
+        screen is the one on top. A no-op when ``result`` belongs to a
+        different object -- a full run evaluates every object, this one
+        included, so most results arriving here are not this screen's
+        own -- or names a check not currently shown (also covers a
+        result with no ``check_id``).
+        """
+        if result.source != self._source or result.object != self._object:
+            return
+        if result.check_id is None or result.check_id not in self._rows_by_key:
+            return
+        table = self.query_one(f"#{_DETAIL_GRID_ID}", DataTable)
+        table.update_cell(
+            result.check_id, "overall", _status_cell(result.status)
+        )
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         event.stop()
