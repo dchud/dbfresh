@@ -4,7 +4,7 @@ import subprocess
 import threading
 from datetime import UTC, datetime
 
-from textual.widgets import DataTable, OptionList, Static
+from textual.widgets import DataTable, OptionList, ProgressBar, Static
 
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -861,6 +861,75 @@ def test_run_action_wires_per_check_progress_into_the_header(
             # on that source's one connection (see dbfresh.engine.run_checks)
             # -- one RunProgress message per completed check, counting up.
             assert seen == [(1, 2), (2, 2)]
+
+    asyncio.run(scenario())
+
+
+def test_run_progress_bar_hidden_when_idle(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#run-progress", ProgressBar)
+            assert bar.display is False
+
+    asyncio.run(scenario())
+
+
+def test_run_progress_bar_reaches_total_then_hides_after_a_run(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#run-progress", ProgressBar)
+
+            await pilot.press("r")
+            await pump_until(pilot, lambda: app.last_run is not None)
+            await pilot.pause()
+
+            # Racy to assert the exact mid-run fill (the worker thread and
+            # the message loop aren't in lockstep) -- the end state is
+            # what matters: the bar reached its total, then hid again once
+            # the run finished (on_worker_state_changed's SUCCESS branch).
+            assert bar.progress == bar.total
+            assert bar.display is False
+
+    asyncio.run(scenario())
+
+
+def test_on_run_progress_advances_the_progress_bar(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            bar = app.query_one("#run-progress", ProgressBar)
+
+            app.on_run_progress(RunProgress(1, 2))
+            await pilot.pause()
+            assert bar.total == 2
+            assert bar.progress == 1
+
+            app.on_run_progress(RunProgress(2, 2))
+            await pilot.pause()
+            assert bar.total == 2
+            assert bar.progress == 2
 
     asyncio.run(scenario())
 
