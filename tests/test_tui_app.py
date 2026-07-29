@@ -1162,7 +1162,14 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
     from dbfresh.tui.dashboard import _status_cell
 
     monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
-    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
+    # A generous delay, not the 0.05 the settle-only tests use. The
+    # assertion below has to land inside the gap between the cancelled
+    # clear and the rescheduled one, and pilot.pause is a floor rather
+    # than an exact wait -- a loaded machine overshoots it. At 0.05 that
+    # gap was ~15ms wide and CI overshot it; at 0.5 it is ~350ms, which
+    # only a severe stall would miss. Waiting is one-directional (a pause
+    # never returns early), so the margin only has to cover lateness.
+    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.5)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1174,8 +1181,9 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
+            flash_key = (_OBJECT_ROW_KEY, "overall")
 
-            # t=0: row_count passes -- overall OK, clear due at t=0.05.
+            # t=0: row_count passes -- overall OK, clear due at t=0.5.
             app.on_run_progress(
                 RunProgress(
                     1,
@@ -1189,10 +1197,11 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
                     ),
                 )
             )
-            await pilot.pause(0.03)  # t=0.03, well before the first clear
+            await pilot.pause(0.4)  # t=0.4, still before the first clear
+            first_timer = app._cell_flash_timers[flash_key]
 
-            # t=0.03: null_rate fails -- overall worsens to FAIL, which must
-            # cancel the first clear and reschedule its own for t=0.08.
+            # t=0.4: null_rate fails -- overall worsens to FAIL, which must
+            # cancel the first clear and reschedule its own for t=0.9.
             app.on_run_progress(
                 RunProgress(
                     2,
@@ -1206,15 +1215,19 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
                     ),
                 )
             )
-            await pilot.pause(0.035)  # t=0.065: past the stale 0.05
-            # deadline, before the real one at 0.08 -- a live stale clear
-            # would have reverted this to the first (OK) status by now.
+            # Clock-free half of the invariant: the pending clear was
+            # replaced rather than left to fire alongside a second one.
+            assert app._cell_flash_timers[flash_key] is not first_timer
+
+            await pilot.pause(0.15)  # t=0.55: past the stale 0.5 deadline,
+            # well before the real one at 0.9 -- a live stale clear would
+            # have reverted this to the first (OK) status by now.
             assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             assert table.get_cell(_OBJECT_ROW_KEY, "overall") != _status_cell(
                 Status.FAIL
             )  # still highlighted -- not yet settled
 
-            await pilot.pause(0.045)  # t=0.11: past the real clear at 0.08
+            await pilot.pause(0.5)  # t=1.05: past the real clear at 0.9
 
             assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             assert table.get_cell(_OBJECT_ROW_KEY, "overall") == _status_cell(
