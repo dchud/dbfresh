@@ -660,6 +660,19 @@ class DbfreshApp(App):
         if isinstance(self.screen, ObjectDetailScreen):
             self.screen.apply_live_result(result)
 
+    def live_status(self, check_id: str) -> Status | None:
+        """The status the run in flight has already produced for
+        ``check_id``, or ``None`` when that check has not come back yet.
+
+        The read side of ``_live_results``, for a screen built partway
+        through a run. Observations reach the store only once the whole
+        run finishes (:func:`~dbfresh.runner.run_and_persist` records them
+        in one batch), so mid-run this map is the only record of what has
+        returned so far.
+        """
+        result = self._live_results.get(check_id)
+        return None if result is None else result.status
+
     def _apply_live_result_to_home(self, result: Result) -> None:
         """Update the Home grid's object row for ``result``: its
         ``overall`` cell and today's day cell together, both from the same
