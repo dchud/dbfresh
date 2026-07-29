@@ -13,7 +13,7 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import load_config
 from dbfresh.models import Result, Status
 from dbfresh.store import Store
-from dbfresh.tui.app import DbfreshApp
+from dbfresh.tui.app import DbfreshApp, RunProgress
 from dbfresh.tui.screens import ObjectDetailScreen
 
 _OBJECT_ROW_KEY = "s\x1ft"
@@ -1231,5 +1231,146 @@ def test_global_run_from_object_detail_still_runs_every_object(
             # "u" has no real table behind it, unlike the scoped-run tests
             # above -- touching it here is exactly the point.
             assert app.last_run.status == Status.ERROR
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_opened_mid_run_shows_results_that_already_arrived(
+    tmp_path,
+):
+    """Drilling into an object mid-run must show the results this run has
+    already produced for it.
+
+    Observations are persisted in one batch once the whole run finishes
+    (runner.run_and_persist), so the store this screen builds from holds
+    nothing yet -- and apply_live_result only fires for results arriving
+    after the screen is already on top. Without seeding from the app's
+    results-so-far, the very failure that prompted the drill-in reads as
+    never-observed until the entire run ends.
+    """
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            row_count_id = check_id(_row_count_check())
+
+            # A run is underway and this object's row_count has failed --
+            # the X the user sees on Home before drilling in.
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    3,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=row_count_id,
+                    ),
+                )
+            )
+            await pilot.pause()
+
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            assert _overall_glyph(detail_table, row_count_id) == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_opened_mid_run_leaves_pending_checks_unobserved(
+    tmp_path,
+):
+    """Seeding covers only the checks this run has actually returned. A
+    check still in flight has no status yet and must keep reading
+    never-observed rather than borrowing a sibling's."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    3,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            assert (
+                _overall_glyph(detail_table, check_id(_row_count_check()))
+                == "✗"
+            )
+            assert (
+                _overall_glyph(detail_table, check_id(_null_rate_check()))
+                == "·"
+            )
+            assert (
+                _overall_glyph(detail_table, check_id(_schema_check())) == "·"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_seeding_ignores_another_objects_live_result(tmp_path):
+    """A run evaluates every object, so the app's results-so-far map holds
+    checks this screen has no row for. Seeding must be driven by this
+    object's own rows, never by iterating the map and writing cells."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _two_object_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            # A result for object "u" -- no row for it on t's detail screen.
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="u",
+                        metric="row_count",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=check_id(
+                            Check(source="s", object="u", metric="row_count")
+                        ),
+                    ),
+                )
+            )
+            await pilot.pause()
+
+            await _open_object_detail(pilot)
+            detail_table = app.screen.query_one(DataTable)
+            row_count_id = check_id(
+                Check(source="s", object="t", metric="row_count")
+            )
+            assert _overall_glyph(detail_table, row_count_id) == "·"
 
     asyncio.run(scenario())

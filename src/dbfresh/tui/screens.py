@@ -662,6 +662,7 @@ class ObjectDetailScreen(Screen[bool]):
             today,
             self._tz,
         )
+        rows = self._seed_live_statuses(rows)
         populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
         self._sync_check_detail_line(self._current_row_key(table))
@@ -671,6 +672,39 @@ class ObjectDetailScreen(Screen[bool]):
             f"#{_RUN_OBJECT_BUTTON_ID}", Button
         ).label = self._run_object_label()
         self.refresh_bindings()
+
+    def _seed_live_statuses(self, rows: list[GridRow]) -> list[GridRow]:
+        """``rows`` with each check's ``overall`` replaced by the status
+        the run in flight has already produced for it, where there is one.
+
+        :func:`~dbfresh.tui.dashboard.check_rows` builds every row from the
+        store, and a run's observations are written in one batch only once
+        the whole run finishes -- so mid-run the store holds nothing about
+        it. :meth:`apply_live_result` covers results that arrive while this
+        screen is already on top, but nothing replays what landed before it
+        opened. Without this, drilling into a failing object mid-run shows
+        never-observed for the very check whose failure prompted the
+        drill-in, until the entire run ends.
+
+        A check-scope row's key is its ``check_id`` (see ``check_rows``),
+        which is what the app's map is keyed by, so a result belonging to
+        another object simply never matches a row here.
+
+        Only ``overall`` is overlaid -- the same cell
+        :meth:`apply_live_result` writes for a result arriving later, so a
+        screen opened mid-run and one held open across the same run agree.
+        The trailing-day cells need a day's full history, which only the
+        store has, and the end-of-run refresh recomputes them.
+        """
+        from dbfresh.tui.app import DbfreshApp
+
+        app = self.app
+        assert isinstance(app, DbfreshApp)
+        seeded: list[GridRow] = []
+        for row in rows:
+            live = app.live_status(row.key)
+            seeded.append(row if live is None else replace(row, overall=live))
+        return seeded
 
     def apply_live_result(self, result: Result) -> None:
         """Flip one check row's ``overall`` glyph the moment its

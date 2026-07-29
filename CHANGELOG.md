@@ -50,6 +50,9 @@ once releases are tagged.
 
 ### Fixed
 
+- Drilling into an object while a run is in flight now shows the results
+  that run has already produced for it, instead of reading as never-run
+  until the whole run finishes.
 - A TUI left open past midnight no longer errors and freezes on the next
   run. The Home dashboard's trailing-day columns are brought up to date
   when a run starts, so the new day's results have a column to land in.
