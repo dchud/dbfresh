@@ -56,6 +56,16 @@ from dbfresh.tui.dashboard import (
     status_style,
 )
 
+# dbfresh.tui.app is deliberately absent from this block. app.py imports
+# this module's screen classes to push them, and the few methods here that
+# need the concrete DbfreshApp (to run this object's checks, to read the
+# run's results-so-far) import it inside the function body instead. Both
+# directions at module level is not a style question but a hard failure:
+# whichever module is imported first hits "cannot import name ... from
+# partially initialized module". app.py composes screens, so that is the
+# direction that keeps its imports at the top, and this back-reference is
+# the one that defers.
+
 _NO_RUN_MESSAGE = (
     "no runs recorded yet -- press 'r' on the dashboard to run checks"
 )
