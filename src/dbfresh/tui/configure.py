@@ -32,7 +32,7 @@ from textual.widgets import (
 from textual.worker import Worker, WorkerState
 
 from dbfresh.adapters.base import Column
-from dbfresh.adapters.factory import supported_types
+from dbfresh.adapters.factory import create_adapter, supported_types
 from dbfresh.checks import Check, check_id, parse_duration
 from dbfresh.config import Config, SourceConfig
 from dbfresh.configurator import (
@@ -838,8 +838,6 @@ class ConfigureScreen(Screen[bool]):
         :class:`_ProposeOutcome`; :meth:`on_worker_state_changed` does the
         actual mounting back on the main thread off of that return value.
         """
-        from dbfresh.adapters.factory import create_adapter
-
         try:
             adapter = create_adapter(
                 source.type, source.params, timeout=source.timeout

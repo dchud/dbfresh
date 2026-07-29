@@ -8,17 +8,49 @@ import sys
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 import yaml
 
 from dbfresh import __version__
 from dbfresh.adapters.base import Adapter
+from dbfresh.adapters.factory import create_adapter, supported_types
+from dbfresh.config import (
+    Config,
+    ConfigError,
+    StoreConfig,
+    collect_referenced_env_vars,
+    load_config,
+    load_config_tolerant,
+)
+from dbfresh.configurator import (
+    add_source,
+    append_checks,
+    build_offered_check,
+    check_object_exists,
+    key_introspection_note,
+    offered_column_checks,
+    pick_timestamp_column,
+    probe_connection,
+    probe_new_source,
+    propose_checks,
+    target_files,
+)
+from dbfresh.env_hygiene import committable_env_file
 from dbfresh.logsetup import configure_logging
-
-if TYPE_CHECKING:
-    from dbfresh.config import Config
+from dbfresh.models import exit_code
+from dbfresh.report import (
+    display_timezone,
+    progress_reporter,
+    render_candidates,
+    render_digest,
+    render_history,
+    render_json,
+    show_progress,
+)
+from dbfresh.runner import filter_checks, run_and_persist
+from dbfresh.store import Store, resolve_store_path
 
 # A config that never loaded is a run that could not complete -- the same
 # ERROR class as an unreachable source at run time (exit_code(Status.ERROR)),
@@ -158,7 +190,6 @@ def _resolve_read_context(config_path: Path):
     Tolerant of a missing config file: history/prune only need it for
     default store-path resolution and retain_days, not sources/checks.
     """
-    from dbfresh.config import load_config
 
     if config_path.exists():
         config = load_config(config_path)
@@ -167,17 +198,6 @@ def _resolve_read_context(config_path: Path):
 
 
 def _run_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError, load_config
-    from dbfresh.models import exit_code
-    from dbfresh.report import (
-        display_timezone,
-        progress_reporter,
-        render_digest,
-        render_json,
-        show_progress,
-    )
-    from dbfresh.runner import filter_checks, run_and_persist
-    from dbfresh.store import Store, resolve_store_path
 
     config_path = Path(args.config)
     try:
@@ -243,13 +263,6 @@ def _run_command(args: argparse.Namespace) -> int:
 
 
 def _history_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError
-    from dbfresh.report import (
-        display_timezone,
-        render_candidates,
-        render_history,
-    )
-    from dbfresh.store import Store, resolve_store_path
 
     try:
         config_dir, store_config, calendar = _resolve_read_context(
@@ -284,8 +297,6 @@ def _history_command(args: argparse.Namespace) -> int:
 
 
 def _prune_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError, StoreConfig
-    from dbfresh.store import Store, resolve_store_path
 
     try:
         config_dir, store_config, _calendar = _resolve_read_context(
@@ -351,7 +362,6 @@ def _prompt_offered_check(
     never performs itself; only ``null_rate`` and ``freshness`` need extra
     input here, everything else uses that function's defaults.
     """
-    from dbfresh.configurator import build_offered_check
 
     if metric == "null_rate":
         value = _prompt_number("    max null rate", "0.05", float)
@@ -390,8 +400,6 @@ def _select_source(
     (and eventually written) params stay literal so no secret lands in the
     tracked YAML.
     """
-    from dbfresh.adapters.factory import create_adapter, supported_types
-    from dbfresh.configurator import probe_connection, probe_new_source
 
     sources = config.sources if config else {}
     if sources:
@@ -443,17 +451,6 @@ def _select_source(
 
 
 def _add_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError, load_config
-    from dbfresh.configurator import (
-        add_source,
-        append_checks,
-        check_object_exists,
-        key_introspection_note,
-        offered_column_checks,
-        pick_timestamp_column,
-        propose_checks,
-        target_files,
-    )
 
     config_path = Path(args.config)
     try:
@@ -580,7 +577,10 @@ def _add_command(args: argparse.Namespace) -> int:
 
 
 def _ui_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import Config, ConfigError, load_config_tolerant
+    # Imported here rather than at the top so that importing dbfresh.cli
+    # does not pull in Textual: run, history, prune, add, and env-template
+    # never reach this command, and none of them should pay to import the
+    # TUI.
     from dbfresh.tui.app import DbfreshApp
 
     config_path = Path(args.config)
@@ -620,8 +620,6 @@ def _ui_command(args: argparse.Namespace) -> int:
 
 
 def _env_template_command(args: argparse.Namespace) -> int:
-    from dbfresh.config import ConfigError, collect_referenced_env_vars
-    from dbfresh.env_hygiene import committable_env_file
 
     try:
         names = collect_referenced_env_vars(Path(args.config))

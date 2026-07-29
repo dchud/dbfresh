@@ -493,7 +493,7 @@ def test_run_command_derives_show_progress_from_json_and_no_progress_flags(
         seen["no_progress"] = no_progress
         return False
 
-    monkeypatch.setattr("dbfresh.report.show_progress", fake_show_progress)
+    monkeypatch.setattr("dbfresh.cli.show_progress", fake_show_progress)
 
     main(["run", "-c", str(cfg), "--no-progress"])
 
@@ -515,7 +515,7 @@ def test_run_command_sizes_progress_by_the_only_filtered_check_count(
         yield lambda result: None
 
     monkeypatch.setattr(
-        "dbfresh.report.progress_reporter", fake_progress_reporter
+        "dbfresh.cli.progress_reporter", fake_progress_reporter
     )
 
     code = main(["run", "-c", str(cfg), "--only", "ok"])

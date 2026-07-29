@@ -614,7 +614,7 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             )
 
         monkeypatch.setattr(
-            runner, "run_and_persist", blocking_run_and_persist
+            "dbfresh.tui.app.run_and_persist", blocking_run_and_persist
         )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
@@ -660,7 +660,9 @@ def test_run_action_error_notifies_and_leaves_app_alive(
         ):
             raise RuntimeError("store locked")
 
-        monkeypatch.setattr(runner, "run_and_persist", raising_run_and_persist)
+        monkeypatch.setattr(
+            "dbfresh.tui.app.run_and_persist", raising_run_and_persist
+        )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
@@ -951,7 +953,7 @@ def test_home_overall_and_day_cell_update_live_as_results_arrive(
     """
     from dbfresh.report import display_timezone
 
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1052,7 +1054,7 @@ def test_home_live_update_flashes_the_overall_and_day_cells(
     from dbfresh.report import display_timezone
     from dbfresh.tui.dashboard import HIGHLIGHT_BG, _day_cell, _status_cell
 
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1108,7 +1110,7 @@ def test_home_live_update_highlight_clears_after_the_delay(
     brief cue, not a lasting background."""
     from dbfresh.tui.dashboard import _status_cell
 
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
     monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
 
     async def scenario():
@@ -1159,7 +1161,7 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
     settles on the newer status."""
     from dbfresh.tui.dashboard import _status_cell
 
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
     monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
 
     async def scenario():
@@ -1259,7 +1261,9 @@ def test_home_glyph_flips_before_the_run_completes(
                 on_result=gated_on_result,
             )
 
-        monkeypatch.setattr(runner, "run_and_persist", gated_run_and_persist)
+        monkeypatch.setattr(
+            "dbfresh.tui.app.run_and_persist", gated_run_and_persist
+        )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
@@ -1333,7 +1337,7 @@ def test_run_action_second_press_cancels_first_with_a_notice(
             )
 
         monkeypatch.setattr(
-            runner, "run_and_persist", maybe_blocking_run_and_persist
+            "dbfresh.tui.app.run_and_persist", maybe_blocking_run_and_persist
         )
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
@@ -2364,7 +2368,7 @@ def test_home_live_update_does_not_raise_when_the_day_columns_are_stale(
     The overall cell (a constant column key, so never missing) still
     updates, which is what keeps the row from silently going dead.
     """
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -2409,7 +2413,7 @@ def test_run_start_repaints_a_grid_whose_day_columns_are_stale(
     Asserted at the handler level with a synthetic RUNNING event rather
     than racing a real worker for a mid-run snapshot.
     """
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -2439,7 +2443,7 @@ def test_run_start_leaves_a_current_grid_untouched(tmp_path, monkeypatch):
     """The rollover repaint is conditional: a grid already painted with
     today's window must not be rebuilt on every run start, which would
     reset the row cursor mid-session for no reason."""
-    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
 
     async def scenario():
         db = tmp_path / "data.db"
