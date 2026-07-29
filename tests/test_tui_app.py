@@ -1111,7 +1111,10 @@ def test_home_live_update_highlight_clears_after_the_delay(
     from dbfresh.tui.dashboard import _status_cell
 
     monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
-    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.05)
+    # The highlight assertion below runs before the clear is due, so the
+    # delay is the margin it has to beat. 0.05 left ~50ms and CI missed
+    # it; 0.5 leaves ~500ms, and the settle assertion just waits past it.
+    monkeypatch.setattr("dbfresh.tui.dashboard.DEFAULT_FLASH_DELAY", 0.5)
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1142,7 +1145,7 @@ def test_home_live_update_highlight_clears_after_the_delay(
                 Status.OK
             )
 
-            await pilot.pause(0.15)  # past the injected 0.05s delay
+            await pilot.pause(0.7)  # past the injected 0.5s delay
 
             assert table.get_cell(_OBJECT_ROW_KEY, "overall") == _status_cell(
                 Status.OK
