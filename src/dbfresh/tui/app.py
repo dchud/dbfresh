@@ -721,6 +721,35 @@ class DbfreshApp(App):
             self._cell_flash_timers,
         )
 
+    def _repaint_stale_day_columns(self) -> None:
+        """Rebuild the Home grid when its trailing-day columns no longer
+        reach the current date.
+
+        Nothing repaints the grid on its own -- there is no timer -- so an
+        app left open across midnight still holds the window it was
+        painted with, and the day cell each of this run's results is about
+        to write does not exist. Checked at run start: that is the moment
+        stale columns stop being merely out of date and start dropping
+        live updates, and ``_live_results`` has just been cleared, so a
+        full repaint from the store here loses nothing.
+
+        Conditional on purpose -- ``refresh_dashboard`` resets the row
+        cursor, so repainting on every run start would move the user's
+        selection mid-session for no reason. A grid with no columns at all
+        (nothing painted yet) is left alone; ``refresh_dashboard`` runs on
+        its own path in that case.
+        """
+        from dbfresh.report import display_timezone
+
+        table = self.query_one(f"#{_GRID_ID}", DataTable)
+        if not table.columns:
+            return
+        tz = display_timezone(self._require_config().calendar)
+        today = datetime.now(tz).date().isoformat()
+        if any(str(key.value) == today for key in table.columns):
+            return
+        self.refresh_dashboard()
+
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Pick up a finished run and refresh the dashboard from it.
 
@@ -741,6 +770,7 @@ class DbfreshApp(App):
             # previous run (or one cancelled mid-flight) must never
             # contribute to this run's live rollup on either grid.
             self._live_results = {}
+            self._repaint_stale_day_columns()
             bar = self._run_progress_bar()
             bar.display = True
             # The total isn't known yet at this point -- filter_checks

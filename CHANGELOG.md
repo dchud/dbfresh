@@ -50,6 +50,9 @@ once releases are tagged.
 
 ### Fixed
 
+- A TUI left open past midnight no longer errors and freezes on the next
+  run. The Home dashboard's trailing-day columns are brought up to date
+  when a run starts, so the new day's results have a column to land in.
 - The run-complete toast no longer offers `p` for the report after a run
   finished from a screen where the report can't be opened — the report is
   Home-only, so a run started from the object-detail screen now completes

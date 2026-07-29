@@ -2,9 +2,10 @@ import asyncio
 import re
 import subprocess
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from textual.widgets import DataTable, OptionList, ProgressBar, Static
+from textual.worker import Worker, WorkerState
 
 from dbfresh import runner
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -2325,5 +2326,143 @@ def test_toggle_non_ok_filter_drops_a_sources_header_when_all_its_objects_hide(
             # s.orders is OK -- hidden, and with it source "s"'s header;
             # t.items (FAIL) and its header stay.
             assert _row_order(table) == [header_key("t"), "t\x1fitems"]
+
+    asyncio.run(scenario())
+
+
+def _day_column_keys(table):
+    """Every day column's key, in table order -- the trailing-day window
+    the grid is currently painted with."""
+    return [
+        str(key.value)
+        for key in table.columns
+        if str(key.value) not in ("label", "overall")
+    ]
+
+
+def _repaint_grid_as_of(app, when):
+    """Repaint the Home grid as it would have been painted on ``when`` --
+    the state an app left running past midnight is in, since nothing
+    repaints the grid between the last refresh and the next run."""
+    from dbfresh.tui.dashboard import object_rows, populate_grid
+
+    table = app.query_one("#dashboard-grid", DataTable)
+    rows = object_rows(app._require_config(), app.store, when, UTC)
+    populate_grid(table, rows, when, label_header="object", group_headers=True)
+    app._rows_by_key = {row.key: row for row in rows}
+    return table
+
+
+def test_home_live_update_does_not_raise_when_the_day_columns_are_stale(
+    tmp_path, monkeypatch
+):
+    """The reported overnight crash: the grid still holds yesterday's day
+    columns, and the first result of a new day targets a column key the
+    table has never heard of. flash_cell's write must tolerate that
+    rather than let CellDoesNotExist escape the message handler.
+
+    The overall cell (a constant column key, so never missing) still
+    updates, which is what keeps the row from silently going dead.
+    """
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            today = datetime.now(UTC).date()
+            table = _repaint_grid_as_of(app, today - timedelta(days=1))
+            assert today.isoformat() not in _day_column_keys(table)
+
+            app.on_run_progress(
+                RunProgress(
+                    1,
+                    2,
+                    result=Result(
+                        object="t",
+                        metric="row_count",
+                        status=Status.FAIL,
+                        source="s",
+                        check_id=check_id(_row_count_check()),
+                    ),
+                )
+            )
+            await pilot.pause()
+            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+
+    asyncio.run(scenario())
+
+
+def test_run_start_repaints_a_grid_whose_day_columns_are_stale(
+    tmp_path, monkeypatch
+):
+    """An app left running past midnight has yesterday's trailing-day
+    window painted, and nothing repaints it on its own -- no timer, and
+    the RUNNING branch previously touched only the progress bar. Starting
+    a run must first bring the window up to date, so the day cells this
+    run is about to write actually exist.
+
+    Asserted at the handler level with a synthetic RUNNING event rather
+    than racing a real worker for a mid-run snapshot.
+    """
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            today = datetime.now(UTC).date()
+            table = _repaint_grid_as_of(app, today - timedelta(days=1))
+            assert today.isoformat() not in _day_column_keys(table)
+
+            worker = Worker(app, lambda: None, group="run-checks")
+            app.on_worker_state_changed(
+                Worker.StateChanged(worker, WorkerState.RUNNING)
+            )
+            await pilot.pause()
+
+            table = app.query_one("#dashboard-grid", DataTable)
+            assert _day_column_keys(table)[-1] == today.isoformat()
+
+    asyncio.run(scenario())
+
+
+def test_run_start_leaves_a_current_grid_untouched(tmp_path, monkeypatch):
+    """The rollover repaint is conditional: a grid already painted with
+    today's window must not be rebuilt on every run start, which would
+    reset the row cursor mid-session for no reason."""
+    monkeypatch.setattr("dbfresh.report.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            repaints = []
+            original = app.refresh_dashboard
+
+            def counting_refresh():
+                repaints.append(1)
+                original()
+
+            app.refresh_dashboard = counting_refresh
+
+            worker = Worker(app, lambda: None, group="run-checks")
+            app.on_worker_state_changed(
+                Worker.StateChanged(worker, WorkerState.RUNNING)
+            )
+            await pilot.pause()
+            assert repaints == []
 
     asyncio.run(scenario())

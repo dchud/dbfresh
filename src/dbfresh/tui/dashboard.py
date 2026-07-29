@@ -631,7 +631,16 @@ def flash_cell(
 
     highlighted = cell.copy()
     highlighted.stylize(f"on {HIGHLIGHT_BG}")
-    table.update_cell(row_key, column_key, highlighted)
+    try:
+        table.update_cell(row_key, column_key, highlighted)
+    except CellDoesNotExist:
+        # The named cell isn't in the grid: a row filtered out since the
+        # caller last looked, or -- the case this guards -- a day column
+        # the grid was painted too early to hold, when the calendar date
+        # rolled over while the app sat open. Skipping the highlight
+        # degrades a missed repaint to an un-animated cell instead of an
+        # exception escaping the caller's message handler.
+        return
 
     def restore() -> None:
         timers.pop(key, None)

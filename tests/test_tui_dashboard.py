@@ -1,5 +1,5 @@
 import asyncio
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -941,3 +941,36 @@ def test_grid_view_has_no_worst_first_field():
     # global severity sort -- retired in favor of the non-OK filter ('f')
     # for triage.
     assert "worst_first" not in GridView.__dataclass_fields__
+
+
+def test_flash_cell_skips_a_write_to_a_column_that_does_not_exist():
+    """A grid painted before midnight has no column for the new day, so a
+    live update's day-cell write names a column key the table has never
+    held. flash_cell must skip that write rather than let
+    CellDoesNotExist escape into the caller's message handler -- the
+    same tolerance its deferred restore() already has.
+    """
+    from dbfresh.tui.dashboard import _day_cell, flash_cell
+
+    async def scenario():
+        store = Store(":memory:")
+        rows = object_rows(_config(_checks()), store, _TODAY, tz=None)
+        app = _GridTestApp()
+        async with app.run_test():
+            table = app.query_one(DataTable)
+            populate_grid(table, rows, _TODAY, label_header="object")
+            timers = {}
+
+            flash_cell(
+                table,
+                rows[0].key,
+                (_TODAY + timedelta(days=1)).isoformat(),
+                _day_cell(Status.OK, None),
+                app,
+                timers,
+            )
+
+            # Nothing was written, so nothing is queued to be restored.
+            assert timers == {}
+
+    asyncio.run(scenario())
