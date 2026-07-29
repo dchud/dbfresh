@@ -164,7 +164,7 @@ def test_main_last_resort_guard_reports_unexpected_exception_cleanly(
     def _boom(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr("dbfresh.runner.run_and_persist", _boom)
+    monkeypatch.setattr("dbfresh.cli.run_and_persist", _boom)
 
     code = main(["run", "-c", str(cfg)])
 

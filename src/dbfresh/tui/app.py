@@ -35,7 +35,10 @@ from dbfresh.checks import check_id
 from dbfresh.config import Config, StoreConfig, load_config_tolerant
 from dbfresh.env_hygiene import committable_env_file
 from dbfresh.models import Result, RunResult, Status
+from dbfresh.report import display_timezone
+from dbfresh.runner import filter_checks, run_and_persist
 from dbfresh.store import Store, resolve_store_path
+from dbfresh.tui.configure import ConfigureScreen
 from dbfresh.tui.dashboard import (
     DrillDownTable,
     GridRow,
@@ -52,6 +55,12 @@ from dbfresh.tui.dashboard import (
     status_legend,
     unobserved_count,
     unobserved_summary,
+)
+from dbfresh.tui.screens import (
+    HelpScreen,
+    ObjectDetailScreen,
+    ReportScreen,
+    StoreScreen,
 )
 
 _GRID_ID = "dashboard-grid"
@@ -375,8 +384,6 @@ class DbfreshApp(App):
         self.notify(message)
 
     def action_help(self) -> None:
-        from dbfresh.tui.screens import HelpScreen
-
         self.push_screen(HelpScreen())
 
     def _require_config(self) -> Config:
@@ -413,8 +420,6 @@ class DbfreshApp(App):
         equally-empty-looking case with a different fix (relax the view,
         not go configure something) -- see :data:`_NO_MATCHING_ROWS_MESSAGE`.
         """
-        from dbfresh.report import display_timezone
-
         table = self.query_one(f"#{_GRID_ID}", DataTable)
         config = self._require_config()
         store = self._require_store()
@@ -595,8 +600,6 @@ class DbfreshApp(App):
         reaches the UI via ``post_message`` rather than by touching a
         widget or reactive attribute from these threads directly.
         """
-        from dbfresh.runner import filter_checks, run_and_persist
-
         config = self._require_config()
         total = len(filter_checks(config.checks, only, object_))
         lock = threading.Lock()
@@ -655,8 +658,6 @@ class DbfreshApp(App):
         self._live_results[result.check_id] = result
         self._apply_live_result_to_home(result)
 
-        from dbfresh.tui.screens import ObjectDetailScreen
-
         if isinstance(self.screen, ObjectDetailScreen):
             self.screen.apply_live_result(result)
 
@@ -714,8 +715,6 @@ class DbfreshApp(App):
             self._cell_flash_timers,
         )
 
-        from dbfresh.report import display_timezone
-
         tz = display_timezone(config.calendar)
         today = datetime.now(tz).date()
         # No marker: a day cell's trailing marker flags a worse status the
@@ -752,8 +751,6 @@ class DbfreshApp(App):
         (nothing painted yet) is left alone; ``refresh_dashboard`` runs on
         its own path in that case.
         """
-        from dbfresh.report import display_timezone
-
         table = self.query_one(f"#{_GRID_ID}", DataTable)
         if not table.columns:
             return
@@ -848,16 +845,12 @@ class DbfreshApp(App):
         completed while it was showing, rather than only updating once the
         user pops back to Home and back in.
         """
-        from dbfresh.tui.screens import ObjectDetailScreen, ReportScreen
-
         if isinstance(self.screen, ObjectDetailScreen):
             self.screen.refresh_grid()
         elif isinstance(self.screen, ReportScreen):
             self.screen.refresh_report(self.last_run)
 
     def action_configure(self) -> None:
-        from dbfresh.tui.configure import ConfigureScreen
-
         self.push_screen(
             ConfigureScreen(self.config_path, self._require_config()),
             self._on_configure_dismissed,
@@ -886,9 +879,6 @@ class DbfreshApp(App):
         self.action_run_checks()
 
     def action_report(self) -> None:
-        from dbfresh.report import display_timezone
-        from dbfresh.tui.screens import ReportScreen
-
         tz = display_timezone(self._require_config().calendar)
         self.push_screen(
             ReportScreen(
@@ -900,8 +890,6 @@ class DbfreshApp(App):
         )
 
     def action_store(self) -> None:
-        from dbfresh.tui.screens import StoreScreen
-
         config = self._require_config()
         retain_days = (config.store or StoreConfig()).retain_days
         self.push_screen(StoreScreen(self._require_store(), retain_days))
@@ -918,9 +906,6 @@ class DbfreshApp(App):
         row = self._rows_by_key.get(event.row_key.value)
         if row is None or row.source is None or row.object is None:
             return
-        from dbfresh.report import display_timezone
-        from dbfresh.tui.screens import ObjectDetailScreen
-
         tz = display_timezone(self._require_config().calendar)
         self.push_screen(
             ObjectDetailScreen(

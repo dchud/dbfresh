@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import structlog
 
 from dbfresh.adapters.base import Adapter
+from dbfresh.adapters.factory import create_adapter
 from dbfresh.checks import Check
 from dbfresh.config import Config
 from dbfresh.engine import run_checks
@@ -86,8 +87,6 @@ def run_and_persist(
     ``on_result``, when given, is forwarded to :func:`~dbfresh.engine.run_checks`
     and called once per check as it completes -- e.g. to advance a progress bar.
     """
-    from dbfresh.adapters.factory import create_adapter
-
     now = now or datetime.now(UTC)
     checks = filter_checks(config.checks, only, object_)
 

@@ -161,7 +161,7 @@ def test_home_dashboard_shows_mixed_statuses(
     # configured calendar (this fixture has none) -- pin it to UTC so the
     # snapshot is deterministic across machines, not just across runs.
     monkeypatch.setattr(
-        "dbfresh.report.display_timezone", lambda calendar: UTC
+        "dbfresh.tui.app.display_timezone", lambda calendar: UTC
     )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
@@ -175,7 +175,7 @@ def test_object_detail_screen_shows_check_grid_and_legend(
     monkeypatch.setattr("dbfresh.tui.app.datetime", _FrozenDateTime)
     monkeypatch.setattr("dbfresh.tui.screens.datetime", _FrozenDateTime)
     monkeypatch.setattr(
-        "dbfresh.report.display_timezone", lambda calendar: UTC
+        "dbfresh.tui.app.display_timezone", lambda calendar: UTC
     )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
@@ -244,7 +244,7 @@ def test_report_screen_shows_failures_and_warnings(
     # configured calendar (this fixture has none) -- pin it to UTC so the
     # snapshot is deterministic across machines, not just across runs.
     monkeypatch.setattr(
-        "dbfresh.report.display_timezone", lambda calendar: UTC
+        "dbfresh.tui.app.display_timezone", lambda calendar: UTC
     )
     cfg_path, store_path = _build_fixture(tmp_path)
     app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))

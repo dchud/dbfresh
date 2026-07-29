@@ -24,6 +24,9 @@ from dbfresh.adapters.base import (
     Dialect,
     ObjectInfo,
 )
+from dbfresh.adapters.factory import create_adapter
+from dbfresh.checks import Check, check_id
+from dbfresh.config import interpolate_env, resolve_includes
 
 _ROW_COUNT_MIN_RATIO = 0.5
 _ROW_COUNT_MAX_RATIO = 2.0
@@ -385,8 +388,6 @@ def probe_connection(type_: str, params: dict) -> ConnectionProbe:
     raises -- any failure (unknown type, bad credentials, unreachable host)
     comes back as ``ConnectionProbe(ok=False, error=...)``.
     """
-    from dbfresh.adapters.factory import create_adapter
-
     try:
         adapter = create_adapter(type_, params)
     except Exception as exc:
@@ -415,8 +416,6 @@ def probe_new_source(
     rather than a literal secret. An undefined variable fails the probe
     cleanly rather than raising.
     """
-    from dbfresh.config import interpolate_env
-
     try:
         resolved = interpolate_env(raw_params)
     except ValueError as exc:
@@ -470,8 +469,6 @@ def target_files(config_path: str | Path) -> list[Path]:
     never a silently empty list. Without ``include:``, the only target is
     the root config itself.
     """
-    from dbfresh.config import resolve_includes
-
     config_path = Path(config_path)
     data = yaml.safe_load(config_path.read_text()) or {}
     patterns = data.get("include")
@@ -692,8 +689,6 @@ def _check_id_of(raw: dict) -> str:
     never ``expect``, so this never has to parse (and possibly reject) an
     expectation just to compute an identity for dedup purposes.
     """
-    from dbfresh.checks import Check, check_id
-
     check = Check(
         source=raw.get("source", ""),
         object=raw.get("object", ""),
