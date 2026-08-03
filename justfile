@@ -3,9 +3,12 @@
 default:
     @just --list
 
-# Run the test suite.
+# Run the test suite across all cores. Tests are independent (each gets its
+# own tmp_path), and the Textual Pilot tests that dominate the runtime are
+# the ones parallelism helps most. Run `uv run pytest <path>` directly for a
+# single test -- serial output is easier to read when something fails.
 test:
-    uv run pytest
+    uv run pytest -n auto
 
 # Lint (ruff) and check formatting without modifying files.
 lint:
