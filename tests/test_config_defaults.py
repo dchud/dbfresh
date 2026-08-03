@@ -3,17 +3,13 @@
 allow_empty) — a per-check value always overrides the default.
 """
 
+from helpers import write_config
+
 from dbfresh.config import load_config
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_default_severity_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -32,7 +28,7 @@ checks:
 
 
 def test_per_check_severity_overrides_default(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -52,7 +48,7 @@ checks:
 
 
 def test_default_where_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -71,7 +67,7 @@ checks:
 
 
 def test_per_check_where_overrides_default(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -91,7 +87,7 @@ checks:
 
 
 def test_default_allow_empty_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -110,7 +106,7 @@ checks:
 
 
 def test_per_check_allow_empty_false_overrides_default_true(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 defaults:
@@ -130,7 +126,7 @@ checks:
 
 
 def test_default_calendar_mode_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 calendar:
@@ -152,7 +148,7 @@ checks:
 
 
 def test_per_check_calendar_mode_null_overrides_default_business(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 calendar:

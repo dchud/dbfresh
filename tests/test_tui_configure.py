@@ -3,6 +3,7 @@ import threading
 
 import pytest
 import yaml
+from helpers import ambiguous_sqlite_table, sqlite_table
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
@@ -21,23 +22,6 @@ from dbfresh.config import load_config
 from dbfresh.tui import app as app_module
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
-
-
-def _table(db):
-    adapter = SqliteAdapter(str(db))
-    adapter.rows(
-        "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
-    )
-    adapter.close()
-
-
-def _ambiguous_table(db):
-    adapter = SqliteAdapter(str(db))
-    adapter.rows(
-        "CREATE TABLE fct (id INTEGER PRIMARY KEY, created_at TIMESTAMP,"
-        " updated_at TIMESTAMP)"
-    )
-    adapter.close()
 
 
 def _table_with_offered_temporal(db):
@@ -117,7 +101,7 @@ def test_configure_preselects_a_lone_source(tmp_path):
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)  # exactly one source, "s"
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -133,7 +117,7 @@ def test_configure_preselects_a_lone_source(tmp_path):
 def test_configure_screen_proposes_and_appends_checks(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -181,7 +165,7 @@ def test_configure_screen_dashboard_reflects_appended_checks(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -218,7 +202,7 @@ def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -326,7 +310,7 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _ambiguous_table(db)
+        ambiguous_sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -359,7 +343,7 @@ def test_configure_screen_notes_ambiguous_timestamp_without_a_pick(
 def test_configure_screen_uses_picked_timestamp_column(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
-        _ambiguous_table(db)
+        ambiguous_sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -470,7 +454,7 @@ def test_configure_screen_new_source_button_reveals_form_when_sources_exist(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -504,7 +488,7 @@ def test_configure_screen_new_source_probe_success_adds_and_selects_source(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = tmp_path / "config.yaml"
         cfg.write_text("sources: {}\nchecks: []\n")
 
@@ -568,7 +552,7 @@ def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
         cfg = tmp_path / "config.yaml"
         cfg.write_text("sources: {}\nchecks: []\n")
@@ -678,7 +662,7 @@ def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -834,7 +818,7 @@ def test_new_source_flow_works_when_config_file_did_not_exist_yet(
         from dbfresh.config import Config
 
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = tmp_path / "config.yaml"
         assert not cfg.exists()
 
@@ -1018,7 +1002,7 @@ def test_config_reload_failure_after_write_is_caught_not_crashed(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1071,7 +1055,7 @@ def test_configure_screen_surfaces_target_file_among_several_included(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
 
         checks_dir = tmp_path / "checks"
         checks_dir.mkdir()
@@ -1125,7 +1109,7 @@ def test_configure_screen_surfaces_target_file_among_several_included(
 def test_configure_screen_unknown_object_disables_accept(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1160,7 +1144,7 @@ def test_configure_screen_unknown_object_disables_accept(tmp_path, pump_until):
 def test_configure_screen_cancel_button_writes_nothing(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1188,7 +1172,7 @@ def test_configure_screen_cancel_button_writes_nothing(tmp_path):
 def test_configure_screen_escape_cancels_without_writing(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1214,7 +1198,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1259,7 +1243,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(
 def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1299,7 +1283,7 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
     [
         pytest.param(
             "null_rate",
-            _table,
+            sqlite_table,
             "amount",
             None,
             "0.05",
@@ -1309,7 +1293,7 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
         ),
         pytest.param(
             "null_rate",
-            _table,
+            sqlite_table,
             "amount",
             "0.2",
             "0.05",
@@ -1406,7 +1390,7 @@ def test_configure_screen_offered_check_value_is_written(
     [
         pytest.param(
             "null_rate",
-            _table,
+            sqlite_table,
             "amount",
             "not-a-number",
             id="null_rate-invalid",
@@ -1509,7 +1493,7 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
 def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1550,7 +1534,7 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -1619,7 +1603,7 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
             f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
@@ -1711,7 +1695,7 @@ def test_existing_check_edit_row_keeps_input_and_save_on_screen(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
         async with app.run_test(size=(100, 30)) as pilot:
@@ -1743,7 +1727,7 @@ def test_configure_screen_shows_no_existing_checks_placeholder(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1775,7 +1759,7 @@ def test_configure_screen_existing_check_input_prefilled_with_current_value(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1802,7 +1786,7 @@ def test_configure_screen_existing_check_input_prefilled_with_current_value(
 def test_configure_screen_between_operator_check_is_read_only(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1832,7 +1816,7 @@ def test_configure_screen_save_existing_check_rewrites_expect_on_disk(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1875,7 +1859,7 @@ def test_configure_screen_save_existing_check_does_not_change_check_id(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1913,7 +1897,7 @@ def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_d
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
         original_text = cfg.read_text()
 
@@ -1949,7 +1933,7 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -1988,7 +1972,7 @@ def test_configure_screen_cancel_after_existing_edit_still_reloads_home(
 
 # -- proposed-check threshold input (df-cpj) -------------------------------
 #
-# _table's schema (id PK, amount REAL, modified_at TIMESTAMP) always
+# sqlite_table's schema (id PK, amount REAL, modified_at TIMESTAMP) always
 # proposes in the same order: schema(0), row_count(1), freshness(2),
 # duplicate_count(3) -- so "proposed-value-2" is freshness's Input across
 # these tests, matching the fixture's fixed shape.
@@ -1999,7 +1983,7 @@ def test_configure_screen_proposed_freshness_has_a_value_input_prefilled_with_de
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -2033,7 +2017,7 @@ def test_configure_screen_non_freshness_proposed_checks_have_no_value_input(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -2062,7 +2046,7 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -2100,7 +2084,7 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
         original_text = cfg.read_text()
 
@@ -2139,7 +2123,7 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -2199,7 +2183,7 @@ def test_object_input_suggester_built_on_mount_for_preselected_source(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
@@ -2221,8 +2205,8 @@ def test_object_input_suggester_rebuilds_when_source_select_changes(tmp_path):
     async def scenario():
         db_a = tmp_path / "a.db"
         db_b = tmp_path / "b.db"
-        _table(db_a)
-        _table(db_b)
+        sqlite_table(db_a)
+        sqlite_table(db_b)
         cfg = _config_with_two_sources_and_checks(
             tmp_path / "config.yaml", db_a, db_b
         )
@@ -2254,7 +2238,7 @@ def test_object_input_suggester_empty_when_source_has_no_known_objects(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(
             tmp_path / "config.yaml", db
         )  # source "s", no checks yet
@@ -2302,7 +2286,7 @@ def test_edit_source_prefills_raw_var_token_not_resolved(
 
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -2345,9 +2329,9 @@ def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         new_db = tmp_path / "new-data.db"
-        _table(new_db)
+        sqlite_table(new_db)
         monkeypatch.setenv("DBFRESH_TEST_DB", str(new_db))
         cfg = tmp_path / "config.yaml"
         cfg.write_text(
@@ -2521,7 +2505,7 @@ def test_remove_source_with_orphaned_checks_shows_error_and_writes_nothing(
 ):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
         original = cfg.read_text()
 
@@ -2550,7 +2534,7 @@ def test_remove_source_with_orphaned_checks_shows_error_and_writes_nothing(
 def test_remove_last_source_opens_new_source_form(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
-        _table(db)
+        sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))

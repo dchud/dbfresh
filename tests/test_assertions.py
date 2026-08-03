@@ -1,20 +1,15 @@
 from datetime import UTC, datetime
 
+from helpers import adapter_with_negatives
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check
 from dbfresh.engine import Result, RunResult, Status, evaluate_check
 from dbfresh.report import render_digest
 
 
-def _adapter_with_negatives():
-    a = SqliteAdapter()
-    a.rows("CREATE TABLE fct (sale_id INTEGER, amount REAL)")
-    a.rows("INSERT INTO fct VALUES (1, 10.0), (2, -5.0), (3, -1.0)")
-    return a
-
-
 def test_assertion_with_violations_fails():
-    a = _adapter_with_negatives()
+    a = adapter_with_negatives()
     check = Check(source="s", object="fct", assert_="amount >= 0")
     result = evaluate_check(check, a)
     assert result.status == Status.FAIL

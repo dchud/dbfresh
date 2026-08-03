@@ -3,15 +3,9 @@
 import os
 
 import pytest
+from helpers import write_file
 
 from dbfresh.config import ConfigError, load_config
-
-
-def _write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    return path
-
 
 _SOURCES = """
 sources:
@@ -20,7 +14,7 @@ sources:
 
 
 def test_include_merges_checks_from_root_and_included_file(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -33,7 +27,7 @@ checks:
     expect: { max: 5 }
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -49,7 +43,7 @@ checks:
 
 
 def test_include_accepts_bare_list_of_checks(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -58,7 +52,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 - source: s
@@ -72,7 +66,7 @@ checks: []
 
 
 def test_include_lexicographic_load_order(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -81,7 +75,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "b.yaml",
         """
 checks:
@@ -91,7 +85,7 @@ checks:
     expect: { max: 5 }
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -106,7 +100,7 @@ checks:
 
 
 def test_include_glob_resolves_relative_to_root_config_dir_not_cwd(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -115,7 +109,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -137,7 +131,7 @@ checks:
 
 
 def test_include_glob_matching_no_files_is_a_validation_error(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -154,7 +148,7 @@ def test_undefined_var_in_include_pattern_names_the_variable(tmp_path):
     # An undefined ${VAR} in an include: pattern must be reported as that
     # undefined variable, not as "include glob matched no files" (the
     # literal, unresolved "${CHECKS_DIR}/*.yaml" pattern never matches).
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -176,7 +170,7 @@ checks: []
 def test_included_file_with_disallowed_top_level_key_is_a_validation_error(
     tmp_path, key
 ):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -185,7 +179,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         f"""
 checks: []
@@ -199,7 +193,7 @@ checks: []
 def test_duplicate_check_id_across_root_and_included_file_is_a_validation_error(
     tmp_path,
 ):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -213,7 +207,7 @@ checks:
     expect: { max: 5 }
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -231,7 +225,7 @@ checks:
 def test_duplicate_check_id_across_two_included_files_is_a_validation_error(
     tmp_path,
 ):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -240,7 +234,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -250,7 +244,7 @@ checks:
     expect: { max: 5 }
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "b.yaml",
         """
 checks:
@@ -265,7 +259,7 @@ checks:
 
 
 def test_no_implicit_directory_scan_only_matched_globs_load(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -274,7 +268,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "only-a.yaml",
         """
 checks:
@@ -284,7 +278,7 @@ checks:
     expect: { max: 5 }
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "unmatched.yaml",
         """
 checks:
@@ -301,7 +295,7 @@ checks:
 def test_store_path_resolves_against_root_config_dir_with_includes_present(
     tmp_path,
 ):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -311,7 +305,7 @@ store: ./obs.db
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -332,7 +326,7 @@ checks:
 
 
 def test_include_not_a_list_is_a_validation_error(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """

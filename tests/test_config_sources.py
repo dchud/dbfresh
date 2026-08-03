@@ -3,18 +3,13 @@ a genuinely-unknown source parameter cleanly instead of a raw TypeError.
 """
 
 import pytest
+from helpers import write_config
 
 from dbfresh.config import load_config
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_source_timezone_and_timeout_are_not_adapter_params(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -34,7 +29,7 @@ checks: []
 
 
 def test_source_timezone_and_timeout_default_to_none(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -49,7 +44,7 @@ checks: []
 
 
 def test_unknown_source_param_is_a_clean_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -65,7 +60,7 @@ def test_sqlserver_source_with_timeout_and_timezone_loads(tmp_path):
     # The spec's own example config sets timeout/timezone on a sqlserver
     # source; this must load cleanly even without pymssql installed --
     # config validation never constructs the adapter.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -85,7 +80,7 @@ checks: []
 
 
 def test_check_source_timezone_comes_from_its_source(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -106,7 +101,7 @@ checks:
 
 
 def test_check_source_timezone_defaults_to_utc_when_source_has_none(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -127,7 +122,7 @@ def test_invalid_source_timezone_is_a_clean_validation_error_at_load(tmp_path):
     # A typo'd timezone previously loaded cleanly and only surfaced as a
     # per-check ERROR at run time, the first time a freshness check on
     # that source converted a naive timestamp.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -149,7 +144,7 @@ def test_unknown_source_type_is_not_flagged_here_only_at_connect_time(
     # raises there); config validation must not also reject it, since an
     # unreferenced or intentionally-unreachable source must not block a
     # load that never touches it (see runner.py's failed_sources model).
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:

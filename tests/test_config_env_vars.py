@@ -7,6 +7,7 @@ problem -- the whole point is to run before secrets exist.
 """
 
 import pytest
+from helpers import write_file
 
 from dbfresh.config import ConfigError, collect_referenced_env_vars
 
@@ -16,14 +17,8 @@ sources:
 """
 
 
-def _write(path, text):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    return path
-
-
 def test_collect_referenced_env_vars_returns_sorted_deduped_names(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -44,7 +39,7 @@ checks:
 
 
 def test_collect_referenced_env_vars_collects_var_from_included_file(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -53,7 +48,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:
@@ -73,12 +68,12 @@ def test_collect_referenced_env_vars_ignores_environment(
     # The correctness guard: a var that happens to be set on the
     # generating machine must still be listed, not silently omitted.
     monkeypatch.setenv("DB_PATH", "/somewhere/real.db")
-    root = _write(tmp_path / "config.yaml", _SOURCES + "checks: []\n")
+    root = write_file(tmp_path / "config.yaml", _SOURCES + "checks: []\n")
     assert collect_referenced_env_vars(root) == ["DB_PATH"]
 
 
 def test_collect_referenced_env_vars_with_no_vars_returns_empty_list(tmp_path):
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         "sources:\n  s: { type: sqlite, database: ':memory:' }\nchecks: []\n",
     )
@@ -100,7 +95,7 @@ def test_collect_referenced_env_vars_skips_names_only_in_var_pattern_include(
     # ${VAR} is never glob-resolved (same rule as the loader), so a
     # variable referenced only inside the file it would have matched is
     # not collected. The variable name in the pattern itself still is.
-    root = _write(
+    root = write_file(
         tmp_path / "config.yaml",
         _SOURCES
         + """
@@ -109,7 +104,7 @@ include:
 checks: []
 """,
     )
-    _write(
+    write_file(
         tmp_path / "checks" / "a.yaml",
         """
 checks:

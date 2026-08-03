@@ -1,20 +1,15 @@
 from datetime import UTC, datetime
 
 import pytest
+from helpers import write_config
 
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.config import load_config
 from dbfresh.engine import Status, evaluate_check
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_load_config_parses_calendar_block(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -32,7 +27,7 @@ checks: []
 
 
 def test_load_config_defaults_calendar_to_none(tmp_path):
-    path = _write(tmp_path, "sources: {}\nchecks: []\n")
+    path = write_config(tmp_path, "sources: {}\nchecks: []\n")
     cfg = load_config(path, env={})
     assert cfg.calendar is None
 
@@ -41,7 +36,7 @@ _CALENDAR_BLOCK = "calendar:\n  timezone: America/New_York\n"
 
 
 def test_load_config_parses_by_weekday_and_on_holiday(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -66,7 +61,7 @@ checks:
 
 
 def test_load_config_parses_calendar_business_and_skip_off_schedule(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -89,7 +84,7 @@ checks:
 
 
 def test_load_config_skip_off_schedule_defaults_false(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -107,7 +102,7 @@ checks:
 
 
 def test_by_weekday_without_calendar_block_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -125,7 +120,7 @@ checks:
 
 
 def test_on_holiday_without_calendar_block_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -145,7 +140,7 @@ checks:
 def test_calendar_business_without_calendar_block_is_a_validation_error(
     tmp_path,
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -164,7 +159,7 @@ checks:
 
 
 def test_defaults_skip_off_schedule_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -184,7 +179,7 @@ checks:
 
 
 def test_per_check_skip_off_schedule_overrides_default(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -205,7 +200,7 @@ checks:
 
 
 def test_skip_on_holiday_is_an_alias_for_skip_off_schedule(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -224,7 +219,7 @@ checks:
 
 
 def test_defaults_skip_on_holiday_alias_applies_to_every_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -244,7 +239,7 @@ checks:
 
 
 def test_per_check_skip_on_holiday_false_overrides_default_true(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -265,7 +260,7 @@ checks:
 
 
 def test_skip_on_holiday_actually_skips_evaluation_on_a_holiday(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -301,7 +296,7 @@ checks:
 def test_skip_off_schedule_without_calendar_block_is_a_validation_error(
     tmp_path,
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -319,7 +314,7 @@ checks:
 
 
 def test_unknown_weekday_key_in_by_weekday_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """
@@ -338,7 +333,7 @@ checks:
 
 
 def test_unsupported_calendar_mode_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         _CALENDAR_BLOCK
         + """

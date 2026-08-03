@@ -1,17 +1,10 @@
 from datetime import UTC, datetime
 
-from dbfresh.adapters.sqlite import SqliteAdapter
+from helpers import rows_adapter
+
 from dbfresh.calendar import build_calendar
 from dbfresh.checks import Check, parse_expectation
 from dbfresh.engine import Status, evaluate_check, run_checks
-
-
-def _rows_adapter(n):
-    a = SqliteAdapter()
-    a.rows("CREATE TABLE t (id INTEGER)")
-    for i in range(n):
-        a.rows(f"INSERT INTO t (id) VALUES ({i})")
-    return a
 
 
 def _calendar(**holiday_overrides):
@@ -22,7 +15,7 @@ def _calendar(**holiday_overrides):
 
 
 def test_by_weekday_override_selected_for_run_date():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",
@@ -37,7 +30,7 @@ def test_by_weekday_override_selected_for_run_date():
 
 
 def test_by_weekday_falls_back_to_base_expect_when_no_match():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",
@@ -52,7 +45,7 @@ def test_by_weekday_falls_back_to_base_expect_when_no_match():
 
 
 def test_on_holiday_takes_precedence_over_by_weekday():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",
@@ -69,7 +62,7 @@ def test_on_holiday_takes_precedence_over_by_weekday():
 
 
 def test_on_holiday_not_used_when_today_is_not_a_holiday():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",
@@ -84,7 +77,7 @@ def test_on_holiday_not_used_when_today_is_not_a_holiday():
 
 
 def test_run_checks_threads_calendar_and_now_through():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",
@@ -99,7 +92,7 @@ def test_run_checks_threads_calendar_and_now_through():
 
 
 def test_without_calendar_by_weekday_is_ignored():
-    a = _rows_adapter(5)
+    a = rows_adapter(5)
     check = Check(
         source="s",
         object="t",

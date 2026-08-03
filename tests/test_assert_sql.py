@@ -7,20 +7,15 @@ instead at fetch time via `rows_limited`; the fetched row count is the
 persisted value below the cap, and a capped ("N+") value above it.
 """
 
+from helpers import adapter_with_negatives
+
 from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.checks import Check
 from dbfresh.engine import Status, evaluate_check
 
 
-def _adapter_with_negatives():
-    a = SqliteAdapter()
-    a.rows("CREATE TABLE fct (sale_id INTEGER, amount REAL)")
-    a.rows("INSERT INTO fct VALUES (1, 10.0), (2, -5.0), (3, -1.0)")
-    return a
-
-
 def test_assert_sql_with_violations_fails():
-    a = _adapter_with_negatives()
+    a = adapter_with_negatives()
     check = Check(
         source="s",
         object="fct",
@@ -58,7 +53,7 @@ def test_assert_sql_query_error_is_an_error_result():
 
 
 def test_assert_sql_severity_warn_yields_warn_not_fail():
-    a = _adapter_with_negatives()
+    a = adapter_with_negatives()
     check = Check(
         source="s",
         object="fct",

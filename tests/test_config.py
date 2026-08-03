@@ -1,4 +1,5 @@
 import pytest
+from helpers import write_config
 
 from dbfresh.config import (
     ConfigError,
@@ -23,14 +24,8 @@ def test_interpolate_env_recurses_into_containers():
     assert out == {"url": "z", "items": ["z", 3]}
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_load_config_builds_sources_and_checks(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 version: 1
@@ -54,7 +49,7 @@ checks:
 
 
 def test_load_config_rejects_unknown_source_ref(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -71,26 +66,26 @@ checks:
 
 
 def test_load_config_exposes_config_dir(tmp_path):
-    path = _write(tmp_path, "sources: {}\nchecks: []\n")
+    path = write_config(tmp_path, "sources: {}\nchecks: []\n")
     cfg = load_config(path, env={})
     assert cfg.config_dir == tmp_path
 
 
 def test_load_config_defaults_store_to_none(tmp_path):
-    path = _write(tmp_path, "sources: {}\nchecks: []\n")
+    path = write_config(tmp_path, "sources: {}\nchecks: []\n")
     cfg = load_config(path, env={})
     assert cfg.store is None
 
 
 def test_load_config_bare_string_store_is_path_shorthand(tmp_path):
-    path = _write(tmp_path, "store: ./obs.db\nsources: {}\nchecks: []\n")
+    path = write_config(tmp_path, "store: ./obs.db\nsources: {}\nchecks: []\n")
     cfg = load_config(path, env={})
     assert cfg.store.path == "./obs.db"
     assert cfg.store.retain_days == 400
 
 
 def test_load_config_store_mapping_with_retain_days(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         "store: { path: ./obs.db, retain_days: 90 }\nsources: {}\nchecks: []\n",
     )
@@ -100,7 +95,7 @@ def test_load_config_store_mapping_with_retain_days(tmp_path):
 
 
 def test_load_config_store_mapping_without_path(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path, "store: { retain_days: 10 }\nsources: {}\nchecks: []\n"
     )
     cfg = load_config(path, env={})
@@ -109,7 +104,7 @@ def test_load_config_store_mapping_without_path(tmp_path):
 
 
 def test_load_config_schema_check_accepts_unchanged(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -126,7 +121,7 @@ checks:
 
 
 def test_load_config_schema_check_rejects_numeric_operator(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -143,7 +138,7 @@ checks:
 
 
 def test_load_config_rejects_unchanged_on_non_schema_check(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -167,14 +162,14 @@ def test_load_config_missing_file_raises_config_error(tmp_path):
 
 
 def test_load_config_invalid_yaml_raises_config_error(tmp_path):
-    path = _write(tmp_path, "sources: [this is not: valid: yaml\n")
+    path = write_config(tmp_path, "sources: [this is not: valid: yaml\n")
     with pytest.raises(ConfigError) as excinfo:
         load_config(path, env={})
     assert excinfo.value.__cause__ is not None
 
 
 def test_load_config_missing_object_field_raises_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -191,7 +186,7 @@ checks:
 
 
 def test_load_config_missing_source_field_raises_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -208,7 +203,7 @@ checks:
 
 
 def test_load_config_missing_source_type_raises_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -222,7 +217,7 @@ checks: []
 
 
 def test_load_config_bad_expectation_raises_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -240,7 +235,7 @@ checks:
 
 
 def test_load_config_unknown_source_ref_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -258,7 +253,7 @@ checks:
 
 
 def test_duplicate_check_id_message_names_both_colliding_checks(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -286,7 +281,7 @@ checks:
 
 
 def test_load_config_reports_all_missing_vars_together(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -313,7 +308,7 @@ checks:
 
 
 def test_load_config_single_missing_var_message_unchanged(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -333,7 +328,7 @@ checks:
 def test_load_config_missing_var_in_included_file_accumulates_with_main(
     tmp_path,
 ):
-    root = _write(
+    root = write_config(
         tmp_path,
         """
 sources:
@@ -369,7 +364,7 @@ checks:
 
 
 def test_load_config_all_vars_provided_loads_successfully(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -388,7 +383,7 @@ checks:
 
 
 def test_load_config_tolerant_collects_missing_vars_without_raising(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -409,7 +404,7 @@ checks:
 
 
 def test_load_config_tolerant_no_missing_vars_returns_empty_set(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -430,7 +425,7 @@ def test_load_config_tolerant_still_raises_on_broken_config(tmp_path):
     # Undefined-variable tolerance is narrow: a genuinely broken config
     # (here, a reference to an unknown source) is not a missing-variable
     # problem and still raises, exactly like load_config.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -448,7 +443,7 @@ checks:
 
 
 def test_load_config_tolerant_still_raises_on_invalid_yaml(tmp_path):
-    path = _write(tmp_path, "sources: [this is not: valid: yaml\n")
+    path = write_config(tmp_path, "sources: [this is not: valid: yaml\n")
     with pytest.raises(ConfigError):
         load_config_tolerant(path, env={})
 
@@ -459,7 +454,7 @@ def test_load_config_tolerant_missing_var_and_broken_config_still_raises(
     # A config can have both problems at once -- the non-variable
     # validation error still wins (raises) even though a variable is also
     # undefined, since tolerance covers only the undefined-variable case.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -477,7 +472,7 @@ checks:
 
 
 def test_duplicate_check_id_differing_only_by_where_names_metric(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:

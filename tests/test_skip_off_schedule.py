@@ -1,17 +1,10 @@
 from datetime import UTC, datetime
 
-from dbfresh.adapters.sqlite import SqliteAdapter
+from helpers import rows_adapter
+
 from dbfresh.calendar import build_calendar
 from dbfresh.checks import Check, parse_expectation
 from dbfresh.engine import Status, evaluate_check
-
-
-def _rows_adapter(n):
-    a = SqliteAdapter()
-    a.rows("CREATE TABLE t (id INTEGER)")
-    for i in range(n):
-        a.rows(f"INSERT INTO t (id) VALUES ({i})")
-    return a
 
 
 def _calendar():
@@ -19,7 +12,7 @@ def _calendar():
 
 
 def test_skip_off_schedule_skips_on_weekend():
-    a = _rows_adapter(
+    a = rows_adapter(
         0
     )  # would ERROR/FAIL if evaluated: null_rate-free row_count ok
     check = Check(
@@ -36,7 +29,7 @@ def test_skip_off_schedule_skips_on_weekend():
 
 
 def test_skip_off_schedule_skips_on_holiday():
-    a = _rows_adapter(0)
+    a = rows_adapter(0)
     check = Check(
         source="s",
         object="t",
@@ -54,7 +47,7 @@ def test_skip_off_schedule_skips_on_holiday():
 
 
 def test_skip_off_schedule_runs_normally_on_business_day():
-    a = _rows_adapter(0)
+    a = rows_adapter(0)
     check = Check(
         source="s",
         object="t",
@@ -71,7 +64,7 @@ def test_skip_off_schedule_runs_normally_on_business_day():
 
 
 def test_skip_off_schedule_false_runs_even_off_schedule():
-    a = _rows_adapter(0)
+    a = rows_adapter(0)
     check = Check(
         source="s",
         object="t",
