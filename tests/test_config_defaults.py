@@ -3,169 +3,99 @@
 allow_empty) — a per-check value always overrides the default.
 """
 
+import pytest
 from helpers import write_config
 
 from dbfresh.config import load_config
 
+_CALENDAR_BLOCK = "calendar:\n  timezone: America/New_York\n"
 
-def test_default_severity_applies_to_every_check(tmp_path):
+
+def _load(tmp_path, default, check_field, *, prelude="", check_body=None):
+    body = check_body or "    metric: row_count\n    expect: { max: 5 }\n"
+    field = f"    {check_field}\n" if check_field else ""
     path = write_config(
         tmp_path,
-        """
-defaults:
-  severity: warn
+        f"""{prelude}defaults:
+  {default}
 sources:
-  s: { type: sqlite, database: ":memory:" }
+  s: {{ type: sqlite, database: ":memory:" }}
 checks:
   - source: s
     object: t
-    metric: row_count
-    expect: { max: 5 }
-""",
+{body}{field}""",
     )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].severity == "warn"
+    return load_config(path, env={})
 
 
-def test_per_check_severity_overrides_default(tmp_path):
-    path = write_config(
+@pytest.mark.parametrize(
+    ("default", "check_field", "attribute", "expected"),
+    [
+        pytest.param(
+            "severity: warn", "", "severity", "warn", id="severity-default"
+        ),
+        pytest.param(
+            "severity: warn",
+            "severity: error",
+            "severity",
+            "error",
+            id="severity-per-check",
+        ),
+        pytest.param(
+            "where: \"region = 'US'\"",
+            "",
+            "where",
+            "region = 'US'",
+            id="where-default",
+        ),
+        pytest.param(
+            "where: \"region = 'US'\"",
+            "where: \"region = 'EU'\"",
+            "where",
+            "region = 'EU'",
+            id="where-per-check",
+        ),
+        pytest.param(
+            "allow_empty: true",
+            "",
+            "allow_empty",
+            True,
+            id="allow_empty-default",
+        ),
+        pytest.param(
+            "allow_empty: true",
+            "allow_empty: false",
+            "allow_empty",
+            False,
+            id="allow_empty-per-check",
+        ),
+    ],
+)
+def test_default_applies_unless_the_check_sets_its_own(
+    tmp_path, default, check_field, attribute, expected
+):
+    cfg = _load(tmp_path, default, check_field)
+    assert getattr(cfg.checks[0], attribute) == expected
+
+
+@pytest.mark.parametrize(
+    ("check_field", "expected"),
+    [
+        pytest.param("", "business", id="default-applies"),
+        # an explicit null overrides the default rather than falling back to it
+        pytest.param("calendar: null", None, id="per-check-null-overrides"),
+    ],
+)
+def test_default_calendar_mode(tmp_path, check_field, expected):
+    cfg = _load(
         tmp_path,
-        """
-defaults:
-  severity: warn
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-    severity: error
-""",
+        "calendar: business",
+        check_field,
+        prelude=_CALENDAR_BLOCK,
+        check_body=(
+            "    metric: freshness\n"
+            "    column: created_at\n"
+            "    expect: { max_lag: 26h }\n"
+        ),
     )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].severity == "error"
-
-
-def test_default_where_applies_to_every_check(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-defaults:
-  where: "region = 'US'"
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].where == "region = 'US'"
-
-
-def test_per_check_where_overrides_default(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-defaults:
-  where: "region = 'US'"
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-    where: "region = 'EU'"
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].where == "region = 'EU'"
-
-
-def test_default_allow_empty_applies_to_every_check(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-defaults:
-  allow_empty: true
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].allow_empty is True
-
-
-def test_per_check_allow_empty_false_overrides_default_true(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-defaults:
-  allow_empty: true
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-    allow_empty: false
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].allow_empty is False
-
-
-def test_default_calendar_mode_applies_to_every_check(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-calendar:
-  timezone: America/New_York
-defaults:
-  calendar: business
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: freshness
-    column: created_at
-    expect: { max_lag: 26h }
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].calendar == "business"
-
-
-def test_per_check_calendar_mode_null_overrides_default_business(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-calendar:
-  timezone: America/New_York
-defaults:
-  calendar: business
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: freshness
-    column: created_at
-    expect: { max_lag: 26h }
-    calendar: null
-""",
-    )
-    cfg = load_config(path, env={})
-    # an explicit null overrides the default rather than falling back to it
-    assert cfg.checks[0].calendar is None
+    assert cfg.checks[0].calendar == expected

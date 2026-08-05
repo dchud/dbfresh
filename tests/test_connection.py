@@ -31,14 +31,19 @@ def test_native_style_query_database_makes_path_the_instance():
     )
 
 
-def test_default_port_applied_when_omitted():
-    params = parse_sqlserver_url("sqlserver://user:pass@host/mydb")
-    assert params.port == 1433
-
-
-def test_explicit_port_is_respected():
-    params = parse_sqlserver_url("sqlserver://user:pass@host:1500/mydb")
-    assert params.port == 1500
+@pytest.mark.parametrize(
+    ("url", "port"),
+    [
+        pytest.param(
+            "sqlserver://user:pass@host/mydb", 1433, id="default-when-omitted"
+        ),
+        pytest.param(
+            "sqlserver://user:pass@host:1500/mydb", 1500, id="explicit"
+        ),
+    ],
+)
+def test_port(url, port):
+    assert parse_sqlserver_url(url).port == port
 
 
 def test_named_instance_omits_port_even_if_explicit_port_given():
@@ -55,41 +60,56 @@ def test_scheme_aliases_all_accepted(scheme):
     assert params.database == "mydb"
 
 
-def test_url_encoded_password_is_decoded():
-    params = parse_sqlserver_url("sqlserver://user:p%40ss%2Fw0rd@host/mydb")
-    assert params.password == "p@ss/w0rd"
+@pytest.mark.parametrize(
+    ("url", "field", "decoded"),
+    [
+        pytest.param(
+            "sqlserver://user:p%40ss%2Fw0rd@host/mydb",
+            "password",
+            "p@ss/w0rd",
+            id="password",
+        ),
+        pytest.param(
+            "sqlserver://dom%5Cuser:pass@host/mydb",
+            "user",
+            "dom\\user",
+            id="user",
+        ),
+        pytest.param(
+            "sqlserver://user:pass@host/my%20db",
+            "database",
+            "my db",
+            id="database-path-segment",
+        ),
+        pytest.param(
+            "sqlserver://user:pass@host/prod?database=my%20db",
+            "database",
+            "my db",
+            id="database-query-param",
+        ),
+    ],
+)
+def test_url_encoded_components_are_decoded(url, field, decoded):
+    assert getattr(parse_sqlserver_url(url), field) == decoded
 
 
-def test_url_encoded_user_is_decoded():
-    params = parse_sqlserver_url("sqlserver://dom%5Cuser:pass@host/mydb")
-    assert params.user == "dom\\user"
-
-
-def test_url_encoded_database_path_segment_is_decoded():
-    params = parse_sqlserver_url("sqlserver://user:pass@host/my%20db")
-    assert params.database == "my db"
-
-
-def test_url_encoded_database_query_param_is_decoded():
-    params = parse_sqlserver_url(
-        "sqlserver://user:pass@host/prod?database=my%20db"
-    )
-    assert params.database == "my db"
-
-
-def test_missing_database_raises():
-    with pytest.raises(ValueError, match="database"):
-        parse_sqlserver_url("sqlserver://user:pass@host")
-
-
-def test_missing_database_with_empty_path_raises():
-    with pytest.raises(ValueError, match="database"):
-        parse_sqlserver_url("sqlserver://user:pass@host/")
-
-
-def test_bad_scheme_raises():
-    with pytest.raises(ValueError, match="scheme"):
-        parse_sqlserver_url("postgresql://user:pass@host/mydb")
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        pytest.param(
+            "sqlserver://user:pass@host", "database", id="no-path-at-all"
+        ),
+        pytest.param(
+            "sqlserver://user:pass@host/", "database", id="empty-path"
+        ),
+        pytest.param(
+            "postgresql://user:pass@host/mydb", "scheme", id="bad-scheme"
+        ),
+    ],
+)
+def test_unusable_url_raises(url, message):
+    with pytest.raises(ValueError, match=message):
+        parse_sqlserver_url(url)
 
 
 def test_missing_credentials_default_to_empty_strings():

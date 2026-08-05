@@ -77,30 +77,28 @@ def test_load_config_defaults_store_to_none(tmp_path):
     assert cfg.store is None
 
 
-def test_load_config_bare_string_store_is_path_shorthand(tmp_path):
-    path = write_config(tmp_path, "store: ./obs.db\nsources: {}\nchecks: []\n")
-    cfg = load_config(path, env={})
-    assert cfg.store.path == "./obs.db"
-    assert cfg.store.retain_days == 400
-
-
-def test_load_config_store_mapping_with_retain_days(tmp_path):
-    path = write_config(
-        tmp_path,
-        "store: { path: ./obs.db, retain_days: 90 }\nsources: {}\nchecks: []\n",
+@pytest.mark.parametrize(
+    ("store", "path", "retain_days"),
+    [
+        pytest.param("./obs.db", "./obs.db", 400, id="bare-string-shorthand"),
+        pytest.param(
+            "{ path: ./obs.db, retain_days: 90 }",
+            "./obs.db",
+            90,
+            id="mapping-with-retain-days",
+        ),
+        pytest.param(
+            "{ retain_days: 10 }", None, 10, id="mapping-without-path"
+        ),
+    ],
+)
+def test_load_config_store_forms(tmp_path, store, path, retain_days):
+    config = write_config(
+        tmp_path, f"store: {store}\nsources: {{}}\nchecks: []\n"
     )
-    cfg = load_config(path, env={})
-    assert cfg.store.path == "./obs.db"
-    assert cfg.store.retain_days == 90
-
-
-def test_load_config_store_mapping_without_path(tmp_path):
-    path = write_config(
-        tmp_path, "store: { retain_days: 10 }\nsources: {}\nchecks: []\n"
-    )
-    cfg = load_config(path, env={})
-    assert cfg.store.path is None
-    assert cfg.store.retain_days == 10
+    cfg = load_config(config, env={})
+    assert cfg.store.path == path
+    assert cfg.store.retain_days == retain_days
 
 
 def test_load_config_schema_check_accepts_unchanged(tmp_path):
@@ -120,34 +118,32 @@ checks:
     assert cfg.checks[0].expect.operator == "unchanged"
 
 
-def test_load_config_schema_check_rejects_numeric_operator(tmp_path):
+@pytest.mark.parametrize(
+    ("metric", "expect"),
+    [
+        pytest.param(
+            "schema", "{ max: 5 }", id="numeric-operator-on-a-schema-check"
+        ),
+        pytest.param(
+            "row_count",
+            "{ unchanged: true }",
+            id="unchanged-on-a-non-schema-check",
+        ),
+    ],
+)
+def test_load_config_rejects_expectation_the_metric_cannot_use(
+    tmp_path, metric, expect
+):
     path = write_config(
         tmp_path,
-        """
+        f"""
 sources:
-  s: { type: sqlite, database: ":memory:" }
+  s: {{ type: sqlite, database: ":memory:" }}
 checks:
   - source: s
     object: t
-    metric: schema
-    expect: { max: 5 }
-""",
-    )
-    with pytest.raises(ValueError):
-        load_config(path, env={})
-
-
-def test_load_config_rejects_unchanged_on_non_schema_check(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: { unchanged: true }
+    metric: {metric}
+    expect: {expect}
 """,
     )
     with pytest.raises(ValueError):
@@ -168,38 +164,62 @@ def test_load_config_invalid_yaml_raises_config_error(tmp_path):
     assert excinfo.value.__cause__ is not None
 
 
-def test_load_config_missing_object_field_raises_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
+@pytest.mark.parametrize(
+    ("check", "cause"),
+    [
+        pytest.param(
+            """
   - source: s
     metric: row_count
     expect: { max: 5 }
 """,
-    )
-    with pytest.raises(ConfigError) as excinfo:
-        load_config(path, env={})
-    assert isinstance(excinfo.value.__cause__, KeyError)
-
-
-def test_load_config_missing_source_field_raises_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
+            KeyError,
+            id="missing-object-field",
+        ),
+        pytest.param(
+            """
   - object: t
     metric: row_count
     expect: { max: 5 }
 """,
+            KeyError,
+            id="missing-source-field",
+        ),
+        pytest.param(
+            """
+  - source: s
+    object: t
+    metric: row_count
+    expect: 5
+""",
+            TypeError,
+            id="expectation-is-not-a-mapping",
+        ),
+        pytest.param(
+            """
+  - source: other
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+""",
+            ValueError,
+            id="unknown-source-ref",
+        ),
+    ],
+)
+def test_load_config_wraps_a_bad_check_and_keeps_its_cause(
+    tmp_path, check, cause
+):
+    path = write_config(
+        tmp_path,
+        f"""
+sources:
+  s: {{ type: sqlite, database: ":memory:" }}
+checks:{check}""",
     )
     with pytest.raises(ConfigError) as excinfo:
         load_config(path, env={})
-    assert isinstance(excinfo.value.__cause__, KeyError)
+    assert isinstance(excinfo.value.__cause__, cause)
 
 
 def test_load_config_missing_source_type_raises_config_error(tmp_path):
@@ -214,42 +234,6 @@ checks: []
     with pytest.raises(ConfigError) as excinfo:
         load_config(path, env={})
     assert isinstance(excinfo.value.__cause__, KeyError)
-
-
-def test_load_config_bad_expectation_raises_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: s
-    object: t
-    metric: row_count
-    expect: 5
-""",
-    )
-    with pytest.raises(ConfigError) as excinfo:
-        load_config(path, env={})
-    assert isinstance(excinfo.value.__cause__, TypeError)
-
-
-def test_load_config_unknown_source_ref_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: sqlite, database: ":memory:" }
-checks:
-  - source: other
-    object: t
-    metric: row_count
-    expect: { max: 5 }
-""",
-    )
-    with pytest.raises(ConfigError) as excinfo:
-        load_config(path, env={})
-    assert isinstance(excinfo.value.__cause__, ValueError)
 
 
 def test_duplicate_check_id_message_names_both_colliding_checks(tmp_path):
