@@ -1,16 +1,11 @@
 import pytest
+from helpers import write_config
 
 from dbfresh.config import load_config
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_load_config_defaults_freshness_source_to_column(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -28,7 +23,7 @@ checks:
 
 
 def test_load_config_parses_explicit_freshness_source(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -46,7 +41,7 @@ checks:
 
 
 def test_load_config_allows_omitted_column_for_describe_history(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -64,7 +59,7 @@ checks:
 
 
 def test_load_config_rejects_unknown_freshness_source(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -82,7 +77,7 @@ checks:
 
 
 def test_load_config_requires_column_for_column_freshness_source(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -99,7 +94,7 @@ checks:
 
 
 def test_load_config_rejects_describe_freshness_source_on_sqlite(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -120,7 +115,7 @@ checks:
 def test_load_config_rejects_describe_freshness_source_on_column_only_dialects(
     tmp_path, type_
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         f"""
 sources:

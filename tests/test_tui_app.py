@@ -1,9 +1,15 @@
 import asyncio
 import re
-import subprocess
 import threading
 from datetime import UTC, datetime, timedelta
 
+from helpers import (
+    git_init,
+    isolate_git_config,
+    null_rate_check,
+    overall_glyph,
+    row_count_check,
+)
 from textual.widgets import DataTable, OptionList, ProgressBar, Static
 from textual.worker import Worker, WorkerState
 
@@ -46,18 +52,6 @@ def _config(path, db):
         "    expect: { max: 0.1 }\n"
     )
     return path
-
-
-def _row_count_check():
-    return Check(source="s", object="t", metric="row_count")
-
-
-def _null_rate_check():
-    return Check(source="s", object="t", metric="null_rate", column="email")
-
-
-def _overall_glyph(table, row_key):
-    return table.get_cell(row_key, "overall").plain
 
 
 def _day_glyph(table, row_key, day):
@@ -124,7 +118,7 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
                 status=Status.OK,
                 source="s",
                 value=3,
-                check_id=check_id(_row_count_check()),
+                check_id=check_id(row_count_check()),
             ),
         )
         store.record_observation(
@@ -135,7 +129,7 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
                 status=Status.FAIL,
                 source="s",
                 value=0.9,
-                check_id=check_id(_null_rate_check()),
+                check_id=check_id(null_rate_check()),
             ),
         )
         store.finish_run(run_id, Status.FAIL)
@@ -148,7 +142,7 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
             # A source header row for "s", plus one object row for s.t
             # (object-scope), rolled up to the worst of its two checks.
             assert table.row_count == 2
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # FAIL
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"  # FAIL
 
             await pilot.press("enter")
             await pilot.pause()
@@ -156,12 +150,10 @@ def test_dashboard_reflects_seeded_store_statuses_on_mount(tmp_path):
             detail_table = app.screen.query_one(DataTable)
             assert detail_table.row_count == 2
             assert (
-                _overall_glyph(detail_table, check_id(_row_count_check()))
-                == "✓"
+                overall_glyph(detail_table, check_id(row_count_check())) == "✓"
             )
             assert (
-                _overall_glyph(detail_table, check_id(_null_rate_check()))
-                == "✗"
+                overall_glyph(detail_table, check_id(null_rate_check())) == "✗"
             )
 
     asyncio.run(scenario())
@@ -295,7 +287,7 @@ def test_unobserved_line_hidden_after_refresh_once_every_check_is_observed(
                     status=Status.OK,
                     source="s",
                     value=0.0,
-                    check_id=check_id(_null_rate_check()),
+                    check_id=check_id(null_rate_check()),
                 ),
             )
             store.finish_run(run_id, Status.OK)
@@ -396,25 +388,12 @@ def test_missing_secrets_banner_hidden_when_nothing_missing(tmp_path):
     asyncio.run(scenario())
 
 
-def _isolate_git_config(tmp_path, monkeypatch):
-    # _env_at_risk runs real git (env_hygiene.committable_env_file) -- pin
-    # its config away from the developer's own, so a global gitignore that
-    # happens to ignore .env can't make these tests pass or fail depending
-    # on machine layout.
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global"))
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(tmp_path / "no-system"))
-
-
-def _git_init(repo_dir):
-    subprocess.run(["git", "init", "-q"], cwd=repo_dir, check=True)
-
-
 def test_env_hygiene_banner_shown_when_env_file_is_not_gitignored(
     tmp_path, monkeypatch
 ):
     async def scenario():
-        _isolate_git_config(tmp_path, monkeypatch)
-        _git_init(tmp_path)
+        isolate_git_config(tmp_path, monkeypatch)
+        git_init(tmp_path)
         db = tmp_path / "data.db"
         _seed_db(db)
         cfg = _config(tmp_path / "config.yaml", db)
@@ -436,8 +415,8 @@ def test_env_hygiene_banner_hidden_when_env_file_is_gitignored(
     tmp_path, monkeypatch
 ):
     async def scenario():
-        _isolate_git_config(tmp_path, monkeypatch)
-        _git_init(tmp_path)
+        isolate_git_config(tmp_path, monkeypatch)
+        git_init(tmp_path)
         db = tmp_path / "data.db"
         _seed_db(db)
         cfg = _config(tmp_path / "config.yaml", db)
@@ -456,8 +435,8 @@ def test_env_hygiene_banner_hidden_when_env_file_is_gitignored(
 
 def test_env_hygiene_banner_hidden_when_no_env_file(tmp_path, monkeypatch):
     async def scenario():
-        _isolate_git_config(tmp_path, monkeypatch)
-        _git_init(tmp_path)
+        isolate_git_config(tmp_path, monkeypatch)
+        git_init(tmp_path)
         db = tmp_path / "data.db"
         _seed_db(db)
         cfg = _config(tmp_path / "config.yaml", db)
@@ -543,7 +522,7 @@ def test_run_action_updates_dashboard_from_new_observations(
             table = app.query_one("#dashboard-grid", DataTable)
 
             # Nothing observed yet: the object row's overall is unknown.
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "·"
 
             await pilot.press("r")
             # The Run action starts the check run on a background worker;
@@ -553,7 +532,7 @@ def test_run_action_updates_dashboard_from_new_observations(
             await pump_until(
                 pilot,
                 lambda: (
-                    _overall_glyph(
+                    overall_glyph(
                         app.query_one("#dashboard-grid", DataTable),
                         _OBJECT_ROW_KEY,
                     )
@@ -563,19 +542,17 @@ def test_run_action_updates_dashboard_from_new_observations(
 
             table = app.query_one("#dashboard-grid", DataTable)
             assert (
-                _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+                overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             )  # null_rate fails
 
             await pilot.press("enter")
             await pilot.pause()
             detail_table = app.screen.query_one(DataTable)
             assert (
-                _overall_glyph(detail_table, check_id(_row_count_check()))
-                == "✓"
+                overall_glyph(detail_table, check_id(row_count_check())) == "✓"
             )
             assert (
-                _overall_glyph(detail_table, check_id(_null_rate_check()))
-                == "✗"
+                overall_glyph(detail_table, check_id(null_rate_check())) == "✗"
             )
 
             assert app.last_run is not None
@@ -631,7 +608,7 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             assert started.wait(timeout=2)
             assert app.last_run is None
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "·"
 
             release.set()
             await app.workers.wait_for_complete()
@@ -641,7 +618,7 @@ def test_run_action_stays_responsive_and_refreshes_when_the_worker_completes(
             assert app.last_run is not None
             assert app.last_run.status == Status.FAIL
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
 
     asyncio.run(scenario())
 
@@ -681,7 +658,7 @@ def test_run_action_error_notifies_and_leaves_app_alive(
             # The app survived the worker error rather than being torn
             # down, and the dashboard/last_run are untouched.
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "·"
             assert app.last_run is None
 
             messages = [n.message for n in app._notifications]
@@ -966,7 +943,7 @@ def test_home_overall_and_day_cell_update_live_as_results_arrive(
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "·"
             assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "·"
 
             app.on_run_progress(
@@ -978,12 +955,12 @@ def test_home_overall_and_day_cell_update_live_as_results_arrive(
                         metric="row_count",
                         status=Status.OK,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
             await pilot.pause()
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
             assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "✓"
 
             app.on_run_progress(
@@ -995,12 +972,12 @@ def test_home_overall_and_day_cell_update_live_as_results_arrive(
                         metric="null_rate",
                         status=Status.FAIL,
                         source="s",
-                        check_id=check_id(_null_rate_check()),
+                        check_id=check_id(null_rate_check()),
                     ),
                 )
             )
             await pilot.pause()
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             assert _day_glyph(table, _OBJECT_ROW_KEY, today) == "✗"
 
     asyncio.run(scenario())
@@ -1077,7 +1054,7 @@ def test_home_live_update_flashes_the_overall_and_day_cells(
                         metric="row_count",
                         status=Status.OK,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
@@ -1136,7 +1113,7 @@ def test_home_live_update_highlight_clears_after_the_delay(
                         metric="row_count",
                         status=Status.OK,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
@@ -1196,7 +1173,7 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
                         metric="row_count",
                         status=Status.OK,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
@@ -1214,7 +1191,7 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
                         metric="null_rate",
                         status=Status.FAIL,
                         source="s",
-                        check_id=check_id(_null_rate_check()),
+                        check_id=check_id(null_rate_check()),
                     ),
                 )
             )
@@ -1225,14 +1202,14 @@ def test_home_live_update_re_flash_cancels_the_stale_clear(
             await pilot.pause(0.15)  # t=0.55: past the stale 0.5 deadline,
             # well before the real one at 0.9 -- a live stale clear would
             # have reverted this to the first (OK) status by now.
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             assert table.get_cell(_OBJECT_ROW_KEY, "overall") != _status_cell(
                 Status.FAIL
             )  # still highlighted -- not yet settled
 
             await pilot.pause(0.5)  # t=1.05: past the real clear at 0.9
 
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
             assert table.get_cell(_OBJECT_ROW_KEY, "overall") == _status_cell(
                 Status.FAIL
             )
@@ -1285,7 +1262,7 @@ def test_home_glyph_flips_before_the_run_completes(
         async with app.run_test() as pilot:
             await pilot.pause()
             table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "·"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "·"
 
             await pilot.press("r")
             await pilot.pause()
@@ -1296,7 +1273,7 @@ def test_home_glyph_flips_before_the_run_completes(
             await pump_until(
                 pilot,
                 lambda: (
-                    _overall_glyph(
+                    overall_glyph(
                         app.query_one("#dashboard-grid", DataTable),
                         _OBJECT_ROW_KEY,
                     )
@@ -1304,7 +1281,7 @@ def test_home_glyph_flips_before_the_run_completes(
                 ),
             )
             assert app.last_run is None
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✓"
 
             release.set()
             await app.workers.wait_for_complete()
@@ -1314,7 +1291,7 @@ def test_home_glyph_flips_before_the_run_completes(
             # Final, authoritative state: null_rate fails, so the object's
             # overall is the worse of the two -- matching what the live
             # path already showed building up to it.
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
 
     asyncio.run(scenario())
 
@@ -1402,8 +1379,7 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(
             assert isinstance(app.screen, ObjectDetailScreen)
             detail_table = app.screen.query_one(DataTable)
             assert (
-                _overall_glyph(detail_table, check_id(_row_count_check()))
-                == "·"
+                overall_glyph(detail_table, check_id(row_count_check())) == "·"
             )
 
             await pilot.press("r")
@@ -1412,9 +1388,9 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(
             await pump_until(
                 pilot,
                 lambda: (
-                    _overall_glyph(
+                    overall_glyph(
                         app.screen.query_one(DataTable),
-                        check_id(_row_count_check()),
+                        check_id(row_count_check()),
                     )
                     == "✓"
                 ),
@@ -1425,12 +1401,10 @@ def test_run_action_refreshes_object_detail_screen_when_on_top(
             assert isinstance(app.screen, ObjectDetailScreen)
             detail_table = app.screen.query_one(DataTable)
             assert (
-                _overall_glyph(detail_table, check_id(_row_count_check()))
-                == "✓"
+                overall_glyph(detail_table, check_id(row_count_check())) == "✓"
             )
             assert (
-                _overall_glyph(detail_table, check_id(_null_rate_check()))
-                == "✗"
+                overall_glyph(detail_table, check_id(null_rate_check())) == "✗"
             )
 
     asyncio.run(scenario())
@@ -1475,7 +1449,7 @@ def test_selecting_a_check_row_opens_history_with_its_observations(tmp_path):
         cfg = _config(tmp_path / "config.yaml", db)
         store_path = tmp_path / "obs.db"
         store = Store(store_path)
-        cid = check_id(_row_count_check())
+        cid = check_id(row_count_check())
         for value in (3, 5):
             run_id = store.start_run()
             store.record_observation(
@@ -1545,7 +1519,7 @@ def test_history_screen_uses_calendar_timezone(tmp_path):
         cfg = _calendar_config(tmp_path / "config.yaml", db)
         store_path = tmp_path / "obs.db"
         store = Store(store_path)
-        cid = check_id(_row_count_check())
+        cid = check_id(row_count_check())
         # Noon UTC is 8:00 AM in New York (EDT), so a friendly History
         # timestamp of "8:00 AM" proves the calendar timezone -- not UTC --
         # was applied.
@@ -1642,7 +1616,7 @@ def test_report_action_shows_last_in_session_run_digest(tmp_path, pump_until):
             assert options.option_count == 1
             option = options.get_option_at_index(0)
             assert "null_rate" in str(option.prompt)
-            assert option.id == check_id(_null_rate_check())
+            assert option.id == check_id(null_rate_check())
 
     asyncio.run(scenario())
 
@@ -1727,7 +1701,7 @@ def test_report_action_reconstructs_from_store_when_no_session_run(tmp_path):
                 status=Status.OK,
                 source="s",
                 value=3,
-                check_id=check_id(_row_count_check()),
+                check_id=check_id(row_count_check()),
             ),
         )
         store.record_observation(
@@ -1739,7 +1713,7 @@ def test_report_action_reconstructs_from_store_when_no_session_run(tmp_path):
                 source="s",
                 value=0.9,
                 expected="max 0.1",
-                check_id=check_id(_null_rate_check()),
+                check_id=check_id(null_rate_check()),
             ),
         )
         store.finish_run(run_id, Status.FAIL)
@@ -1782,7 +1756,7 @@ def test_report_action_prefers_in_session_run_over_store(tmp_path, pump_until):
                 status=Status.OK,
                 source="s",
                 value=3,
-                check_id=check_id(_row_count_check()),
+                check_id=check_id(row_count_check()),
             ),
         )
         store.finish_run(old_run, Status.OK)
@@ -1848,7 +1822,7 @@ def test_selecting_a_report_option_opens_that_checks_history(
             await pilot.pause()
 
             assert isinstance(app.screen, HistoryScreen)
-            assert check_id(app.screen._check) == check_id(_null_rate_check())
+            assert check_id(app.screen._check) == check_id(null_rate_check())
 
     asyncio.run(scenario())
 
@@ -2407,12 +2381,12 @@ def test_home_live_update_does_not_raise_when_the_day_columns_are_stale(
                         metric="row_count",
                         status=Status.FAIL,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
             await pilot.pause()
-            assert _overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
+            assert overall_glyph(table, _OBJECT_ROW_KEY) == "✗"
 
     asyncio.run(scenario())
 

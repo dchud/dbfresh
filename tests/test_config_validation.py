@@ -7,18 +7,13 @@ up in the single raised `ConfigError` rather than only the first.
 """
 
 import pytest
+from helpers import write_config
 
 from dbfresh.config import load_config
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_unknown_metric_is_a_clean_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -35,7 +30,7 @@ checks:
 
 
 def test_null_rate_without_column_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -55,7 +50,7 @@ checks:
 def test_aggregate_metric_without_column_is_a_validation_error(
     tmp_path, metric
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         f"""
 sources:
@@ -72,7 +67,7 @@ checks:
 
 
 def test_duplicate_count_without_key_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -91,7 +86,7 @@ checks:
 def test_freshness_column_source_without_column_is_a_validation_error(
     tmp_path,
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -108,7 +103,7 @@ checks:
 
 
 def test_metric_check_without_expectation_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -124,7 +119,7 @@ checks:
 
 
 def test_unknown_check_field_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -142,7 +137,7 @@ checks:
 
 
 def test_bad_severity_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -160,7 +155,7 @@ checks:
 
 
 def test_max_lag_on_non_freshness_metric_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -177,7 +172,7 @@ checks:
 
 
 def test_several_problems_are_all_reported_at_once(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -209,7 +204,7 @@ checks:
 def test_check_with_no_metric_assert_or_assert_sql_is_a_validation_error(
     tmp_path,
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -228,7 +223,7 @@ checks:
 def test_check_with_metric_and_assert_is_a_validation_error(tmp_path):
     # A check with both a metric and an assert: silently ran only the
     # assert in dispatch, dropping the metric expectation with no error.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -246,7 +241,7 @@ checks:
 
 
 def test_check_with_assert_and_assert_sql_is_a_validation_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -263,7 +258,7 @@ checks:
 
 
 def test_assert_sql_check_loads_and_needs_no_expectation(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -284,7 +279,7 @@ def test_single_problem_message_is_not_wrapped_in_a_multi_error_summary(
     # Exactly one problem: the message is that problem's own text, not
     # "N problems found" framing -- keeps the single-error case's message
     # identical to before this validation pass existed.
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:

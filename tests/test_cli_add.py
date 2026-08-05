@@ -6,6 +6,7 @@ prompts feed the module correctly and the result is written to disk.
 """
 
 import yaml
+from helpers import ambiguous_sqlite_table, sqlite_table
 
 from dbfresh.adapters import factory
 from dbfresh.adapters.base import (
@@ -15,7 +16,6 @@ from dbfresh.adapters.base import (
     SqlAlchemyAdapter,
 )
 from dbfresh.adapters.databricks import DatabricksDialect
-from dbfresh.adapters.sqlite import SqliteAdapter
 from dbfresh.cli import main
 
 
@@ -59,19 +59,11 @@ class _FakeKeylessAdapter:
         pass
 
 
-def _table(db):
-    adapter = SqliteAdapter(str(db))
-    adapter.rows(
-        "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
-    )
-    adapter.close()
-
-
 def test_add_wizard_appends_proposed_bundle_for_existing_source(
     tmp_path, monkeypatch
 ):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -103,7 +95,7 @@ def test_add_wizard_run_twice_for_same_object_does_not_duplicate_checks(
     from dbfresh.config import load_config
 
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -134,7 +126,7 @@ def test_add_wizard_dedupes_across_included_files_not_just_the_target(
     from dbfresh.config import load_config
 
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     (tmp_path / "checks").mkdir()
     (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
     (tmp_path / "checks" / "b.yaml").write_text("checks: []\n")
@@ -164,7 +156,7 @@ def test_add_wizard_missing_object_requires_confirmation_to_proceed(
     tmp_path, monkeypatch
 ):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -192,7 +184,7 @@ def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(
     # probe must succeed against the resolved value, but the YAML must
     # keep the placeholder -- never the literal secret.
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     monkeypatch.setenv("DBFRESH_TEST_DB_PATH", str(db))
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
@@ -247,7 +239,7 @@ def test_add_wizard_closes_adapter_when_declining_missing_object(
     tmp_path, monkeypatch
 ):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -315,7 +307,7 @@ def test_prompt_index_reprompts_on_non_numeric_and_out_of_range(monkeypatch):
 
 def test_add_wizard_rejects_out_of_range_file_index(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     (tmp_path / "checks").mkdir()
     (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
     (tmp_path / "checks" / "b.yaml").write_text("checks: []\n")
@@ -399,20 +391,11 @@ def test_add_wizard_notes_when_engine_cannot_introspect_keys(
     assert "cannot introspect key" in out
 
 
-def _ambiguous_table(db):
-    adapter = SqliteAdapter(str(db))
-    adapter.rows(
-        "CREATE TABLE fct (id INTEGER PRIMARY KEY, created_at TIMESTAMP,"
-        " updated_at TIMESTAMP)"
-    )
-    adapter.close()
-
-
 def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
     tmp_path, monkeypatch
 ):
     db = tmp_path / "data.db"
-    _ambiguous_table(db)
+    ambiguous_sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -441,7 +424,7 @@ def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
     tmp_path, monkeypatch
 ):
     db = tmp_path / "data.db"
-    _ambiguous_table(db)
+    ambiguous_sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
@@ -468,7 +451,7 @@ def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
 
 def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
 
@@ -499,7 +482,7 @@ def test_add_wizard_source_type_menu_lists_types_and_rejects_bad_choice(
     tmp_path, monkeypatch, capsys
 ):
     db = tmp_path / "data.db"
-    _table(db)
+    sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text("sources: {}\nchecks: []\n")
 

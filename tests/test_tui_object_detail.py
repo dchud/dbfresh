@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 import yaml
+from helpers import null_rate_check, overall_glyph, row_count_check
 from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Static
 
@@ -17,10 +18,6 @@ from dbfresh.tui.app import DbfreshApp, RunProgress
 from dbfresh.tui.screens import ObjectDetailScreen
 
 _OBJECT_ROW_KEY = "s\x1ft"
-
-
-def _overall_glyph(table, row_key):
-    return table.get_cell(row_key, "overall").plain
 
 
 def _config(path, db):
@@ -79,14 +76,6 @@ def _seed_observation(
         ),
     )
     store.finish_run(run_id, status)
-
-
-def _row_count_check():
-    return Check(source="s", object="t", metric="row_count")
-
-
-def _null_rate_check():
-    return Check(source="s", object="t", metric="null_rate", column="email")
 
 
 def _schema_check():
@@ -237,7 +226,7 @@ def test_object_detail_edit_does_not_change_check_id(tmp_path):
         config = load_config(cfg)
         matches = [c for c in config.checks if c.metric == "null_rate"]
         assert len(matches) == 1
-        assert check_id(matches[0]) == check_id(_null_rate_check())
+        assert check_id(matches[0]) == check_id(null_rate_check())
 
     asyncio.run(scenario())
 
@@ -507,8 +496,8 @@ def test_object_detail_delete_confirmed_refreshes_its_own_grid_and_edit_panel(
             assert isinstance(app.screen, ObjectDetailScreen)
             assert table.row_count == 2
             row_keys = {key.value for key in table.rows}
-            assert check_id(_null_rate_check()) not in row_keys
-            assert check_id(_row_count_check()) in row_keys
+            assert check_id(null_rate_check()) not in row_keys
+            assert check_id(row_count_check()) in row_keys
             assert check_id(_schema_check()) in row_keys
 
             # The edit panel's rows shifted down by one -- what was index 2
@@ -620,7 +609,7 @@ def test_object_detail_highlighting_a_fail_check_shows_expected_and_observed(
         store = Store(store_path)
         _seed_observation(
             store,
-            _row_count_check(),
+            row_count_check(),
             Status.FAIL,
             value=5000,
             expected="between [1, 1000]",
@@ -654,7 +643,7 @@ def test_object_detail_highlighting_an_error_check_shows_the_error_message(
         store = Store(store_path)
         _seed_observation(
             store,
-            _null_rate_check(),
+            null_rate_check(),
             Status.ERROR,
             error="connection refused",
         )
@@ -683,7 +672,7 @@ def test_object_detail_highlighting_an_ok_check_hides_the_line(tmp_path):
         cfg = _config(tmp_path / "config.yaml", db)
         store_path = tmp_path / "obs.db"
         store = Store(store_path)
-        _seed_observation(store, _row_count_check(), Status.OK, value=3)
+        _seed_observation(store, row_count_check(), Status.OK, value=3)
         store.close()
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
@@ -707,12 +696,12 @@ def test_object_detail_cursor_move_from_failing_to_ok_hides_the_line(
         store = Store(store_path)
         _seed_observation(
             store,
-            _row_count_check(),
+            row_count_check(),
             Status.FAIL,
             value=5000,
             expected="between [1, 1000]",
         )
-        _seed_observation(store, _null_rate_check(), Status.OK, value=0.01)
+        _seed_observation(store, null_rate_check(), Status.OK, value=0.01)
         store.close()
 
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
@@ -769,7 +758,7 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
                 Check(source="s", object="t", metric="row_count")
             )
             assert (
-                _overall_glyph(detail_table, row_count_id) == "·"
+                overall_glyph(detail_table, row_count_id) == "·"
             )  # never observed
 
             app.screen.query_one("#detail-run-object-btn", Button).press()
@@ -784,7 +773,7 @@ def test_object_detail_run_this_object_button_runs_only_this_objects_checks(
             assert [r.object for r in app.last_run.results] == ["t"]
 
             detail_table = app.screen.query_one(DataTable)
-            assert _overall_glyph(detail_table, row_count_id) == "✓"
+            assert overall_glyph(detail_table, row_count_id) == "✓"
 
     asyncio.run(scenario())
 
@@ -810,9 +799,9 @@ def test_object_detail_overall_cell_updates_live_via_apply_live_result(
         async with app.run_test() as pilot:
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
-            null_rate_id = check_id(_null_rate_check())
-            row_count_id = check_id(_row_count_check())
-            assert _overall_glyph(detail_table, null_rate_id) == "·"
+            null_rate_id = check_id(null_rate_check())
+            row_count_id = check_id(row_count_check())
+            assert overall_glyph(detail_table, null_rate_id) == "·"
 
             app.screen.apply_live_result(
                 Result(
@@ -825,8 +814,8 @@ def test_object_detail_overall_cell_updates_live_via_apply_live_result(
             )
             await pilot.pause()
 
-            assert _overall_glyph(detail_table, null_rate_id) == "✗"
-            assert _overall_glyph(detail_table, row_count_id) == "·"
+            assert overall_glyph(detail_table, null_rate_id) == "✗"
+            assert overall_glyph(detail_table, row_count_id) == "·"
 
     asyncio.run(scenario())
 
@@ -851,7 +840,7 @@ def test_object_detail_apply_live_result_ignores_a_different_objects_check(
             row_count_id = check_id(
                 Check(source="s", object="t", metric="row_count")
             )
-            assert _overall_glyph(detail_table, row_count_id) == "·"
+            assert overall_glyph(detail_table, row_count_id) == "·"
 
             app.screen.apply_live_result(
                 Result(
@@ -866,7 +855,7 @@ def test_object_detail_apply_live_result_ignores_a_different_objects_check(
             )
             await pilot.pause()
 
-            assert _overall_glyph(detail_table, row_count_id) == "·"
+            assert overall_glyph(detail_table, row_count_id) == "·"
 
     asyncio.run(scenario())
 
@@ -886,7 +875,7 @@ def test_object_detail_live_update_flashes_the_overall_cell(tmp_path):
         async with app.run_test() as pilot:
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
-            null_rate_id = check_id(_null_rate_check())
+            null_rate_id = check_id(null_rate_check())
 
             app.screen.apply_live_result(
                 Result(
@@ -929,7 +918,7 @@ def test_object_detail_live_update_highlight_clears_after_the_delay(
         async with app.run_test() as pilot:
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
-            null_rate_id = check_id(_null_rate_check())
+            null_rate_id = check_id(null_rate_check())
 
             app.screen.apply_live_result(
                 Result(
@@ -979,7 +968,7 @@ def test_object_detail_re_flash_cancels_the_stale_clear(tmp_path, monkeypatch):
         async with app.run_test() as pilot:
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
-            null_rate_id = check_id(_null_rate_check())
+            null_rate_id = check_id(null_rate_check())
             flash_key = (null_rate_id, "overall")
 
             # t=0: fails -- clear due at t=0.5.
@@ -1013,14 +1002,14 @@ def test_object_detail_re_flash_cancels_the_stale_clear(tmp_path, monkeypatch):
             await pilot.pause(0.15)  # t=0.55: past the stale 0.5 deadline,
             # well before the real one at 0.9 -- a live stale clear would
             # have reverted this to the first (FAIL) status by now.
-            assert _overall_glyph(detail_table, null_rate_id) == "✓"
+            assert overall_glyph(detail_table, null_rate_id) == "✓"
             assert detail_table.get_cell(
                 null_rate_id, "overall"
             ) != _status_cell(Status.OK)  # still highlighted -- not settled
 
             await pilot.pause(0.5)  # t=1.05: past the real clear at 0.9
 
-            assert _overall_glyph(detail_table, null_rate_id) == "✓"
+            assert overall_glyph(detail_table, null_rate_id) == "✓"
             assert detail_table.get_cell(
                 null_rate_id, "overall"
             ) == _status_cell(Status.OK)
@@ -1047,7 +1036,7 @@ def test_object_detail_run_this_object_also_refreshes_the_home_grid(
             await pump_until(
                 pilot,
                 lambda: (
-                    _overall_glyph(
+                    overall_glyph(
                         app.query_one("#dashboard-grid", DataTable), "s\x1ft"
                     )
                     == "✓"
@@ -1057,8 +1046,8 @@ def test_object_detail_run_this_object_also_refreshes_the_home_grid(
             # Home's own grid is a different, non-topmost screen -- still
             # picked up without popping back to it first.
             home_table = app.query_one("#dashboard-grid", DataTable)
-            assert _overall_glyph(home_table, "s\x1ft") == "✓"
-            assert _overall_glyph(home_table, "s\x1fu") == "·"  # untouched
+            assert overall_glyph(home_table, "s\x1ft") == "✓"
+            assert overall_glyph(home_table, "s\x1fu") == "·"  # untouched
 
     asyncio.run(scenario())
 
@@ -1274,7 +1263,7 @@ def test_object_detail_opened_mid_run_shows_results_that_already_arrived(
         app = DbfreshApp(config_path=cfg, store_path=str(store_path))
         async with app.run_test() as pilot:
             await pilot.pause()
-            row_count_id = check_id(_row_count_check())
+            row_count_id = check_id(row_count_check())
 
             # A run is underway and this object's row_count has failed --
             # the X the user sees on Home before drilling in.
@@ -1295,7 +1284,7 @@ def test_object_detail_opened_mid_run_shows_results_that_already_arrived(
 
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
-            assert _overall_glyph(detail_table, row_count_id) == "✗"
+            assert overall_glyph(detail_table, row_count_id) == "✗"
 
     asyncio.run(scenario())
 
@@ -1326,7 +1315,7 @@ def test_object_detail_opened_mid_run_leaves_pending_checks_unobserved(
                         metric="row_count",
                         status=Status.FAIL,
                         source="s",
-                        check_id=check_id(_row_count_check()),
+                        check_id=check_id(row_count_check()),
                     ),
                 )
             )
@@ -1335,15 +1324,13 @@ def test_object_detail_opened_mid_run_leaves_pending_checks_unobserved(
             await _open_object_detail(pilot)
             detail_table = app.screen.query_one(DataTable)
             assert (
-                _overall_glyph(detail_table, check_id(_row_count_check()))
-                == "✗"
+                overall_glyph(detail_table, check_id(row_count_check())) == "✗"
             )
             assert (
-                _overall_glyph(detail_table, check_id(_null_rate_check()))
-                == "·"
+                overall_glyph(detail_table, check_id(null_rate_check())) == "·"
             )
             assert (
-                _overall_glyph(detail_table, check_id(_schema_check())) == "·"
+                overall_glyph(detail_table, check_id(_schema_check())) == "·"
             )
 
     asyncio.run(scenario())
@@ -1387,6 +1374,6 @@ def test_object_detail_seeding_ignores_another_objects_live_result(tmp_path):
             row_count_id = check_id(
                 Check(source="s", object="t", metric="row_count")
             )
-            assert _overall_glyph(detail_table, row_count_id) == "·"
+            assert overall_glyph(detail_table, row_count_id) == "·"
 
     asyncio.run(scenario())

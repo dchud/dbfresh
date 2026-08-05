@@ -9,18 +9,13 @@ half-specified combination, which is what this file covers.
 """
 
 import pytest
+from helpers import write_config
 
 from dbfresh.config import ConfigError, load_config
 
 
-def _write(tmp_path, text):
-    path = tmp_path / "config.yaml"
-    path.write_text(text)
-    return path
-
-
 def test_oauth_m2m_with_client_id_and_secret_loads(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -40,7 +35,7 @@ checks: []
 
 
 def test_plain_token_with_no_auth_type_loads(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -53,7 +48,7 @@ checks: []
 
 
 def test_explicit_pat_auth_type_with_token_loads(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -71,7 +66,7 @@ checks: []
 
 
 def test_oauth_m2m_missing_client_secret_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -91,7 +86,7 @@ checks: []
 
 
 def test_oauth_m2m_missing_client_id_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -111,7 +106,7 @@ checks: []
 
 
 def test_oauth_m2m_with_a_token_also_set_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -131,7 +126,7 @@ checks: []
 
 
 def test_pat_with_client_id_set_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -149,7 +144,7 @@ checks: []
 
 
 def test_pat_with_client_secret_set_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -169,7 +164,7 @@ checks: []
 def test_databricks_source_with_neither_token_nor_sp_creds_is_a_config_error(
     tmp_path,
 ):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
@@ -182,7 +177,7 @@ checks: []
 
 
 def test_invalid_auth_type_is_a_config_error(tmp_path):
-    path = _write(
+    path = write_config(
         tmp_path,
         """
 sources:
