@@ -14,183 +14,103 @@ from helpers import write_config
 from dbfresh.config import ConfigError, load_config
 
 
-def test_oauth_m2m_with_client_id_and_secret_loads(tmp_path):
-    path = write_config(
+def _databricks_config(tmp_path, **params):
+    """A one-source databricks config whose auth params are ``params``."""
+    auth = "".join(f"    {key}: {value}\n" for key, value in params.items())
+    return write_config(
         tmp_path,
-        """
+        f"""
 sources:
   s:
     type: databricks
     host: h
     http_path: p
-    auth_type: oauth_m2m
-    client_id: cid
-    client_secret: csec
-checks: []
+{auth}checks: []
 """,
     )
-    cfg = load_config(path, env={})
-    assert cfg.sources["s"].params["auth_type"] == "oauth_m2m"
-    assert "token" not in cfg.sources["s"].params
 
 
-def test_plain_token_with_no_auth_type_loads(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: databricks, host: h, http_path: p, token: t }
-checks: []
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.sources["s"].params["token"] == "t"
+@pytest.mark.parametrize(
+    ("params", "expected", "absent"),
+    [
+        pytest.param(
+            {
+                "auth_type": "oauth_m2m",
+                "client_id": "cid",
+                "client_secret": "csec",
+            },
+            {"auth_type": "oauth_m2m"},
+            ("token",),
+            id="oauth_m2m-with-both-service-principal-creds",
+        ),
+        pytest.param(
+            {"token": "t"},
+            {"token": "t"},
+            (),
+            id="token-with-no-auth-type",
+        ),
+        pytest.param(
+            {"auth_type": "pat", "token": "t"},
+            {"auth_type": "pat"},
+            (),
+            id="explicit-pat-with-token",
+        ),
+    ],
+)
+def test_coherent_auth_params_load(tmp_path, params, expected, absent):
+    loaded = load_config(_databricks_config(tmp_path, **params), env={})
+    source_params = loaded.sources["s"].params
+    for key, value in expected.items():
+        assert source_params[key] == value
+    for key in absent:
+        assert key not in source_params
 
 
-def test_explicit_pat_auth_type_with_token_loads(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    auth_type: pat
-    token: t
-checks: []
-""",
-    )
-    cfg = load_config(path, env={})
-    assert cfg.sources["s"].params["auth_type"] == "pat"
-
-
-def test_oauth_m2m_missing_client_secret_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    auth_type: oauth_m2m
-    client_id: cid
-checks: []
-""",
-    )
-    with pytest.raises(
-        ConfigError, match="requires both client_id and client_secret"
-    ):
-        load_config(path, env={})
-
-
-def test_oauth_m2m_missing_client_id_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    auth_type: oauth_m2m
-    client_secret: csec
-checks: []
-""",
-    )
-    with pytest.raises(
-        ConfigError, match="requires both client_id and client_secret"
-    ):
-        load_config(path, env={})
-
-
-def test_oauth_m2m_with_a_token_also_set_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    auth_type: oauth_m2m
-    client_id: cid
-    client_secret: csec
-    token: t
-checks: []
-""",
-    )
-    with pytest.raises(ConfigError, match="does not use token"):
-        load_config(path, env={})
-
-
-def test_pat_with_client_id_set_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    token: t
-    client_id: cid
-checks: []
-""",
-    )
-    with pytest.raises(ConfigError, match="require auth_type: oauth_m2m"):
-        load_config(path, env={})
-
-
-def test_pat_with_client_secret_set_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    token: t
-    client_secret: csec
-checks: []
-""",
-    )
-    with pytest.raises(ConfigError, match="require auth_type: oauth_m2m"):
-        load_config(path, env={})
-
-
-def test_databricks_source_with_neither_token_nor_sp_creds_is_a_config_error(
-    tmp_path,
-):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s: { type: databricks, host: h, http_path: p }
-checks: []
-""",
-    )
-    with pytest.raises(ConfigError, match="needs token"):
-        load_config(path, env={})
-
-
-def test_invalid_auth_type_is_a_config_error(tmp_path):
-    path = write_config(
-        tmp_path,
-        """
-sources:
-  s:
-    type: databricks
-    host: h
-    http_path: p
-    auth_type: bogus
-    token: t
-checks: []
-""",
-    )
-    with pytest.raises(
-        ConfigError, match="auth_type must be 'pat' or 'oauth_m2m'"
-    ):
-        load_config(path, env={})
+@pytest.mark.parametrize(
+    ("params", "message"),
+    [
+        pytest.param(
+            {"auth_type": "oauth_m2m", "client_id": "cid"},
+            "requires both client_id and client_secret",
+            id="oauth_m2m-missing-client-secret",
+        ),
+        pytest.param(
+            {"auth_type": "oauth_m2m", "client_secret": "csec"},
+            "requires both client_id and client_secret",
+            id="oauth_m2m-missing-client-id",
+        ),
+        pytest.param(
+            {
+                "auth_type": "oauth_m2m",
+                "client_id": "cid",
+                "client_secret": "csec",
+                "token": "t",
+            },
+            "does not use token",
+            id="oauth_m2m-with-a-token-as-well",
+        ),
+        pytest.param(
+            {"token": "t", "client_id": "cid"},
+            "require auth_type: oauth_m2m",
+            id="pat-with-client-id",
+        ),
+        pytest.param(
+            {"token": "t", "client_secret": "csec"},
+            "require auth_type: oauth_m2m",
+            id="pat-with-client-secret",
+        ),
+        pytest.param(
+            {},
+            "needs token",
+            id="neither-token-nor-service-principal-creds",
+        ),
+        pytest.param(
+            {"auth_type": "bogus", "token": "t"},
+            "auth_type must be 'pat' or 'oauth_m2m'",
+            id="unrecognized-auth-type",
+        ),
+    ],
+)
+def test_incoherent_auth_params_are_a_config_error(tmp_path, params, message):
+    with pytest.raises(ConfigError, match=message):
+        load_config(_databricks_config(tmp_path, **params), env={})
