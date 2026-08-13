@@ -25,6 +25,19 @@ def _result(check_id: str, value: float) -> Result:
     )
 
 
+def _now() -> datetime:
+    """Anchor fixtures to the real clock rather than a fixed date.
+
+    The Store screen's prune worker calls ``Store.prune(retain_days)``
+    without a ``now`` argument, so the retention cutoff is always computed
+    from real wall-clock time. Seeding from an absolute date would put the
+    fixtures a fixed distance from a moving cutoff, and they would fall
+    outside the retention window on a calendar date determined by the
+    literal -- passing until then, failing every run after.
+    """
+    return datetime.now(UTC)
+
+
 def _config(path, retain_days: int = _RETAIN_DAYS):
     path.write_text(
         f"sources: {{}}\nchecks: []\nstore:\n  retain_days: {retain_days}\n"
@@ -53,7 +66,7 @@ def test_store_screen_shows_size_counts_and_retention(tmp_path):
     async def scenario():
         cfg = _config(tmp_path / "config.yaml")
         store_path = tmp_path / "obs.db"
-        now = datetime(2026, 7, 10, tzinfo=UTC)
+        now = _now()
         store = Store(store_path)
         _seed(store, "a", 1, now)
         _seed(store, "b", 2, now)
@@ -78,7 +91,7 @@ def test_store_prune_requires_a_second_press(tmp_path):
     async def scenario():
         cfg = _config(tmp_path / "config.yaml")
         store_path = tmp_path / "obs.db"
-        now = datetime(2026, 7, 10, tzinfo=UTC)
+        now = _now()
         store = Store(store_path)
         _seed(store, "old", 1, now - timedelta(days=_RETAIN_DAYS + 10))
         store.close()
@@ -103,7 +116,7 @@ def test_store_prune_cancel_leaves_observations_untouched(tmp_path):
     async def scenario():
         cfg = _config(tmp_path / "config.yaml")
         store_path = tmp_path / "obs.db"
-        now = datetime(2026, 7, 10, tzinfo=UTC)
+        now = _now()
         store = Store(store_path)
         _seed(store, "old", 1, now - timedelta(days=_RETAIN_DAYS + 10))
         store.close()
@@ -130,7 +143,7 @@ def test_store_prune_confirmed_deletes_old_observations_and_refreshes_counts(
     async def scenario():
         cfg = _config(tmp_path / "config.yaml")
         store_path = tmp_path / "obs.db"
-        now = datetime(2026, 7, 10, tzinfo=UTC)
+        now = _now()
         store = Store(store_path)
         _seed(store, "old", 1, now - timedelta(days=_RETAIN_DAYS + 10))
         _seed(store, "new", 2, now - timedelta(days=1))
