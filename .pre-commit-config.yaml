@@ -1,8 +1,15 @@
 # Run `uv run pre-commit install` once to enable these hooks locally.
+#
+# Keep this rev matched to the ruff version pinned in pyproject.toml. These
+# hooks rewrite files (--fix, ruff-format) while `just lint` and CI check them
+# with the uv-installed ruff, so two different versions can auto-fix a commit
+# one way locally and flag it the other way in CI. Dependabot's pre-commit
+# ecosystem bumps this rev; the pyproject pin moves separately, so a bump to
+# either one is where they can drift apart.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
+    rev: v0.16.1
     hooks:
-      - id: ruff
+      - id: ruff-check
         args: [--fix]
       - id: ruff-format
