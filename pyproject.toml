@@ -54,6 +54,7 @@ build-backend = "uv_build"
 dev = [
     "hypothesis>=6.165.2",
     "mypy>=1.19",
+    "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "pytest-textual-snapshot>=1.0.0",
     "pytest-xdist>=3.8.0",
