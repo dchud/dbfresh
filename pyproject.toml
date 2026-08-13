@@ -58,7 +58,7 @@ dev = [
     "pytest-textual-snapshot>=1.0.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.16.1",
-    "types-pyyaml>=6.0.12",
+    "types-pyyaml>=6.0.12.20260724",
 ]
 docs = [
     "mkdocs-material>=9.7.7",
