@@ -332,7 +332,7 @@ docs = [
 requires-dist = [
     { name = "databricks-sdk", marker = "extra == 'databricks'", specifier = ">=0.122.0" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], marker = "extra == 'databricks'", specifier = ">=4.4.0" },
-    { name = "holidays", specifier = ">=0.100" },
+    { name = "holidays", specifier = ">=0.102" },
     { name = "psycopg", marker = "extra == 'postgres'", specifier = ">=3.3.4" },
     { name = "pymssql", marker = "extra == 'sqlserver'", specifier = ">=2.3.13" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
@@ -440,14 +440,14 @@ wheels = [
 
 [[package]]
 name = "holidays"
-version = "0.100"
+version = "0.102"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "python-dateutil" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/65/4bec113c00c42fb8d6d71a816774a97d009c8f1341a70ecb6a9ba96176bb/holidays-0.100.tar.gz", hash = "sha256:76e963cd17758ba0e0519daff725f676eaebeda71e500cd235f647307be31e31", size = 949733, upload-time = "2026-07-06T21:15:34.947Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/bd/129ac0572cbc7357fc9aec05af37c2db4384edf850476e412f57454b5f76/holidays-0.102.tar.gz", hash = "sha256:fc29b2fc76d262c822a200c50095e2dadc974b3e41e245875a33f1436bafe7d3", size = 978332, upload-time = "2026-08-03T17:11:34.693Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/86/4eab0e2339cf09cfd00233073f5fa37810ceacbff5db5133e26aaa610255/holidays-0.100-py3-none-any.whl", hash = "sha256:cf67e8983c3af182b62081be27c965c6fdf41377026aa62ac82d1bbc8c7ebd8f", size = 1529449, upload-time = "2026-07-06T21:15:32.949Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/b9/1304d15e603617bb65877025f4c11ddb20c09ce2d7e3600995a633a9ab3b/holidays-0.102-py3-none-any.whl", hash = "sha256:ea1116491db82fc56612cad4b6c6f49272a13d73f006b073a3b77e98848c9fbf", size = 1575281, upload-time = "2026-08-03T17:11:32.906Z" },
 ]
 
 [[package]]
