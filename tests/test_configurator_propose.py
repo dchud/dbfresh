@@ -2,15 +2,20 @@
 for genuine columns/keys, and constructed ObjectInfo for capability-absence
 and Databricks-only paths."""
 
+import yaml
+
 from dbfresh.adapters.base import Category, Column, Dialect, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
+from dbfresh.adapters.factory import create_adapter
 from dbfresh.adapters.sqlite import SqliteAdapter, SqliteDialect
 from dbfresh.adapters.sqlserver import TSqlDialect
+from dbfresh.config import load_config
 from dbfresh.configurator import (
     key_introspection_note,
     offered_column_checks,
     propose_checks,
 )
+from dbfresh.engine import Status, run_checks
 
 
 def _col(name, category=Category.NUMERIC, nullable=False, type_="INT"):
@@ -196,6 +201,44 @@ def test_schema_and_row_count_are_always_proposed_even_with_minimal_metadata():
     proposals = propose_checks("s", "t", info, Dialect())
     metrics = {p["metric"] for p in proposals}
     assert {"schema", "row_count"} <= metrics
+
+
+def test_proposal_bundle_reparses_and_runs_under_load_config(tmp_path):
+    # The dicts propose_checks builds must be valid input to load_config's
+    # Check model and runnable by the engine, not merely shaped like a
+    # check -- a key name mismatch here would only surface once someone
+    # pastes a real proposal into a real config.
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows(
+        "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
+    )
+    adapter.rows(
+        "INSERT INTO fct (id, amount, modified_at) "
+        "VALUES (1, 10.0, '2026-07-10 00:00:00')"
+    )
+    info = adapter.describe("fct")
+    proposals = propose_checks("s", "fct", info, adapter.dialect)
+    adapter.close()
+
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.safe_dump(
+            {
+                "sources": {"s": {"type": "sqlite", "database": str(db)}},
+                "checks": proposals,
+            },
+            sort_keys=False,
+        )
+    )
+
+    config = load_config(cfg_path)
+    assert len(config.checks) == len(proposals)
+
+    adapters = {"s": create_adapter("sqlite", {"database": str(db)})}
+    run = run_checks(adapters, config.checks)
+    adapters["s"].close()
+    assert all(r.status != Status.ERROR for r in run.results)
 
 
 def test_offered_checks_exclude_what_the_propose_flow_already_covers():
