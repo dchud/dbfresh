@@ -9,6 +9,9 @@ once releases are tagged.
 
 ### Added
 
+- A `check_sets:` block defines named, parameterized check batteries a
+  `tables:` entry pulls in with `use:`, overriding parameters with `with:`
+  and dropping items with `skip:`.
 - A `tables:` block groups checks that share a `source:` and `object:`,
   stating both once instead of repeating them on every check. Coexists
   with the flat `checks:` list; both forms produce identical `check_id`s.

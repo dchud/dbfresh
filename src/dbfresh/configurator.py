@@ -30,6 +30,7 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import (
     flatten_table_checks,
     interpolate_env,
+    normalize_check_sets,
     resolve_includes,
 )
 
@@ -490,17 +491,30 @@ def render_tables_proposal(tables: list[dict]) -> str:
     ``tables:`` block a file's checks fold into, never a full document,
     since every other section of the file stays exactly as the user wrote
     it.
+
+    An entry with no ``checks:`` key at all -- a ``use:``-backed entry
+    carried over unchanged, with no inline checks of its own -- keeps it
+    that way: rendering ``checks: []`` into it would add clutter the
+    entry never had, the one case where this must not touch a key the
+    entry didn't already declare.
+
+    A table's ``with:`` renders inline, for the same reason an
+    expectation does: it is a short parameter list the docs write as
+    ``with: { ts_column: modified_at }``, and a block-style copy would
+    cost a line per parameter per table -- paid on every table in the
+    file, in output whose purpose is a smaller one.
     """
-    rendered = [
-        {
-            **entry,
-            "checks": [
+    rendered = []
+    for entry in tables:
+        out = dict(entry)
+        if "checks" in entry:
+            out["checks"] = [
                 inline_check_expectations(check)
-                for check in entry.get("checks", [])
-            ],
-        }
-        for entry in tables
-    ]
+                for check in entry.get("checks") or []
+            ]
+        if isinstance(entry.get("with"), dict):
+            out["with"] = _inline(entry["with"])
+        rendered.append(out)
     return _dump_document({"tables": rendered})
 
 
@@ -635,7 +649,24 @@ def check_bearing_files(config_path: str | Path) -> list[Path]:
     return unique
 
 
-def _raw_checks_in(path: Path) -> list[dict]:
+def _raw_check_sets_in(path: Path) -> dict[str, dict]:
+    """One file's own ``check_sets:``, normalized via
+    :func:`~dbfresh.config.normalize_check_sets` and its problems
+    discarded -- the same tolerance :func:`_raw_checks_in` applies to a
+    malformed ``tables:`` entry: a ``check_sets:`` problem is
+    ``config validate``'s job to report, not this dedup pass's, and a set
+    that failed to normalize can't be used by anything anyway.
+    """
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text())
+    if not isinstance(raw, dict):
+        return {}
+    sets, _problems = normalize_check_sets(raw.get("check_sets"), path)
+    return sets
+
+
+def _raw_checks_in(path: Path, check_sets: dict[str, dict]) -> list[dict]:
     """The raw check blocks in one config or included-checks file --
     flat ``checks:`` entries plus every check nested under ``tables:``,
     flattened via :func:`~dbfresh.config.flatten_table_checks` so a check
@@ -644,6 +675,12 @@ def _raw_checks_in(path: Path) -> list[dict]:
     this dedup pass's: a problem it finds is simply discarded here,
     since a raw dict that couldn't be flattened can't collide with
     anything anyway.
+
+    ``check_sets`` is composed across every check-bearing file by
+    :func:`partition_new_checks` before this is called per-file, exactly
+    as :func:`~dbfresh.config._load_config` composes it before flattening
+    any one file's ``tables:`` -- a table in this file may ``use:`` a set
+    defined in another.
     """
     if not path.exists():
         return []
@@ -655,7 +692,7 @@ def _raw_checks_in(path: Path) -> list[dict]:
     else:
         flat = list(raw.get("checks") or [])
         tables = list(raw.get("tables") or [])
-    table_checks, _problems = flatten_table_checks(tables)
+    table_checks, _problems = flatten_table_checks(tables, check_sets)
     return [*flat, *table_checks]
 
 
@@ -695,15 +732,25 @@ def partition_new_checks(
     is new. Read-only: this reports what is already there and never writes.
     """
     config_path = Path(config_path)
-    seen = (
-        {
+    seen: set[str] = set()
+    if config_path.exists():
+        files = check_bearing_files(config_path)
+        # check_sets: composed across every check-bearing file before any
+        # of them is flattened -- a table in one file may `use:` a set
+        # defined in another, so flattening file-by-file in isolation
+        # (as this used to) would silently miss those checks, and a
+        # second `add` run would re-propose ones that already exist. The
+        # first file to define a name keeps it; a duplicate is
+        # config validate's problem to report, not this dedup pass's.
+        check_sets: dict[str, dict] = {}
+        for path in files:
+            for name, definition in _raw_check_sets_in(path).items():
+                check_sets.setdefault(name, definition)
+        seen = {
             _check_id_of(raw)
-            for path in check_bearing_files(config_path)
-            for raw in _raw_checks_in(path)
+            for path in files
+            for raw in _raw_checks_in(path, check_sets)
         }
-        if config_path.exists()
-        else set()
-    )
 
     new: list[dict] = []
     already_defined: list[dict] = []

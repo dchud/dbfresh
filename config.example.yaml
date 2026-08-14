@@ -31,6 +31,26 @@ sources:
 defaults: # merged into every check when absent; supports
   severity: error #   severity, calendar, where, allow_empty, skip_off_schedule
 
+# check_sets: named, parameterized check batteries -- with: supplies
+# parameter defaults, a table's own with: overrides one key at a time.
+# {{ name }} occupying an entire scalar node is replaced by that
+# parameter's full value (any type); embedded in a longer string, it
+# interpolates as text and needs a scalar parameter.
+check_sets:
+  standard:
+    with:
+      rows: { vs_previous: { baseline: previous, min_ratio: 0.8, max_ratio: 1.2 } }
+      max_lag: 26h
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: row_count
+        expect: "{{ rows }}"
+      - metric: freshness
+        column: "{{ ts_column }}"
+        expect: { max_lag: "{{ max_lag }}" }
+        calendar: business
+
 # tables: groups checks that share a source/object, stating both once
 # instead of repeating them on every check nested under the entry.
 tables:
@@ -56,6 +76,22 @@ tables:
         freshness_source: column # or describe_history / describe_detail (Databricks tables)
         expect: { max_lag: 26h }
         calendar: business
+
+  # use: pulls in the standard battery; with: supplies the parameters it
+  # needs (ts_column has no set-level default, so every user must supply
+  # it). rows and max_lag fall through to the set's own defaults.
+  - source: warehouse
+    object: dbo.dim_customer
+    use: standard
+    with: { ts_column: modified_at }
+
+  # skip: drops the freshness item (a slowly-changing reference table has
+  # no meaningful lag bound), so ts_column is never needed here.
+  - source: warehouse
+    object: dbo.ref_currency
+    use: standard
+    skip: [freshness]
+    with: { rows: { between: [1, 500] } }
 
 checks:
   - source: lakehouse

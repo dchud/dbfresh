@@ -791,7 +791,9 @@ def _config_validate_command(args: argparse.Namespace) -> int:
     return 0 if result.ok else _CONFIG_ERROR_EXIT
 
 
-def _document_order_raw_checks(data: dict) -> tuple[list[dict], list[str]]:
+def _document_order_raw_checks(
+    data: dict,
+) -> tuple[list[dict], list[str], list[dict]]:
     """One file's raw checks in document order: whichever of
     ``checks:``/``tables:`` appears first in the file contributes its
     checks first, each in its own internal order. A ``tables:`` entry's
@@ -799,12 +801,20 @@ def _document_order_raw_checks(data: dict) -> tuple[list[dict], list[str]]:
     still carrying that entry's ``source``/``object`` -- exactly like every
     other raw check dict returned here.
 
+    A ``tables:`` entry that uses a check set (``use:`` present) is *not*
+    flattened -- expanding it would bake the set's checks into this file as
+    literal blocks, silently undoing the factoring ``use:``/``with:``/
+    ``skip:`` exist for and making the file bigger, the opposite of what
+    migrate is for. It is instead returned verbatim, third, so the caller
+    can carry it into the regrouped ``tables:`` block unchanged.
+
     Used only by ``config migrate``: a partially-migrated file's regrouped
     ``tables:`` block should come out in the order the user already sees
     in the file, not an arbitrary flat-then-grouped convention.
     """
     raw_checks: list[dict] = []
     problems: list[str] = []
+    set_backed_tables: list[dict] = []
     for key in data:
         if key == "checks":
             for item in data.get("checks") or []:
@@ -815,12 +825,16 @@ def _document_order_raw_checks(data: dict) -> tuple[list[dict], list[str]]:
                     continue
                 raw_checks.append(item)
         elif key == "tables":
-            flattened, table_problems = flatten_table_checks(
-                data.get("tables") or []
-            )
+            plain_tables = []
+            for entry in data.get("tables") or []:
+                if isinstance(entry, dict) and "use" in entry:
+                    set_backed_tables.append(entry)
+                else:
+                    plain_tables.append(entry)
+            flattened, table_problems = flatten_table_checks(plain_tables)
             raw_checks.extend(flattened)
             problems.extend(table_problems)
-    return raw_checks, problems
+    return raw_checks, problems, set_backed_tables
 
 
 def _emit_tables_block(tables: list[dict]) -> None:
@@ -861,7 +875,7 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
             ConfigError(f"invalid YAML in {config_path}: {exc}")
         )
 
-    raw_checks, problems = _document_order_raw_checks(data)
+    raw_checks, problems, set_backed_tables = _document_order_raw_checks(data)
     if problems:
         for problem in problems:
             _say(f"error: {problem}")
@@ -882,11 +896,16 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
         for included_path in included:
             _say(f"  {included_path}")
 
-    if not raw_checks:
+    if not raw_checks and not set_backed_tables:
         _say(f"{config_path}: no checks found; nothing to migrate")
         return 0
 
-    tables = group_checks_by_table(raw_checks)
+    # A use:-backed entry is carried over unchanged (see
+    # _document_order_raw_checks) and appended after the regrouped flat
+    # entries, never merged into them -- it is not built from raw_checks
+    # at all, so group_checks_by_table has no reason to know about it.
+    grouped = group_checks_by_table(raw_checks)
+    tables = grouped + set_backed_tables
     already_grouped = not data.get("checks") and tables == list(
         data.get("tables") or []
     )
@@ -897,13 +916,20 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
         )
         return 0
 
-    checks_count = len(raw_checks)
-    tables_count = len(tables)
-    _say(
-        f"{checks_count} check{'' if checks_count == 1 else 's'} grouped "
-        f"into {tables_count} tables: "
-        f"{'entry' if tables_count == 1 else 'entries'}"
-    )
+    if raw_checks:
+        checks_count = len(raw_checks)
+        tables_count = len(grouped)
+        _say(
+            f"{checks_count} check{'' if checks_count == 1 else 's'} "
+            f"grouped into {tables_count} tables: "
+            f"{'entry' if tables_count == 1 else 'entries'}"
+        )
+    if set_backed_tables:
+        n = len(set_backed_tables)
+        _say(
+            f"{n} table entr{'y' if n == 1 else 'ies'} using use: carried "
+            "over unchanged"
+        )
     _say(
         "comments on the individual checks are not carried over -- those "
         "checks are re-rendered from parsed data. Every other part of the "
