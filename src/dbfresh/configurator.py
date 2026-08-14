@@ -702,6 +702,58 @@ def _check_id_of(raw: dict) -> str:
     return check_id(check)
 
 
+def partition_new_checks(
+    config_path: str | Path, blocks: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Split proposed blocks into ``(new, already_defined)``.
+
+    A block whose derived ``check_id`` already exists anywhere in the
+    composed config -- the root config plus every included checks file, per
+    :func:`check_bearing_files` -- is already defined, and adding it a
+    second time would make the next :func:`dbfresh.config.load_config`
+    raise on the duplicate id. Blocks colliding with each other inside
+    ``blocks`` are separated the same way, the first occurrence winning.
+
+    A config file that does not exist yet defines nothing, so every block
+    is new. Read-only: this reports what is already there and never writes.
+    """
+    config_path = Path(config_path)
+    seen = (
+        {
+            _check_id_of(raw)
+            for path in check_bearing_files(config_path)
+            for raw in _raw_checks_in(path)
+        }
+        if config_path.exists()
+        else set()
+    )
+
+    new: list[dict] = []
+    already_defined: list[dict] = []
+    for block in blocks:
+        cid = _check_id_of(block)
+        if cid in seen:
+            already_defined.append(block)
+            continue
+        seen.add(cid)
+        new.append(block)
+    return new, already_defined
+
+
+def referenced_env_vars(params: dict) -> list[str]:
+    """The sorted ``${VAR}`` names a source's connection params reference.
+
+    Interpolates against an empty environment so every reference lands in
+    ``missing`` whether or not it happens to be set here -- the same
+    reasoning as :func:`dbfresh.config.collect_referenced_env_vars`, which
+    reports the same names once the source is in the config. This one works
+    from params the config does not hold yet.
+    """
+    missing: set[str] = set()
+    interpolate_env(params, {}, missing)
+    return sorted(missing)
+
+
 def append_checks(
     target_path: str | Path,
     new_checks: list[dict],

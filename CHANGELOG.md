@@ -23,6 +23,11 @@ once releases are tagged.
 
 ### Changed
 
+- `dbfresh add` no longer edits config files. It runs the same live-source
+  analysis and prints the proposed source and checks as YAML on stdout for
+  you to paste; wizard prompts and guidance move to stderr so stdout holds
+  only the YAML. Checks already defined anywhere in the composed config are
+  still left out of the proposal.
 - The TUI launches with a banner naming any unset `${VAR}` secrets instead
   of refusing to start.
 - The config is located by walking up from the current directory to find

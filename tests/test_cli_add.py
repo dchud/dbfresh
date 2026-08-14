@@ -2,7 +2,8 @@
 
 The wizard's own logic is exercised through the configurator module's
 tests (test_configurator_*.py); these tests only prove the CLI wiring --
-prompts feed the module correctly and the result is written to disk.
+prompts feed the module correctly, the proposal is emitted as YAML on
+stdout, and no config file is touched.
 """
 
 import yaml
@@ -59,15 +60,26 @@ class _FakeKeylessAdapter:
         pass
 
 
-def test_add_wizard_appends_proposed_bundle_for_existing_source(
-    tmp_path, monkeypatch
+def _emitted(capsys):
+    """The YAML document the wizard printed to stdout, parsed.
+
+    Every prompt, warning and piece of guidance goes to stderr, so stdout
+    is the emitted proposal and nothing else -- parsing it is the test that
+    it stays that way.
+    """
+    return yaml.safe_load(capsys.readouterr().out) or {}
+
+
+def test_add_wizard_emits_proposed_bundle_for_existing_source(
+    tmp_path, monkeypatch, capsys
 ):
     db = tmp_path / "data.db"
     sqlite_table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(
+    original = (
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
     )
+    cfg.write_text(original)
 
     answers = iter(
         [
@@ -84,21 +96,81 @@ def test_add_wizard_appends_proposed_bundle_for_existing_source(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    metrics = {c["metric"] for c in data["checks"]}
+    emitted = _emitted(capsys)
+    metrics = {c["metric"] for c in emitted["checks"]}
     assert {"schema", "row_count", "freshness", "duplicate_count"} <= metrics
+    assert cfg.read_text() == original  # the wizard never writes
 
 
-def test_add_wizard_run_twice_for_same_object_does_not_duplicate_checks(
-    tmp_path, monkeypatch
+def test_add_wizard_emits_checks_at_the_indent_they_paste_at(
+    tmp_path, monkeypatch, capsys
 ):
-    from dbfresh.config import load_config
-
+    # PyYAML's default renders a sequence indentless, putting items in the
+    # parent key's own column. Items in that form cannot be pasted under an
+    # existing indented `checks:` -- a sequence's items must share one
+    # indentation -- so the emitted block has to use the indented form.
     db = tmp_path / "data.db"
     sqlite_table(db)
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
         f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
+    )
+
+    answers = iter(["s", "fct", "y", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    assert main(["add", "-c", str(cfg)]) == 0
+
+    out = capsys.readouterr().out
+    assert "checks:\n  - source: s\n" in out
+
+
+def test_add_wizard_run_twice_for_same_object_emits_nothing_the_second_time(
+    tmp_path, monkeypatch, capsys
+):
+    # Pasting the first run's emission into the config is what makes the
+    # second run see those checks as already defined; re-emitting them
+    # would hand the user a block that load_config rejects for duplicate
+    # check_ids once pasted.
+    from dbfresh.config import load_config
+
+    db = tmp_path / "data.db"
+    sqlite_table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n')
+
+    def _run():
+        answers = iter(["s", "fct", "y", "", "", ""])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+        return main(["add", "-c", str(cfg)])
+
+    assert _run() == 0
+    first = _emitted(capsys)
+    assert first["checks"]
+
+    cfg.write_text(cfg.read_text() + yaml.safe_dump(first))
+    config = load_config(cfg)  # the pasted block is a loadable config
+    assert len(config.checks) == len(first["checks"])
+
+    assert _run() == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "nothing to add" in captured.err
+
+
+def test_add_wizard_dedupes_against_included_files_not_just_the_root_config(
+    tmp_path, monkeypatch, capsys
+):
+    # Checks pasted into an *included* file must still count as defined:
+    # dedup reads the whole composed config, not only the root.
+    db = tmp_path / "data.db"
+    sqlite_table(db)
+    (tmp_path / "checks").mkdir()
+    (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "include: [checks/*.yaml]\n"
     )
 
     def _run():
@@ -107,53 +179,42 @@ def test_add_wizard_run_twice_for_same_object_does_not_duplicate_checks(
         return main(["add", "-c", str(cfg)])
 
     assert _run() == 0
-    first = yaml.safe_load(cfg.read_text())
+    first = _emitted(capsys)
+    (tmp_path / "checks" / "a.yaml").write_text(yaml.safe_dump(first))
+
     assert _run() == 0
-    second = yaml.safe_load(cfg.read_text())
-
-    assert second["checks"] == first["checks"]  # no duplicates appended
-    config = load_config(cfg)  # must not raise a duplicate check_id error
-    assert len(config.checks) == len(first["checks"])
+    assert _emitted(capsys) == {}
 
 
-def test_add_wizard_dedupes_across_included_files_not_just_the_target(
-    tmp_path, monkeypatch
+def test_add_wizard_reports_already_defined_checks_on_stderr(
+    tmp_path, monkeypatch, capsys
 ):
-    # The same object, added twice but to two DIFFERENT included files --
-    # dedup must see the whole composed config, not just whichever file is
-    # the write target this run, or the second run duplicates check_ids
-    # and the next load_config rejects the file.
-    from dbfresh.config import load_config
-
     db = tmp_path / "data.db"
     sqlite_table(db)
-    (tmp_path / "checks").mkdir()
-    (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
-    (tmp_path / "checks" / "b.yaml").write_text("checks: []\n")
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(
-        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
-        "include: [checks/*.yaml]\nchecks: []\n"
-    )
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n')
 
-    def _run(file_index):
-        answers = iter(["s", "fct", "y", "", "", "", str(file_index)])
+    def _run():
+        answers = iter(["s", "fct", "y", "", "", ""])
         monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
         return main(["add", "-c", str(cfg)])
 
-    assert _run(1) == 0  # writes to a.yaml
-    assert _run(2) == 0  # would write to b.yaml, but it's all duplicates
+    assert _run() == 0
+    first = _emitted(capsys)
+    # Paste back only the row_count check, so the next run has one
+    # already-defined block and several new ones.
+    row_count = next(c for c in first["checks"] if c["metric"] == "row_count")
+    cfg.write_text(cfg.read_text() + yaml.safe_dump({"checks": [row_count]}))
 
-    b_data = yaml.safe_load((tmp_path / "checks" / "b.yaml").read_text())
-    assert b_data["checks"] == []
-
-    config = load_config(cfg)  # must not raise a duplicate check_id error
-    a_data = yaml.safe_load((tmp_path / "checks" / "a.yaml").read_text())
-    assert len(config.checks) == len(a_data["checks"])
+    assert _run() == 0
+    captured = capsys.readouterr()
+    metrics = {c["metric"] for c in (yaml.safe_load(captured.out))["checks"]}
+    assert "row_count" not in metrics
+    assert "already defined" in captured.err
 
 
 def test_add_wizard_missing_object_requires_confirmation_to_proceed(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     db = tmp_path / "data.db"
     sqlite_table(db)
@@ -173,16 +234,15 @@ def test_add_wizard_missing_object_requires_confirmation_to_proceed(
 
     code = main(["add", "-c", str(cfg)])
     assert code == 1
-    data = yaml.safe_load(cfg.read_text())
-    assert data["checks"] == []
+    assert capsys.readouterr().out == ""
 
 
-def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(
-    tmp_path, monkeypatch
+def test_add_wizard_new_source_keeps_env_var_placeholder_in_emitted_yaml(
+    tmp_path, monkeypatch, capsys
 ):
     # A new source's connection params may reference ${VAR} secrets. The
-    # probe must succeed against the resolved value, but the YAML must
-    # keep the placeholder -- never the literal secret.
+    # probe must succeed against the resolved value, but the emitted YAML
+    # must keep the placeholder -- never the literal secret.
     db = tmp_path / "data.db"
     sqlite_table(db)
     monkeypatch.setenv("DBFRESH_TEST_DB_PATH", str(db))
@@ -207,9 +267,13 @@ def test_add_wizard_new_source_keeps_env_var_placeholder_in_yaml(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB_PATH}"
-    assert len(data["checks"]) >= 1
+    captured = capsys.readouterr()
+    emitted = yaml.safe_load(captured.out)
+    assert emitted["sources"]["s"]["database"] == "${DBFRESH_TEST_DB_PATH}"
+    assert str(db) not in captured.out
+    assert len(emitted["checks"]) >= 1
+    # The variable the pasted source will need is named for the user.
+    assert "DBFRESH_TEST_DB_PATH" in captured.err
 
 
 def test_add_wizard_hints_at_env_var_for_credential_looking_keys(
@@ -231,8 +295,7 @@ def test_add_wizard_hints_at_env_var_for_credential_looking_keys(
 
     code = main(["add", "-c", str(cfg)])
     assert code == 1
-    out = capsys.readouterr().out
-    assert "${" in out
+    assert "${" in capsys.readouterr().err
 
 
 def test_add_wizard_closes_adapter_when_declining_missing_object(
@@ -305,42 +368,29 @@ def test_prompt_index_reprompts_on_non_numeric_and_out_of_range(monkeypatch):
     assert _prompt_index("which file", "1", 3) == 1
 
 
-def test_add_wizard_rejects_out_of_range_file_index(tmp_path, monkeypatch):
+def test_prompts_go_to_stderr_so_stdout_holds_only_the_emitted_yaml(
+    tmp_path, monkeypatch, capsys
+):
     db = tmp_path / "data.db"
     sqlite_table(db)
-    (tmp_path / "checks").mkdir()
-    (tmp_path / "checks" / "a.yaml").write_text("checks: []\n")
-    (tmp_path / "checks" / "b.yaml").write_text("checks: []\n")
     cfg = tmp_path / "config.yaml"
     cfg.write_text(
-        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
-        "include: [checks/*.yaml]\nchecks: []\n"
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
     )
 
-    answers = iter(
-        [
-            "s",  # source name
-            "fct",  # object name
-            "y",  # accept full bundle
-            "",
-            "",
-            "",
-            "99",  # out-of-range file index
-            "2",  # valid index, second included file
-        ]
-    )
+    answers = iter(["s", "fct", "y", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
 
-    code = main(["add", "-c", str(cfg)])
-    assert code == 0
-    data = yaml.safe_load((tmp_path / "checks" / "b.yaml").read_text())
-    assert len(data["checks"]) >= 1
-    data_a = yaml.safe_load((tmp_path / "checks" / "a.yaml").read_text())
-    assert data_a["checks"] == []
+    assert main(["add", "-c", str(cfg)]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith("checks:")
+    assert "Object name" in captured.err
+    assert "Proposed" in captured.err
 
 
 def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setitem(factory._ADAPTERS, "fakeview", _FakeViewAdapter)
     monkeypatch.setitem(factory._DIALECTS, "fakeview", DatabricksDialect)
@@ -361,8 +411,7 @@ def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    metrics = {c["metric"] for c in data["checks"]}
+    metrics = {c["metric"] for c in _emitted(capsys)["checks"]}
     assert "freshness" not in metrics
 
 
@@ -387,12 +436,11 @@ def test_add_wizard_notes_when_engine_cannot_introspect_keys(
 
     code = main(["add", "-c", str(cfg)])
     assert code == 0
-    out = capsys.readouterr().out
-    assert "cannot introspect key" in out
+    assert "cannot introspect key" in capsys.readouterr().err
 
 
 def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     db = tmp_path / "data.db"
     ambiguous_sqlite_table(db)
@@ -415,13 +463,13 @@ def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    freshness = next(c for c in data["checks"] if c["metric"] == "freshness")
+    checks = _emitted(capsys)["checks"]
+    freshness = next(c for c in checks if c["metric"] == "freshness")
     assert freshness["column"] == "updated_at"
 
 
 def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ):
     db = tmp_path / "data.db"
     ambiguous_sqlite_table(db)
@@ -444,12 +492,13 @@ def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    metrics = {c["metric"] for c in data["checks"]}
+    metrics = {c["metric"] for c in _emitted(capsys)["checks"]}
     assert "freshness" not in metrics
 
 
-def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
+def test_add_wizard_new_source_runs_connection_test(
+    tmp_path, monkeypatch, capsys
+):
     db = tmp_path / "data.db"
     sqlite_table(db)
     cfg = tmp_path / "config.yaml"
@@ -473,9 +522,47 @@ def test_add_wizard_new_source_runs_connection_test(tmp_path, monkeypatch):
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    data = yaml.safe_load(cfg.read_text())
-    assert data["sources"]["s"]["type"] == "sqlite"
-    assert len(data["checks"]) >= 1
+    emitted = _emitted(capsys)
+    assert emitted["sources"]["s"]["type"] == "sqlite"
+    assert len(emitted["checks"]) >= 1
+
+
+def test_add_wizard_emits_a_startable_config_when_none_exists(
+    tmp_path, monkeypatch, capsys
+):
+    # With no config file to merge into, the emitted document has to stand
+    # on its own: source and checks under their own keys, loadable as
+    # written.
+    from dbfresh.config import load_config
+
+    db = tmp_path / "data.db"
+    sqlite_table(db)
+    cfg = tmp_path / "config.yaml"
+
+    answers = iter(
+        [
+            "s",  # new source name
+            "3",  # source type (sqlite)
+            f"database={db}",
+            "",  # end of params
+            "fct",  # object name
+            "y",  # accept full bundle
+            "",
+            "",
+            "",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+
+    assert main(["add", "-c", str(cfg)]) == 0
+    captured = capsys.readouterr()
+    assert not cfg.exists()  # emitted, not written
+    assert "does not exist yet" in captured.err
+
+    cfg.write_text(captured.out)
+    config = load_config(cfg)
+    assert config.sources["s"].type == "sqlite"
+    assert config.checks
 
 
 def test_add_wizard_source_type_menu_lists_types_and_rejects_bad_choice(
@@ -505,9 +592,8 @@ def test_add_wizard_source_type_menu_lists_types_and_rejects_bad_choice(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
     for type_name in ("sqlite", "postgres", "sqlserver", "databricks"):
-        assert type_name in out  # the menu lists every supported type
-    assert "1 to 4" in out  # the out-of-range 9 was rejected
-    data = yaml.safe_load(cfg.read_text())
-    assert data["sources"]["s"]["type"] == "sqlite"
+        assert type_name in captured.err  # the menu lists every supported type
+    assert "1 to 4" in captured.err  # the out-of-range 9 was rejected
+    assert yaml.safe_load(captured.out)["sources"]["s"]["type"] == "sqlite"
