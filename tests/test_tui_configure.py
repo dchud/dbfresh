@@ -851,8 +851,8 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
 
             # ``modified_at`` already has a proposed freshness checkbox --
             # offering it a second time would collide on check_id and get
-            # silently dropped by append_checks's dedup, so no offered
-            # checkbox exists for it.
+            # silently dropped by partition_new_checks's dedup, so no
+            # offered checkbox exists for it.
             assert not app.screen.query("#offered-modified_at-freshness")
             # ``event_time`` is temporal but wasn't auto-proposed, so it's
             # still legitimately offered.

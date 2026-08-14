@@ -78,6 +78,34 @@ def test_config_validate_missing_config_file_exits_3(tmp_path, capsys):
     assert "Traceback" not in captured.err
 
 
+def test_config_validate_lists_a_same_file_duplicate_once(tmp_path, capsys):
+    # A duplicate check_id names two checks. When both live in the same
+    # file -- the ordinary case -- that is one file, and the problem is
+    # one bullet under it, not the same bullet twice.
+    write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+checks:
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 5 }
+  - source: s
+    object: t
+    metric: row_count
+    expect: { max: 9 }
+""",
+    )
+
+    assert main(["config", "validate", "-c", str(tmp_path / "config.yaml")])
+
+    out = capsys.readouterr().out
+    assert out.count("- duplicate check_id") == 1
+    assert "1 problem found in 1 file" in out
+    assert "listed under each" not in out
+
+
 def test_config_validate_names_the_file_a_duplicate_check_id_came_from(
     tmp_path, capsys
 ):

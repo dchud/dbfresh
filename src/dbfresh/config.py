@@ -968,9 +968,14 @@ def _load_config(
             ConfigProblem(files=(path,), message=str(error))
             for error in source_errors
         )
+        # Deduplicated, order preserved: a duplicate check_id names two
+        # checks, and when both live in the same file -- the ordinary case
+        # -- that is one file, not the same file twice. A report groups by
+        # file, so a repeated entry here would list the problem twice
+        # under the one file it belongs to.
         problems.extend(
             ConfigProblem(
-                files=tuple(checks_files[i] for i in indices),
+                files=tuple(dict.fromkeys(checks_files[i] for i in indices)),
                 message=str(error),
             )
             for indices, error in check_errors

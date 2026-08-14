@@ -85,7 +85,7 @@ def test_offered_column_checks_includes_null_rate_for_nullable_column():
 def test_offered_column_checks_excludes_metric_already_proposed_for_column():
     # ``modified_at`` already has a proposed freshness check; offering it
     # again would collide on check_id (which ignores `expect`) and get
-    # silently dropped by append_checks's dedup, so it's excluded.
+    # silently dropped by partition_new_checks's dedup, so it's excluded.
     # ``event_time`` has no proposal covering it, so freshness stays offered.
     columns = [
         Column(
