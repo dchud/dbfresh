@@ -341,6 +341,40 @@ def flatten_table_checks(tables: list[Any]) -> tuple[list[dict], list[str]]:
     return checks, problems
 
 
+def group_checks_by_table(checks: list[dict]) -> list[dict]:
+    """The inverse of :func:`flatten_table_checks`: group raw check dicts
+    -- each still carrying its own ``source``/``object`` -- into
+    ``tables:`` entries, one per distinct pair.
+
+    Entries come out in the order their pair first appears in ``checks``;
+    a pair's own checks keep their relative order from ``checks`` too, so
+    a list built from a mix of origins (a flat ``checks:`` list and
+    already-flattened ``tables:`` entries) folds into one stable,
+    predictable ``tables:`` block regardless of where each check
+    originated -- which is what lets a partially-migrated file converge
+    on one entry per pair instead of two. ``source``/``object`` move up
+    onto the entry and are dropped from the nested block, matching what a
+    hand-written ``tables:`` entry looks like.
+
+    The sole caller is ``dbfresh config migrate``, the one place that
+    builds ``tables:`` entries rather than consuming them.
+    """
+    order: list[tuple[Any, Any]] = []
+    grouped: dict[tuple[Any, Any], list[dict]] = {}
+    for raw in checks:
+        pair = (raw.get("source"), raw.get("object"))
+        if pair not in grouped:
+            grouped[pair] = []
+            order.append(pair)
+        grouped[pair].append(
+            {k: v for k, v in raw.items() if k not in _TABLE_CHECK_OWN_FIELDS}
+        )
+    return [
+        {"source": source, "object": obj, "checks": grouped[(source, obj)]}
+        for source, obj in order
+    ]
+
+
 def _build_check(raw: dict, defaults: dict) -> Check:
     """Build one Check, merging ``defaults:`` fields the check itself omits.
 

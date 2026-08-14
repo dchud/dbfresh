@@ -22,8 +22,11 @@ from dbfresh.config import (
     ConfigValidation,
     StoreConfig,
     collect_referenced_env_vars,
+    flatten_table_checks,
+    group_checks_by_table,
     load_config,
     load_config_tolerant,
+    resolve_includes,
     validate_config,
 )
 from dbfresh.configurator import (
@@ -38,6 +41,7 @@ from dbfresh.configurator import (
     propose_checks,
     referenced_env_vars,
     render_proposal,
+    render_tables_proposal,
 )
 from dbfresh.env_hygiene import committable_env_file
 from dbfresh.logsetup import configure_logging
@@ -192,9 +196,9 @@ def build_parser() -> argparse.ArgumentParser:
     # _config_command doesn't need to re-declare the subcommand list to
     # find it.
     config_cmd.set_defaults(_config_group_parser=config_cmd)
-    # A group parser holding subcommands of its own: `validate` today,
-    # with `migrate` planned as a sibling -- adding it later is another
-    # `add_parser` call here, not a restructure.
+    # A group parser holding subcommands of its own: `validate` and
+    # `migrate` -- adding another is just one more `add_parser` call here,
+    # not a restructure.
     config_subcommands = config_cmd.add_subparsers(dest="config_command")
 
     config_validate = config_subcommands.add_parser(
@@ -203,6 +207,13 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[_verbosity_parent()],
     )
     config_validate.add_argument("-c", "--config", default=None)
+
+    config_migrate = config_subcommands.add_parser(
+        "migrate",
+        help="group a file's checks under tables: and print the block to paste",
+        parents=[_verbosity_parent()],
+    )
+    config_migrate.add_argument("-c", "--config", default=None)
 
     ui = subcommands.add_parser(
         "ui",
@@ -780,9 +791,136 @@ def _config_validate_command(args: argparse.Namespace) -> int:
     return 0 if result.ok else _CONFIG_ERROR_EXIT
 
 
+def _document_order_raw_checks(data: dict) -> tuple[list[dict], list[str]]:
+    """One file's raw checks in document order: whichever of
+    ``checks:``/``tables:`` appears first in the file contributes its
+    checks first, each in its own internal order. A ``tables:`` entry's
+    checks are flattened via :func:`~dbfresh.config.flatten_table_checks`,
+    still carrying that entry's ``source``/``object`` -- exactly like every
+    other raw check dict returned here.
+
+    Used only by ``config migrate``: a partially-migrated file's regrouped
+    ``tables:`` block should come out in the order the user already sees
+    in the file, not an arbitrary flat-then-grouped convention.
+    """
+    raw_checks: list[dict] = []
+    problems: list[str] = []
+    for key in data:
+        if key == "checks":
+            for item in data.get("checks") or []:
+                if not isinstance(item, dict):
+                    problems.append(
+                        f"checks: entry must be a mapping, got {item!r}"
+                    )
+                    continue
+                raw_checks.append(item)
+        elif key == "tables":
+            flattened, table_problems = flatten_table_checks(
+                data.get("tables") or []
+            )
+            raw_checks.extend(flattened)
+            problems.extend(table_problems)
+    return raw_checks, problems
+
+
+def _emit_tables_block(tables: list[dict]) -> None:
+    """Print :func:`~dbfresh.configurator.render_tables_proposal`'s YAML
+    to stdout -- the only thing migrate writes there, matching
+    ``dbfresh add``.
+    """
+    print(render_tables_proposal(tables), end="")
+
+
+def _config_migrate_command(args: argparse.Namespace) -> int:
+    """Group one file's checks under ``tables:`` and print the block to
+    paste in its place.
+
+    Reads only the file ``-c`` resolves to, never the composed config: an
+    ``include:``-based config keeps checks spread across files on purpose,
+    and folding them into one block would destroy that layout. Covers
+    every check already in the file -- both a flat ``checks:`` list and
+    any existing ``tables:`` entries -- and replaces both, so a
+    partially-migrated file still ends up with one entry per
+    source/object pair rather than two.
+    """
+    config_path = Path(args.config)
+    try:
+        text = config_path.read_text()
+    except FileNotFoundError:
+        return _report_config_error(
+            ConfigError(f"config file not found: {config_path}")
+        )
+    except OSError as exc:
+        return _report_config_error(
+            ConfigError(f"cannot read config file {config_path}: {exc}")
+        )
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        return _report_config_error(
+            ConfigError(f"invalid YAML in {config_path}: {exc}")
+        )
+
+    raw_checks, problems = _document_order_raw_checks(data)
+    if problems:
+        for problem in problems:
+            _say(f"error: {problem}")
+        return _CONFIG_ERROR_EXIT
+
+    include_patterns = data.get("include")
+    if include_patterns:
+        try:
+            included = resolve_includes(
+                config_path.resolve().parent, include_patterns
+            )
+        except ValueError as exc:
+            return _report_config_error(exc)
+        _say(
+            f"{config_path} declares include:; each included file needs "
+            "its own `dbfresh config migrate -c <file>` run:"
+        )
+        for included_path in included:
+            _say(f"  {included_path}")
+
+    if not raw_checks:
+        _say(f"{config_path}: no checks found; nothing to migrate")
+        return 0
+
+    tables = group_checks_by_table(raw_checks)
+    already_grouped = not data.get("checks") and tables == list(
+        data.get("tables") or []
+    )
+    if already_grouped:
+        _say(
+            f"{config_path}: checks are already fully grouped under "
+            "tables:; nothing to migrate"
+        )
+        return 0
+
+    checks_count = len(raw_checks)
+    tables_count = len(tables)
+    _say(
+        f"{checks_count} check{'' if checks_count == 1 else 's'} grouped "
+        f"into {tables_count} tables: "
+        f"{'entry' if tables_count == 1 else 'entries'}"
+    )
+    _say(
+        "comments on the individual checks are not carried over -- those "
+        "checks are re-rendered from parsed data. Every other part of the "
+        "file, comments included, is untouched: only the block below is "
+        "rendered."
+    )
+    _say("replace this file's checks: and tables: with the block below:")
+    _say()
+    _emit_tables_block(tables)
+    return 0
+
+
 def _config_command(args: argparse.Namespace) -> int:
     if args.config_command == "validate":
         return _config_validate_command(args)
+    if args.config_command == "migrate":
+        return _config_migrate_command(args)
     args._config_group_parser.print_help()
     return 0
 

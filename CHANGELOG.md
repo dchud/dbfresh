@@ -27,6 +27,8 @@ once releases are tagged.
   every problem it finds — malformed checks, unknown source references,
   duplicate check IDs, undefined `${VAR}` references — grouped by the file
   each one came from, instead of stopping at the first.
+- `dbfresh config migrate` groups one file's checks into a `tables:` block
+  and prints it to paste in place of that file's `checks:`/`tables:`.
 
 ### Changed
 
