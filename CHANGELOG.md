@@ -28,6 +28,12 @@ once releases are tagged.
   you to paste; wizard prompts and guidance move to stderr so stdout holds
   only the YAML. Checks already defined anywhere in the composed config are
   still left out of the proposal.
+- The TUI no longer edits config files. The object-detail screen shows
+  each check's threshold read-only, alongside the config path to edit by
+  hand. The Configure screen still proposes checks against a live source,
+  but Accept now shows the proposed YAML in a copyable, read-only text
+  area instead of writing it; adding, editing, or removing a source is no
+  longer possible from the TUI.
 - The TUI launches with a banner naming any unset `${VAR}` secrets instead
   of refusing to start.
 - The config is located by walking up from the current directory to find
@@ -74,6 +80,3 @@ once releases are tagged.
   operation (e.g. `CREATE OR REPLACE TABLE AS SELECT`, `STREAMING UPDATE`,
   `COPY INTO`), not just `WRITE`/`MERGE`/`DELETE`/`UPDATE`, so a table
   written by one of those no longer reports no observation.
-- Editing a check's threshold on the object-detail screen and running that
-  object's checks immediately now uses the new value; the running app's
-  config is refreshed on save, not only when you leave the screen.

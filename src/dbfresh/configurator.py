@@ -148,7 +148,7 @@ def offered_column_checks(
     ignores ``expect`` (so tuning a threshold later doesn't fork history),
     which means an auto-proposed check and an offered one for the same
     metric and column collide on identity -- selecting both would silently
-    drop one via :func:`append_checks`'s dedup instead of writing two
+    drop one via :func:`partition_new_checks` instead of proposing two
     checks. This affects more than ``freshness``: a single-column key that
     is also a ``numeric`` or ``string`` column gets a proposed
     ``duplicate_count``, which would otherwise be offered again for the
@@ -373,6 +373,43 @@ def key_introspection_note(dialect: Dialect, info: ObjectInfo) -> str | None:
     )
 
 
+class _IndentedDumper(yaml.SafeDumper):
+    """A dumper that indents sequence items under their parent key.
+
+    PyYAML renders a sequence indentless by default, putting its items in
+    the parent key's own column. Items in that form cannot be pasted into
+    an existing ``checks:`` whose items are indented -- a sequence's items
+    must all share one indentation -- so the emitted proposal uses the
+    two-space item indent that ``config.example.yaml`` and the docs use.
+    """
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False):
+        return super().increase_indent(flow, False)
+
+
+def render_proposal(
+    source_entry: tuple[str, dict] | None, checks: list[dict]
+) -> str:
+    """Render the proposal as one valid YAML document.
+
+    Keyed by ``sources:`` / ``checks:`` rather than emitted as bare
+    entries: the two would otherwise concatenate into text that is not
+    YAML at all, and a document carrying its own keys is both a complete
+    starter config when there is no config file yet and, when there is,
+    a block whose entries sit at the indent they need under the matching
+    key. Shared by ``dbfresh add`` (prints this to stdout) and the TUI
+    Configure screen (shows this in a copyable text area), so both front
+    ends emit identical YAML for the same proposal.
+    """
+    document: dict[str, Any] = {}
+    if source_entry is not None:
+        name, entry = source_entry
+        document["sources"] = {name: entry}
+    if checks:
+        document["checks"] = checks
+    return yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False)
+
+
 @dataclass(frozen=True)
 class ConnectionProbe:
     """Result of a mandatory connection test for a new source."""
@@ -406,13 +443,13 @@ def probe_new_source(
 ) -> tuple[ConnectionProbe, dict]:
     """Probe a brand-new source's params after resolving ``${VAR}`` tokens.
 
-    ``raw_params`` is exactly what will be written to the YAML -- it may
-    hold ``${VAR}`` secrets. The connection test itself must run against
-    the resolved value (never a literal ``${VAR}`` string), so this
-    returns ``(probe, resolved_params)``: use ``resolved_params`` to build
-    a live adapter for further use (e.g. ``describe()``) when
-    ``probe.ok``, but never write it -- the caller writes ``raw_params``
-    verbatim via :func:`add_source` so the tracked config keeps ``${VAR}``
+    ``raw_params`` is exactly what the emitted YAML carries -- it may hold
+    ``${VAR}`` secrets. The connection test itself must run against the
+    resolved value (never a literal ``${VAR}`` string), so this returns
+    ``(probe, resolved_params)``: use ``resolved_params`` to build a live
+    adapter for further use (e.g. ``describe()``) when ``probe.ok``, but
+    never emit it -- the caller passes ``raw_params`` verbatim to
+    :func:`render_proposal` so the config the user pastes keeps ``${VAR}``
     rather than a literal secret. An undefined variable fails the probe
     cleanly rather than raising.
     """

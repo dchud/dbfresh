@@ -50,8 +50,8 @@ class MissingDriverError(RuntimeError):
 
 def supported_types() -> list[str]:
     """The source type strings the factory can build an adapter for,
-    sorted -- what a UI offers as the full set of valid choices (e.g. the
-    TUI's new-source type dropdown) rather than a hard-coded, easily
+    sorted -- what a UI offers as the full set of valid choices (e.g.
+    ``dbfresh add``'s source-type prompt) rather than a hard-coded, easily
     stale copy of :data:`_ADAPTERS`'s keys.
     """
     return sorted(_ADAPTERS)

@@ -18,7 +18,6 @@ from textual.widgets import (
     DataTable,
     Footer,
     Header,
-    Input,
     Label,
     OptionList,
     Static,
@@ -26,13 +25,8 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
-from dbfresh.checks import Check, check_id, parse_duration
+from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
-from dbfresh.configurator import (
-    find_check_file,
-    remove_check,
-    rewrite_check_expectation,
-)
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.report import (
     _format_freshness_observed,
@@ -47,6 +41,7 @@ from dbfresh.tui.dashboard import (
     GridRow,
     _status_cell,
     cancel_flashes,
+    check_expectation_line,
     check_label,
     check_rows,
     flash_cell,
@@ -457,18 +452,6 @@ class HistoryScreen(Screen):
 _DETAIL_GRID_ID = "object-detail-grid"
 _RUN_OBJECT_BUTTON_ID = "detail-run-object-btn"
 
-# An editable check's expect: operand gets an editing affordance only when
-# it's a shape this screen (and rewrite_check_expectation's callers) knows
-# how to build a form for: one scalar Input, or -- unlike Configure's own
-# in-Propose editing (dbfresh.tui.configure._NON_EDITABLE_OPERATORS) -- a
-# between's [lo, hi] pair via two Inputs, or a vs_previous check whose
-# ratio guard is fully set (both min_ratio and max_ratio) via that same
-# two-Input shape. schema's unchanged (no operand at all), and a
-# vs_previous check that isn't using a full ratio guard (delta-only, or a
-# one-sided ratio), still show read-only; a bespoke form for either is out
-# of scope here.
-_NON_EDITABLE_OPERATORS = frozenset({"unchanged", "vs_previous"})
-
 
 def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
     """The text for ``#check-detail-line`` -- the currently-highlighted
@@ -512,7 +495,7 @@ def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
     return text
 
 
-class ObjectDetailScreen(Screen[bool]):
+class ObjectDetailScreen(Screen[None]):
     """One object's checks as a status grid -- the Home grid's drill-in.
 
     The Home grid's rows are one per source.object (rolled up across all of
@@ -526,16 +509,12 @@ class ObjectDetailScreen(Screen[bool]):
     flatter, object-level Home grid now needs to reach individual check
     detail.
 
-    Below the grid, an "Edit checks" panel lists this object's checks again,
-    each with a threshold-editing and a delete affordance -- the
-    connection-free counterpart to Configure's in-Propose existing-check
-    editing (:meth:`~dbfresh.tui.configure.ConfigureScreen._save_existing`):
-    this screen already scopes to one object's checks and needs no source
-    adapter to mutate config YAML on disk. Dismisses with ``True`` when any
-    edit or delete actually wrote to disk (so Home reloads the config and
-    refreshes the dashboard, mirroring
-    :meth:`~dbfresh.tui.app.DbfreshApp._on_configure_dismissed`), ``False``
-    otherwise.
+    Below the grid, a "Checks" panel lists this object's checks again, each
+    with its expectation, read-only -- config is a file the user edits by
+    hand, never something this screen writes, so the panel names the config
+    path and each check's identity (see
+    :func:`~dbfresh.tui.dashboard.check_expectation_line`) rather than
+    offering a form to change either.
     """
 
     TITLE = "Object detail"
@@ -556,11 +535,7 @@ class ObjectDetailScreen(Screen[bool]):
         """The run affordance's label, singular when this object has exactly
         one check ("Run this check") and plural otherwise ("Run these
         checks"). Used for both the button and the footer binding."""
-        count = sum(
-            1
-            for c in self._config.checks
-            if c.source == self._source and c.object == self._object
-        )
+        count = len(self._object_checks())
         return "Run this check" if count == 1 else "Run these checks"
 
     @property
@@ -598,16 +573,20 @@ class ObjectDetailScreen(Screen[bool]):
         self._object = object_
         self._tz = tz
         self._rows_by_key: dict[str, GridRow] = {}
-        self._edit_checks: list[Check] = []
-        self._edit_value_inputs: list[Input | None] = []
-        self._edit_lo_inputs: list[Input | None] = []
-        self._edit_hi_inputs: list[Input | None] = []
-        self._config_changed = False
         # Pending flash_cell clear timers for this screen's grid, keyed by
         # (row_key, column_key) -- see flash_cell's own docstring for why
         # a re-flash of the same cell must cancel its predecessor's timer
         # here rather than let it fire later.
         self._cell_flash_timers: dict[tuple[str, str], Timer] = {}
+
+    def _object_checks(self) -> list[Check]:
+        """This object's checks, in config order -- shared by the run-label
+        count and the read-only checks panel below the grid."""
+        return [
+            c
+            for c in self._config.checks
+            if c.source == self._source and c.object == self._object
+        ]
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -631,20 +610,30 @@ class ObjectDetailScreen(Screen[bool]):
         detail_line.display = False
         yield detail_line
         yield Static(status_legend(), id="status-legend")
+        checks = self._object_checks()
+        check_lines = (
+            [Static(check_expectation_line(c)) for c in checks]
+            if checks
+            else [Static("(no checks for this object)")]
+        )
         yield VerticalScroll(
             Vertical(
-                Static("Edit checks", classes="section-title"),
-                Vertical(id="detail-edit-checks"),
-                id="detail-edit-section",
+                Static("Checks", classes="section-title"),
+                Static(
+                    f"Defined in {self._config_path} -- edit that file by "
+                    "hand to change or remove a check.",
+                    id="detail-checks-note",
+                ),
+                Vertical(*check_lines, id="detail-checks-list"),
+                id="detail-checks-section",
                 classes="panel",
             ),
-            id="detail-edit-scroll",
+            id="detail-checks-scroll",
         )
         yield Footer()
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_grid()
-        await self._mount_edit_checks()
 
     def refresh_grid(self) -> None:
         """(Re)populate this object's check grid from the store's current
@@ -676,8 +665,8 @@ class ObjectDetailScreen(Screen[bool]):
         populate_grid(table, rows, today, label_header="check")
         self._rows_by_key = {row.key: row for row in rows}
         self._sync_check_detail_line(self._current_row_key(table))
-        # A delete can change the check count; keep the button label and the
-        # footer's run-affordance label (see active_bindings) in step with it.
+        # Keep the button label and the footer's run-affordance label (see
+        # active_bindings) in step with the object's current check count.
         self.query_one(
             f"#{_RUN_OBJECT_BUTTON_ID}", Button
         ).label = self._run_object_label()
@@ -812,332 +801,12 @@ class ObjectDetailScreen(Screen[bool]):
         assert isinstance(app, DbfreshApp)
         app.run_object_checks(self._source, self._object)
 
-    async def _mount_edit_checks(self) -> None:
-        """One row per this object's checks, each with a threshold-editing
-        affordance (when the operator supports one) and a delete
-        affordance (always) -- rebuilt from ``self._config`` on every
-        mount and after every mutation, so it never drifts from what
-        :meth:`refresh_grid` is showing above it.
-
-        ``remove_children`` only schedules removal (it returns an
-        awaitable, see ``Widget.remove_children``) -- without awaiting it
-        here, a second mutation's remount can race the first's still-
-        pending removal and collide on this screen's stable per-check
-        widget ids (``detail-save-0`` etc.), raising ``DuplicateIds``.
-        """
-        container = self.query_one("#detail-edit-checks", Vertical)
-        await container.remove_children()
-        self._edit_checks = [
-            c
-            for c in self._config.checks
-            if c.source == self._source and c.object == self._object
-        ]
-        self._edit_value_inputs = []
-        self._edit_lo_inputs = []
-        self._edit_hi_inputs = []
-        if not self._edit_checks:
-            container.mount(Static("(no checks left for this object)"))
-            return
-        for i, check in enumerate(self._edit_checks):
-            container.mount(*self._build_edit_widgets(i, check))
-
-    def _build_edit_widgets(self, i: int, check: Check) -> list[Horizontal]:
-        """The widgets for one check's edit row -- mounted as flat siblings
-        into ``#detail-edit-checks`` (mirroring
-        :meth:`~dbfresh.tui.configure.ConfigureScreen._mount_existing_checks`'s
-        own flat mounting) rather than wrapped in a further container, so
-        each row's height comes only from :data:`ObjectDetailScreen`'s own
-        ``Horizontal { height: auto; }`` rule in app.tcss, the same rule
-        Configure's per-check rows already rely on.
-
-        Each row is four fixed-width columns -- label, value, a Save slot,
-        and Delete -- so a short label (``schema:``) and a long one
-        (``freshness (modified_at) (max_lag):``) still leave every row's
-        inputs and both buttons starting at the same x. The label is a
-        ``Label`` with the ``edit-label`` class (a fixed width in app.tcss,
-        sized to the longest realistic label); the value is always a nested
-        ``Horizontal`` with the ``edit-value`` class (also fixed-width,
-        sized to the widest case -- a ``between`` row's two Inputs plus the
-        "and" between them), holding whichever value widget(s) the row's
-        operator calls for, a single read-only ``Label`` for a non-editable
-        operator, or nothing at all for a check with no editable operand.
-        Save is always wrapped in a fixed-width ``edit-save`` slot -- empty
-        on the rows that have no Save -- so Delete always lands in the same
-        rightmost column instead of shifting left into the Save position;
-        the two buttons therefore read as two aligned columns. Row text
-        uses ``Label``,
-        not ``Static`` -- plain ``Static`` declares no width of its own,
-        and inside a ``Horizontal`` that leaves Textual sizing it to the
-        *rest* of the row's available space instead of to its own content,
-        which would push every widget after it out past the row's
-        overflow-hidden bounds. ``Label`` (a ``Static`` subclass) declares
-        ``width: auto`` explicitly, which sizes it to content as intended
-        -- the ``edit-label``/``edit-value`` classes then pin that content
-        width to a shared fixed column width instead.
-
-        A ``vs_previous`` check mirrors the ``between`` row's two-Input
-        shape for its ratio guard, but only when both ``min_ratio`` and
-        ``max_ratio`` are set -- a delta-only or one-sided ratio guard has
-        no form here and falls through to the read-only branch below like
-        the rest of ``_NON_EDITABLE_OPERATORS``.
-
-        Always ends with a Delete button and a hidden confirm/cancel row --
-        every check is deletable regardless of whether its expectation has
-        an editable operand.
-        """
-        label = check_label(check)
-        confirm_row = Horizontal(
-            Label("delete this check permanently?", classes="hint"),
-            Button("Confirm delete", id=f"detail-confirm-{i}"),
-            Button("Cancel", id=f"detail-cancel-{i}"),
-            id=f"detail-confirm-row-{i}",
-        )
-        confirm_row.display = False
-
-        if check.expect is None:
-            self._edit_value_inputs.append(None)
-            self._edit_lo_inputs.append(None)
-            self._edit_hi_inputs.append(None)
-            edit_row = Horizontal(
-                Label(label, classes="edit-label"),
-                Horizontal(classes="edit-value"),
-                Horizontal(classes="edit-save"),
-                Button("Delete", id=f"detail-delete-{i}"),
-            )
-        elif check.expect.operator == "between":
-            lo, hi = check.expect.operand
-            lo_input = Input(value=str(lo), id=f"detail-lo-{i}")
-            hi_input = Input(value=str(hi), id=f"detail-hi-{i}")
-            self._edit_value_inputs.append(None)
-            self._edit_lo_inputs.append(lo_input)
-            self._edit_hi_inputs.append(hi_input)
-            edit_row = Horizontal(
-                Label(f"{label} (between):", classes="edit-label"),
-                Horizontal(
-                    lo_input, Label("and"), hi_input, classes="edit-value"
-                ),
-                Horizontal(
-                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
-                ),
-                Button("Delete", id=f"detail-delete-{i}"),
-            )
-        elif check.expect.operator == "vs_previous" and (
-            check.expect.operand["min_ratio"] is not None
-            and check.expect.operand["max_ratio"] is not None
-        ):
-            operand = check.expect.operand
-            lo_input = Input(
-                value=str(operand["min_ratio"]), id=f"detail-lo-{i}"
-            )
-            hi_input = Input(
-                value=str(operand["max_ratio"]), id=f"detail-hi-{i}"
-            )
-            self._edit_value_inputs.append(None)
-            self._edit_lo_inputs.append(lo_input)
-            self._edit_hi_inputs.append(hi_input)
-            edit_row = Horizontal(
-                Label(f"{label} (ratio):", classes="edit-label"),
-                Horizontal(
-                    lo_input, Label("and"), hi_input, classes="edit-value"
-                ),
-                Horizontal(
-                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
-                ),
-                Button("Delete", id=f"detail-delete-{i}"),
-            )
-        elif check.expect.operator in _NON_EDITABLE_OPERATORS:
-            self._edit_value_inputs.append(None)
-            self._edit_lo_inputs.append(None)
-            self._edit_hi_inputs.append(None)
-            edit_row = Horizontal(
-                Label(f"{label}:", classes="edit-label"),
-                Horizontal(
-                    Label(check.expect.describe()), classes="edit-value"
-                ),
-                Horizontal(classes="edit-save"),
-                Button("Delete", id=f"detail-delete-{i}"),
-            )
-        else:
-            operand = check.expect.operand
-            current = operand if isinstance(operand, str) else str(operand)
-            value_input = Input(value=current, id=f"detail-value-{i}")
-            self._edit_value_inputs.append(value_input)
-            self._edit_lo_inputs.append(None)
-            self._edit_hi_inputs.append(None)
-            edit_row = Horizontal(
-                Label(
-                    f"{label} ({check.expect.operator}):", classes="edit-label"
-                ),
-                Horizontal(value_input, classes="edit-value"),
-                Horizontal(
-                    Button("Save", id=f"detail-save-{i}"), classes="edit-save"
-                ),
-                Button("Delete", id=f"detail-delete-{i}"),
-            )
-
-        return [edit_row, confirm_row]
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id or ""
-        if button_id == _RUN_OBJECT_BUTTON_ID:
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == _RUN_OBJECT_BUTTON_ID:
             self.action_run_object()
-        elif button_id.startswith("detail-save-"):
-            await self._save_edit(int(button_id.removeprefix("detail-save-")))
-        elif button_id.startswith("detail-delete-"):
-            self._arm_delete(int(button_id.removeprefix("detail-delete-")))
-        elif button_id.startswith("detail-confirm-"):
-            await self._confirm_delete(
-                int(button_id.removeprefix("detail-confirm-"))
-            )
-        elif button_id.startswith("detail-cancel-"):
-            self._cancel_delete(int(button_id.removeprefix("detail-cancel-")))
-
-    def _arm_delete(self, i: int) -> None:
-        """First press of Delete: reveal the confirm/cancel row rather than
-        deleting outright -- a stray click must never remove a check."""
-        self.query_one(f"#detail-confirm-row-{i}", Horizontal).display = True
-
-    def _cancel_delete(self, i: int) -> None:
-        self.query_one(f"#detail-confirm-row-{i}", Horizontal).display = False
-
-    async def _confirm_delete(self, i: int) -> None:
-        check = self._edit_checks[i]
-        cid = check_id(check)
-        try:
-            remove_check(self._config_path, cid)
-        except ValueError as exc:
-            self.notify(str(exc), severity="error")
-            return
-        self._config_changed = True
-        self.notify(f"deleted {check_label(check)}")
-        await self._reload_and_refresh()
-
-    def _parse_scalar_edit(
-        self, check: Check, raw_value: str
-    ) -> tuple[dict | None, str | None]:
-        """Parse a single-scalar Input's text into a new ``expect:`` dict
-        for ``check``, preserving its operator -- only the value beside it
-        is editable. Mirrors
-        :meth:`~dbfresh.tui.configure.ConfigureScreen._save_existing`."""
-        assert check.expect is not None
-        raw_value = raw_value.strip()
-        if check.metric == "freshness":
-            try:
-                parse_duration(raw_value)
-            except ValueError as exc:
-                return None, f"invalid max lag: {exc}"
-            return {check.expect.operator: raw_value}, None
-        try:
-            value = float(raw_value)
-        except ValueError:
-            return None, f"not a number: {raw_value!r}"
-        return {check.expect.operator: value}, None
-
-    def _parse_between_edit(
-        self, raw_lo: str, raw_hi: str
-    ) -> tuple[dict | None, str | None]:
-        """Parse a between row's two Inputs into a new ``{between: [lo,
-        hi]}`` dict -- both sides must parse as numbers, and lo must not
-        exceed hi (mirrors :meth:`~dbfresh.checks.Expectation.evaluate`'s
-        own ``lo <= value <= hi`` reading of the pair)."""
-        try:
-            lo = float(raw_lo.strip())
-            hi = float(raw_hi.strip())
-        except ValueError:
-            return (
-                None,
-                f"between requires two numbers, got {raw_lo!r} and {raw_hi!r}",
-            )
-        if lo > hi:
-            return None, f"between requires lo <= hi, got [{lo}, {hi}]"
-        return {"between": [lo, hi]}, None
-
-    def _parse_vs_previous_ratio_edit(
-        self, check: Check, raw_lo: str, raw_hi: str
-    ) -> tuple[dict | None, str | None]:
-        """Parse a vs_previous ratio row's two Inputs into a new
-        ``{vs_previous: {...}}`` dict -- only ``min_ratio``/``max_ratio``
-        are editable here, so every other operand key (``baseline``, the
-        delta guard, ``on_missing``) is carried over from ``check.expect``
-        unchanged. A guard that's unset stays out of the emitted mapping,
-        matching how :func:`~dbfresh.checks._parse_vs_previous` itself
-        never writes a null guard back out."""
-        assert check.expect is not None
-        try:
-            min_ratio = float(raw_lo.strip())
-            max_ratio = float(raw_hi.strip())
-        except ValueError:
-            return (
-                None,
-                f"ratio requires two numbers, got {raw_lo!r} and {raw_hi!r}",
-            )
-        if min_ratio > max_ratio:
-            return (
-                None,
-                f"ratio requires min <= max, got [{min_ratio}, {max_ratio}]",
-            )
-        operand = dict(check.expect.operand)
-        operand["min_ratio"] = min_ratio
-        operand["max_ratio"] = max_ratio
-        operand = {k: v for k, v in operand.items() if v is not None}
-        return {"vs_previous": operand}, None
-
-    async def _save_edit(self, i: int) -> None:
-        check = self._edit_checks[i]
-        assert check.expect is not None
-
-        lo_input = self._edit_lo_inputs[i]
-        hi_input = self._edit_hi_inputs[i]
-        if check.expect.operator == "vs_previous":
-            assert lo_input is not None and hi_input is not None
-            new_expect, error = self._parse_vs_previous_ratio_edit(
-                check, lo_input.value, hi_input.value
-            )
-        elif lo_input is not None and hi_input is not None:
-            new_expect, error = self._parse_between_edit(
-                lo_input.value, hi_input.value
-            )
-        else:
-            value_input = self._edit_value_inputs[i]
-            assert value_input is not None
-            new_expect, error = self._parse_scalar_edit(
-                check, value_input.value
-            )
-        if error is not None:
-            self.notify(error, title="Invalid check value", severity="error")
-            return
-        assert new_expect is not None
-
-        cid = check_id(check)
-        target = find_check_file(self._config_path, cid)
-        if target is None:
-            self.notify(
-                f"could not locate check {cid} on disk", severity="error"
-            )
-            return
-        rewrite_check_expectation(target, cid, new_expect)
-        self._config_changed = True
-        self.notify(f"saved {check_label(check)}")
-        await self._reload_and_refresh()
-
-    async def _reload_and_refresh(self) -> None:
-        """Reload config into the running app after a write this screen just
-        made -- so an immediate scoped run (the 'Run these checks' affordance)
-        uses the new values, not the stale in-memory config -- then re-render
-        this screen's grid and edit panel from it."""
-        from dbfresh.tui.app import DbfreshApp
-
-        app = self.app
-        assert isinstance(app, DbfreshApp)
-        reloaded = app.reload_config_from_disk()
-        if reloaded is None:  # reload failed; app surfaced the toast
-            return
-        self._config = reloaded
-        self.refresh_grid()
-        await self._mount_edit_checks()
 
     def action_dismiss_screen(self) -> None:
-        self.dismiss(self._config_changed)
+        self.dismiss()
 
 
 _PRUNE_WORKER_GROUP = "store-prune"
@@ -1150,8 +819,8 @@ class StoreScreen(Screen):
     the store's path, on-disk size, observation/run counts, and its
     configured ``retain_days`` (display only -- editing retention is out of
     scope here, see ``dbfresh.config.StoreConfig``), plus a "Prune now"
-    button gated behind the same two-press confirm
-    :class:`ObjectDetailScreen`'s delete-check uses.
+    button gated behind a two-press confirm -- a stray click must never
+    drop observations.
 
     The prune itself runs on a worker thread against a *fresh* short-lived
     :class:`~dbfresh.store.Store` opened on ``store.path``, never on the
@@ -1208,8 +877,8 @@ class StoreScreen(Screen):
 
     def _arm_prune(self) -> None:
         """First press of "Prune now": reveal the confirm/cancel row rather
-        than pruning outright -- a stray click must never drop observations
-        (mirrors ``ObjectDetailScreen``'s delete-check confirm)."""
+        than pruning outright -- a stray click must never drop
+        observations."""
         self.query_one("#store-prune-confirm-row", Horizontal).display = True
 
     def _cancel_prune(self) -> None:

@@ -35,6 +35,7 @@ from dbfresh.configurator import (
     probe_new_source,
     propose_checks,
     referenced_env_vars,
+    render_proposal,
 )
 from dbfresh.env_hygiene import committable_env_file
 from dbfresh.logsetup import configure_logging
@@ -474,43 +475,15 @@ def _select_source(
     return source_name, adapter, False, (type_, params)
 
 
-class _IndentedDumper(yaml.SafeDumper):
-    """A dumper that indents sequence items under their parent key.
-
-    PyYAML renders a sequence indentless by default, putting its items in
-    the parent key's own column. Items in that form cannot be pasted into
-    an existing ``checks:`` whose items are indented -- a sequence's items
-    must all share one indentation -- so the emitted proposal uses the
-    two-space item indent that ``config.example.yaml`` and the docs use.
-    """
-
-    def increase_indent(self, flow: bool = False, indentless: bool = False):
-        return super().increase_indent(flow, False)
-
-
 def _emit_proposal(
     source_entry: tuple[str, dict] | None, checks: list[dict]
 ) -> None:
-    """Print the proposal to stdout as one valid YAML document.
+    """Print :func:`~dbfresh.configurator.render_proposal`'s YAML to stdout.
 
-    Keyed by ``sources:`` / ``checks:`` rather than emitted as bare
-    entries: the two would otherwise concatenate into text that is not
-    YAML at all, and a document carrying its own keys is both a complete
-    starter config when there is no config file yet and, when there is,
-    a block whose entries sit at the indent they need under the matching
-    key. Nothing else is written to stdout, so what prints here is the
-    whole of what the user pastes.
+    Nothing else is written to stdout, so what prints here is the whole of
+    what the user pastes.
     """
-    document: dict[str, Any] = {}
-    if source_entry is not None:
-        name, entry = source_entry
-        document["sources"] = {name: entry}
-    if checks:
-        document["checks"] = checks
-    print(
-        yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False),
-        end="",
-    )
+    print(render_proposal(source_entry, checks), end="")
 
 
 def _add_command(args: argparse.Namespace) -> int:
@@ -682,10 +655,10 @@ def _ui_command(args: argparse.Namespace) -> int:
         # Unlike a config that exists but fails to parse/validate (still a
         # hard error above), a missing file just means a brand-new project:
         # start against an empty in-memory config rather than refusing to
-        # launch, so a first-time user can reach Configure and add a source
-        # (which writes config_path for the first time) without first
-        # hand-writing YAML. Mirrors `dbfresh add`, which already tolerates
-        # a missing config the same way.
+        # launch, so the dashboard still opens (with nothing configured
+        # yet) and Configure can propose checks against a source once one
+        # is hand-written into the file. Mirrors `dbfresh add`, which
+        # already tolerates a missing config the same way.
         config = Config(
             sources={}, checks=[], config_dir=config_path.resolve().parent
         )
