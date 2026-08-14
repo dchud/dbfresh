@@ -25,7 +25,10 @@ or tunes one check is a few reviewable lines, not a diff across a shared
 data structure. Splitting checks across included files (`include:`, one
 file per source or per domain) keeps ownership and review routing clear --
 the team that owns the warehouse config doesn't need to review changes to
-the lakehouse checks, and vice versa.
+the lakehouse checks, and vice versa. `dbfresh config validate` (see
+[Configuration reference](configuration.md#validating-a-config)) catches
+a malformed block, an unknown source reference, or a colliding `check_id`
+before the hand-edited block reaches review.
 
 ## History survives refactors
 
@@ -55,11 +58,11 @@ checks/
 .env                  # gitignored; the real values, per clone
 ```
 
-`dbfresh add` asks which included file should receive a newly proposed
-check whenever `include:` is configured; the TUI's Configure screen resolves
-the same choice automatically (the first included file, named in the
-proposal) rather than prompting for it. Either way, authoring checks
-doesn't require remembering the layout by hand -- see
+`dbfresh add` proposes a check bundle as YAML to paste into whichever
+file fits this layout -- the wizard doesn't write anywhere, so it doesn't
+need to know the layout either. A proposed check already defined
+somewhere in the composed config, root or included, is left out of the
+proposal rather than pasted a second time -- see
 [Authoring checks](authoring-checks.md).
 
 ## Onboarding a clone

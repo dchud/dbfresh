@@ -93,6 +93,25 @@ See [Environment & secrets](environment.md) for the field-by-field
 `${VAR}` reference per source type, and the copyable
 `config.example.yaml` / `.env.example` pair at the repo root.
 
+## Validating a config
+
+`dbfresh` never writes a config file; every check starts as YAML someone
+typed or pasted by hand. Before running checks, or after any hand edit,
+`dbfresh config validate` loads the config exactly as `run` would and
+reports every problem it finds -- rather than stopping at the first:
+
+```bash
+uv run dbfresh config validate -c config.yaml
+```
+
+```text
+config.yaml: no problems found
+```
+
+A clean config prints that one line and exits `0`. See
+[Configuration reference](configuration.md#validating-a-config) for the
+report format on a config with problems, and what it catches.
+
 ## First run
 
 Seed a table to check against (any means works; here's the sqlite adapter
@@ -214,4 +233,5 @@ given -- see [History & trends](history.md) for what that unlocks.
 - [Calendar & scheduling](calendar.md) to make expectations weekend- and
   holiday-aware.
 - [Authoring checks](authoring-checks.md) to generate a check bundle for a
-  table instead of writing YAML by hand (`dbfresh add`).
+  table to paste into config, instead of writing the YAML from scratch
+  (`dbfresh add`).

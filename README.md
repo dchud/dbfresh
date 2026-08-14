@@ -89,13 +89,16 @@ alert:
 
 ## Three surfaces, one engine
 
-- **Batch CLI** -- `dbfresh run` / `history` / `prune` / `add`: scheduler-driven
-  checks, observation history, retention enforcement, and check authoring.
+- **Batch CLI** -- `dbfresh run` / `history` / `prune` / `add` /
+  `config validate` / `env-template`: scheduler-driven checks, observation
+  history, retention enforcement, check authoring, config validation, and
+  an `.env` template of the secrets a config references.
 - **TUI** -- `dbfresh ui`: an interactive Textual dashboard over the same
   config, engine, and observation store as the CLI.
 - **Configurator** -- `dbfresh add` (also the TUI's Configure screen): a
-  metadata-driven wizard that introspects a source object and proposes a
-  check bundle instead of hand-written YAML.
+  metadata-driven wizard that introspects a source object and prints a
+  check bundle to paste into config, instead of writing the YAML from
+  scratch.
 
 ## More
 
