@@ -49,6 +49,22 @@ _CHECK_KEYS = frozenset(
     }
 )
 
+# A `tables:` entry's own fields -- deliberately a separate set from
+# _CHECK_KEYS rather than a union with it: a table entry and a check block
+# are different things that happen to nest one inside the other, and
+# keeping their key sets apart is what lets `description`/`tags`/
+# `upstream`/`downstream` (a later addition, entry-level metadata with no
+# check-block equivalent) get added to this set alone, without touching
+# what a flat check accepts.
+_TABLE_ENTRY_KEYS = frozenset({"source", "object", "checks"})
+
+# The two fields a table entry states once for every check nested under
+# it. A nested check repeating either is rejected outright rather than
+# silently allowed to override -- if a nested value could win, "the table
+# states it once" would stop being true, and a reader could no longer
+# trust the table header without checking every check under it.
+_TABLE_CHECK_OWN_FIELDS = frozenset({"source", "object"})
+
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -227,6 +243,104 @@ def _parse_freshness_source(raw: dict) -> str:
     return raw.get("freshness_source", "column")
 
 
+def _describe_table_entry(entry: dict) -> str:
+    """A short label for a ``tables:`` entry, used in problem messages.
+
+    Mirrors :func:`_describe_raw_check`'s ``source.object`` shape: a
+    table entry is identified by the same pair a check under it would be,
+    since that pair is exactly what the entry states once on the checks'
+    behalf.
+    """
+    return f"table {entry.get('source', '?')}.{entry.get('object', '?')}"
+
+
+def flatten_table_checks(tables: list[Any]) -> tuple[list[dict], list[str]]:
+    """Flatten ``tables:`` entries into raw check dicts carrying the
+    entry's ``source``/``object`` -- the raw-dict pass that runs before
+    :func:`_build_check` ever sees a check. Once flattened, a check that
+    came from ``tables:`` is a plain dict indistinguishable from one
+    written directly under a flat ``checks:`` list, so everything
+    downstream (``defaults:`` merging, expectation parsing, unknown-field
+    validation, calendar validation, ``check_id`` derivation, duplicate
+    detection) runs unchanged over the result -- this function is the
+    only place that needs to know ``tables:`` exists at all.
+
+    Deliberately a pure function, unaware of ``_load_config``'s
+    ``collect_all_errors`` switch: it always flattens everything it can
+    and returns every problem found as plain text, leaving "raise on the
+    first" vs. "collect all, attributed to a file" entirely to the
+    caller. That is also what lets
+    :func:`dbfresh.configurator._raw_checks_in` reuse this for dedup key
+    computation, where a malformed entry is not this function's problem
+    to report -- ``config validate`` already owns that -- so it just
+    flattens what it can and ignores the rest.
+
+    Returns the raw check dicts in document order (entries in the order
+    given, each entry's checks in their own order) and the problem
+    strings in the order found. A problem entry contributes no checks; a
+    problem check contributes no dict but does not block its siblings.
+    """
+    checks: list[dict] = []
+    problems: list[str] = []
+
+    for index, entry in enumerate(tables):
+        if not isinstance(entry, dict):
+            problems.append(
+                f"tables: entry {index} must be a mapping, got {entry!r}"
+            )
+            continue
+
+        label = _describe_table_entry(entry)
+        extra_keys = sorted(set(entry) - _TABLE_ENTRY_KEYS)
+        if extra_keys:
+            problems.append(f"{label}: unknown table field(s): {extra_keys}")
+
+        # Reported here, once, rather than left to _build_check. The
+        # entry states source and object on behalf of every check under
+        # it, so omitting one is a single table-level mistake -- letting
+        # it through would raise the same "missing required field" once
+        # per nested check, none of the copies naming the table that
+        # actually omitted it.
+        missing_fields = sorted(_TABLE_CHECK_OWN_FIELDS - set(entry))
+        if missing_fields:
+            problems.append(
+                f"{label}: table entry must set {missing_fields}; "
+                "it states them once for every check nested under it"
+            )
+            continue
+
+        nested_checks = entry.get("checks")
+        if nested_checks is None:
+            nested_checks = []
+        elif not isinstance(nested_checks, list):
+            problems.append(
+                f"{label}: 'checks' must be a list, got {nested_checks!r}"
+            )
+            nested_checks = []
+
+        for nested in nested_checks:
+            if not isinstance(nested, dict):
+                problems.append(
+                    f"{label}: check block must be a mapping, got {nested!r}"
+                )
+                continue
+            restated = sorted(set(nested) & _TABLE_CHECK_OWN_FIELDS)
+            if restated:
+                problems.append(
+                    f"{label}: nested check declares its own {restated}; "
+                    "the table already sets it for every check under it"
+                )
+                continue
+            expanded = dict(nested)
+            if "source" in entry:
+                expanded["source"] = entry["source"]
+            if "object" in entry:
+                expanded["object"] = entry["object"]
+            checks.append(expanded)
+
+    return checks, problems
+
+
 def _build_check(raw: dict, defaults: dict) -> Check:
     """Build one Check, merging ``defaults:`` fields the check itself omits.
 
@@ -320,41 +434,79 @@ def resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
     return sorted(matched, key=lambda p: p.as_posix())
 
 
-_INCLUDED_FILE_ALLOWED_KEY = "checks"
+_INCLUDED_FILE_ALLOWED_KEYS = frozenset({"checks", "tables"})
 
 
-def _load_included_checks(raw: Any, path: Path) -> list[dict]:
-    """Normalize an included file's parsed YAML into a list of check blocks.
+def _load_included_checks(
+    raw: Any, path: Path
+) -> tuple[list[dict], list[Any]]:
+    """Normalize an included file's parsed YAML into its flat ``checks:``
+    list and its ``tables:`` list, both unexpanded.
 
-    An included file contributes only checks: a bare sequence of check
-    blocks, or a mapping with a single ``checks:`` key. ``include:``,
-    ``sources:``, ``calendar:``, ``store:``, and ``defaults:`` may appear
-    only in the root config, so any other top-level key here is a
-    validation error.
+    An included file contributes checks two ways: a bare sequence of
+    check blocks (equivalent to ``checks:`` alone), or a mapping with
+    ``checks:`` and/or ``tables:``. ``include:``, ``sources:``,
+    ``calendar:``, ``store:``, and ``defaults:`` may appear only in the
+    root config, so any other top-level key here is a validation error.
+    Expansion of ``tables:`` happens later, uniformly for the root config
+    and every included file, in :func:`_collect_file_checks` -- this
+    function only validates the file's shape and hands back what it
+    declared.
     """
     if raw is None:
-        return []
+        return [], []
     if isinstance(raw, list):
-        return raw
+        return raw, []
     if isinstance(raw, dict):
-        extra = sorted(set(raw) - {_INCLUDED_FILE_ALLOWED_KEY})
+        extra = sorted(set(raw) - _INCLUDED_FILE_ALLOWED_KEYS)
         if extra:
             raise ValueError(
-                f"included file {path} may only declare a top-level "
-                f"'checks:' key; found disallowed key(s): {extra}"
+                f"included file {path} may only declare top-level "
+                f"'checks:' and 'tables:' keys; found disallowed key(s): {extra}"
             )
-        return raw.get("checks") or []
+        return list(raw.get("checks") or []), list(raw.get("tables") or [])
     raise ValueError(
-        f"included file {path} must be a checks list or a {{checks: [...]}} mapping"
+        f"included file {path} must be a checks list or a "
+        "{checks: [...], tables: [...]} mapping"
     )
 
 
 def _read_included_file(
     path: Path, env: dict[str, str] | None, missing: set[str] | None = None
-) -> list[dict]:
+) -> tuple[list[dict], list[Any]]:
     raw = yaml.safe_load(path.read_text())
     raw = interpolate_env(raw, env, missing)
     return _load_included_checks(raw, path)
+
+
+def _collect_file_checks(
+    flat: list[dict],
+    tables: list[Any],
+    file: Path,
+    collect_all_errors: bool,
+) -> tuple[list[dict], list[Path], list[ConfigProblem]]:
+    """One file's raw checks: the flat ``checks:`` list first, then
+    ``tables:`` entries flattened (via :func:`flatten_table_checks`) in
+    document order -- the deterministic per-file ordering
+    :func:`_load_config` composes across files, root first then each
+    included file in turn. Every check returned here is attributed to
+    ``file``, whichever list it came from.
+
+    Never raises itself, even when ``collect_all_errors`` is false: this
+    only assembles the raw check list, before ``_load_config`` has even
+    finished resolving every included file and checked for an undefined
+    ``${VAR}`` -- raising here would report a ``tables:`` problem ahead
+    of an undefined-variable problem that, by convention, is always
+    surfaced first. ``_load_config`` raises on the first collected
+    problem itself, once that point is reached, when not collecting.
+    """
+    table_checks, table_problem_texts = flatten_table_checks(tables)
+    problems = [
+        ConfigProblem(files=(file,), message=text)
+        for text in table_problem_texts
+    ]
+    raw = [*flat, *table_checks]
+    return raw, [file] * len(raw), problems
 
 
 def _load_config_or_raise(
@@ -871,8 +1023,20 @@ def _load_config(
     data = interpolate_env(data, env, root_missing)
     missing_by_file[path] = root_missing
 
-    raw_checks: list[dict] = list(data.get("checks") or [])
-    check_files: list[Path] = [path] * len(raw_checks)
+    # `problems` starts here rather than at the check-build loop below: a
+    # `tables:` entry can be malformed (an unknown table field, a nested
+    # check restating `source`/`object`) before a single Check is ever
+    # built from it, and `collect_all_errors` must see those problems too.
+    problems: list[ConfigProblem] = []
+
+    raw_checks, check_files, root_problems = _collect_file_checks(
+        list(data.get("checks") or []),
+        list(data.get("tables") or []),
+        path,
+        collect_all_errors,
+    )
+    problems.extend(root_problems)
+
     include_patterns = data.get("include")
     if include_patterns:
         if isinstance(include_patterns, list):
@@ -889,10 +1053,16 @@ def _load_config(
             ]
         for include_path in resolve_includes(config_dir, include_patterns):
             file_missing: set[str] = set()
-            included = _read_included_file(include_path, env, file_missing)
+            inc_flat, inc_tables = _read_included_file(
+                include_path, env, file_missing
+            )
             missing_by_file[include_path] = file_missing
-            raw_checks.extend(included)
-            check_files.extend([include_path] * len(included))
+            inc_checks, inc_files, inc_problems = _collect_file_checks(
+                inc_flat, inc_tables, include_path, collect_all_errors
+            )
+            raw_checks.extend(inc_checks)
+            check_files.extend(inc_files)
+            problems.extend(inc_problems)
 
     missing: set[str] = set().union(*missing_by_file.values())
 
@@ -903,6 +1073,15 @@ def _load_config(
             if len(missing) == 1
             else f"undefined environment variables: {names}"
         )
+
+    # A `tables:` problem found while assembling raw_checks above (an
+    # unknown table field, a nested check restating `source`/`object`, a
+    # malformed entry) is raised here -- after the undefined-variable
+    # check but before a single Check is built -- rather than inside
+    # _collect_file_checks itself, so an undefined ${VAR} is still always
+    # reported first regardless of what else is wrong with the config.
+    if not collect_all_errors and problems:
+        raise ValueError(problems[0].message)
 
     sources = {
         name: SourceConfig(
@@ -922,10 +1101,10 @@ def _load_config(
     # A check that fails to build is either fatal (the default, matching
     # `[_build_check(raw, defaults) for raw in raw_checks]`'s old
     # first-failure behavior exactly) or, when collecting, skipped and
-    # recorded as a ConfigProblem -- `checks`/`checks_raw`/`checks_files`
-    # then hold only the ones that built, kept in lockstep for
-    # _validate_checks's zip below.
-    problems: list[ConfigProblem] = []
+    # recorded as a ConfigProblem -- appended to the same `problems` list
+    # `_collect_file_checks` may have already started above -- while
+    # `checks`/`checks_raw`/`checks_files` then hold only the ones that
+    # built, kept in lockstep for _validate_checks's zip below.
     checks: list[Check] = []
     checks_raw: list[dict] = []
     checks_files: list[Path] = []
