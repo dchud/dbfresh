@@ -25,17 +25,16 @@ from dbfresh.config import (
     load_config_tolerant,
 )
 from dbfresh.configurator import (
-    add_source,
-    append_checks,
     build_offered_check,
     check_object_exists,
     key_introspection_note,
     offered_column_checks,
+    partition_new_checks,
     pick_timestamp_column,
     probe_connection,
     probe_new_source,
     propose_checks,
-    target_files,
+    referenced_env_vars,
 )
 from dbfresh.env_hygiene import committable_env_file
 from dbfresh.logsetup import configure_logging
@@ -161,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add = subcommands.add_parser(
         "add",
-        help="interactive check-authoring wizard",
+        help="propose checks for an object and print the YAML to paste",
         parents=[_verbosity_parent()],
     )
     add.add_argument("-c", "--config", default=None)
@@ -320,15 +319,40 @@ def _prune_command(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _say(message: str = "") -> None:
+    """Print one line of wizard narration to stderr.
+
+    Everything the wizard says -- prompts, warnings, proposals, guidance --
+    goes to stderr so stdout carries only the YAML the wizard emits, with
+    no prose interleaved through it or trailing it. Matches
+    ``env-template``, whose template lines are stdout and whose warning is
+    stderr.
+    """
+    print(message, file=sys.stderr)
+
+
+def _ask(prompt: str) -> str:
+    """Write ``prompt`` to stderr and read one line of input.
+
+    ``input(prompt)`` writes its prompt to stdout, which the emitted YAML
+    has to itself, so the prompt is printed separately and ``input`` is
+    called with nothing. The cost is that readline no longer knows the
+    prompt's width, so its cursor column can be off while editing a long
+    answer; the answer itself is read correctly either way.
+    """
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return input()
+
+
 def _prompt(msg: str, default: str = "") -> str:
     suffix = f" [{default}]" if default else ""
-    answer = input(f"{msg}{suffix}: ").strip()
+    answer = _ask(f"{msg}{suffix}: ").strip()
     return answer or default
 
 
 def _confirm(msg: str, default: bool = False) -> bool:
     hint = "Y/n" if default else "y/N"
-    answer = input(f"{msg} ({hint}): ").strip().lower()
+    answer = _ask(f"{msg} ({hint}): ").strip().lower()
     if not answer:
         return default
     return answer in ("y", "yes")
@@ -341,7 +365,7 @@ def _prompt_number(msg: str, default: str, cast: type) -> Any:
         try:
             return cast(raw)
         except ValueError:
-            print(f"    not a number: {raw!r}")
+            _say(f"    not a number: {raw!r}")
 
 
 def _prompt_index(msg: str, default: str, count: int) -> int:
@@ -350,7 +374,7 @@ def _prompt_index(msg: str, default: str, count: int) -> int:
         n = _prompt_number(msg, default, int)
         if 1 <= n <= count:
             return n - 1
-        print(f"    enter a number from 1 to {count}")
+        _say(f"    enter a number from 1 to {count}")
 
 
 def _prompt_offered_check(
@@ -394,16 +418,16 @@ def _select_source(
     the wizard to manual entry with unverified existence; ``aborted``
     is ``True`` only when the user declined to add an unreachable new
     source. ``new_source`` is ``(type_, params)`` when the user just defined
-    a brand-new source -- written to the config only once the rest of the
-    wizard confirms, never before the connection test. ``params`` may hold
+    a brand-new source -- emitted only once the rest of the wizard
+    confirms, never before the connection test. ``params`` may hold
     ``${VAR}`` tokens: the connection test resolves them, but the returned
-    (and eventually written) params stay literal so no secret lands in the
-    tracked YAML.
+    (and emitted) params stay literal so no secret reaches the YAML the
+    user pastes into a tracked file.
     """
 
     sources = config.sources if config else {}
     if sources:
-        print("Existing sources: " + ", ".join(sources))
+        _say("Existing sources: " + ", ".join(sources))
     source_name = _prompt("Source name")
 
     if source_name in sources:
@@ -412,45 +436,90 @@ def _select_source(
         if probe.ok:
             adapter = create_adapter(src.type, src.params, timeout=src.timeout)
             return source_name, adapter, False, None
-        print(f"warning: could not reach {source_name!r}: {probe.error}")
-        print("degrading to manual entry; existence will be unverified")
+        _say(f"warning: could not reach {source_name!r}: {probe.error}")
+        _say("degrading to manual entry; existence will be unverified")
         return source_name, None, False, None
 
-    print(f"{source_name!r} is a new source.")
+    _say(f"{source_name!r} is a new source.")
     types = supported_types()
-    print("Supported source types:")
+    _say("Supported source types:")
     for i, type_name in enumerate(types, 1):
-        print(f"  {i}. {type_name}")
+        _say(f"  {i}. {type_name}")
     type_ = types[_prompt_index("Source type (number)", "1", len(types))]
     params: dict = {}
-    print("Enter connection params as key=value (blank line to finish):")
-    print("  tip: use key=${VAR} for secrets to keep them out of the YAML")
+    _say("Enter connection params as key=value (blank line to finish):")
+    _say("  tip: use key=${VAR} for secrets to keep them out of the YAML")
     while True:
-        line = input("  ").strip()
+        line = _ask("  ").strip()
         if not line:
             break
         key, _sep, value = line.partition("=")
         key = key.strip()
         value = value.strip()
         if _looks_like_secret_key(key) and "${" not in value:
-            print(
+            _say(
                 f"    hint: consider {key}=${{VAR}} instead of a literal value"
             )
         params[key] = value
 
     probe, resolved_params = probe_new_source(type_, params)
     if not probe.ok:
-        print(f"connection test failed: {probe.error}")
+        _say(f"connection test failed: {probe.error}")
         if not _confirm("Add this source anyway (unverified)?"):
             return source_name, None, True, None
         return source_name, None, False, (type_, params)
 
-    print("connection test passed")
+    _say("connection test passed")
     adapter = create_adapter(type_, resolved_params)
     return source_name, adapter, False, (type_, params)
 
 
+class _IndentedDumper(yaml.SafeDumper):
+    """A dumper that indents sequence items under their parent key.
+
+    PyYAML renders a sequence indentless by default, putting its items in
+    the parent key's own column. Items in that form cannot be pasted into
+    an existing ``checks:`` whose items are indented -- a sequence's items
+    must all share one indentation -- so the emitted proposal uses the
+    two-space item indent that ``config.example.yaml`` and the docs use.
+    """
+
+    def increase_indent(self, flow: bool = False, indentless: bool = False):
+        return super().increase_indent(flow, False)
+
+
+def _emit_proposal(
+    source_entry: tuple[str, dict] | None, checks: list[dict]
+) -> None:
+    """Print the proposal to stdout as one valid YAML document.
+
+    Keyed by ``sources:`` / ``checks:`` rather than emitted as bare
+    entries: the two would otherwise concatenate into text that is not
+    YAML at all, and a document carrying its own keys is both a complete
+    starter config when there is no config file yet and, when there is,
+    a block whose entries sit at the indent they need under the matching
+    key. Nothing else is written to stdout, so what prints here is the
+    whole of what the user pastes.
+    """
+    document: dict[str, Any] = {}
+    if source_entry is not None:
+        name, entry = source_entry
+        document["sources"] = {name: entry}
+    if checks:
+        document["checks"] = checks
+    print(
+        yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False),
+        end="",
+    )
+
+
 def _add_command(args: argparse.Namespace) -> int:
+    """Propose checks for an object and print them as YAML to paste.
+
+    Emits rather than writes: dbfresh reads config, it never edits it, so
+    the wizard's product is a YAML block on stdout and the user decides
+    where it lands.
+    """
 
     config_path = Path(args.config)
     try:
@@ -461,7 +530,7 @@ def _add_command(args: argparse.Namespace) -> int:
 
     source_name, adapter, aborted, new_source = _select_source(config)
     if aborted:
-        print("aborted")
+        _say("aborted")
         return 1
 
     try:
@@ -469,11 +538,11 @@ def _add_command(args: argparse.Namespace) -> int:
         existence = check_object_exists(adapter, object_name)
         info = existence.info
         if not existence.verified:
-            print("existence unverified (source unreachable)")
+            _say("existence unverified (source unreachable)")
             if not _confirm("Continue with manual entry?"):
                 return 1
         elif not existence.exists:
-            print(f"warning: {object_name!r} not found: {existence.error}")
+            _say(f"warning: {object_name!r} not found: {existence.error}")
             if not _confirm("Add checks for it anyway?"):
                 return 1
 
@@ -485,7 +554,7 @@ def _add_command(args: argparse.Namespace) -> int:
             timestamp_override = None
             timestamp = pick_timestamp_column(info.columns)
             if timestamp.needs_choice:
-                print(
+                _say(
                     "Ambiguous freshness timestamp candidates: "
                     + ", ".join(timestamp.candidates)
                 )
@@ -495,7 +564,7 @@ def _add_command(args: argparse.Namespace) -> int:
                 if choice in timestamp.candidates:
                     timestamp_override = choice
                 elif choice:
-                    print(f"warning: {choice!r} is not a candidate; skipping")
+                    _say(f"warning: {choice!r} is not a candidate; skipping")
 
             bundle = propose_checks(
                 source_name,
@@ -508,10 +577,10 @@ def _add_command(args: argparse.Namespace) -> int:
             )
             note = key_introspection_note(adapter.dialect, info)
             if note is not None:
-                print(note)
-            print(f"Proposed {len(bundle)} check(s):")
+                _say(note)
+            _say(f"Proposed {len(bundle)} check(s):")
             for block in bundle:
-                print(f"  - {block}")
+                _say(f"  - {block}")
             if _confirm("Accept the full proposed bundle?", default=True):
                 proposed = list(bundle)
             else:
@@ -522,7 +591,7 @@ def _add_command(args: argparse.Namespace) -> int:
             for offer in offered_column_checks(info.columns, bundle):
                 if not offer["checks"]:
                     continue
-                print(
+                _say(
                     f"Offered for {offer['column']} ({offer['category']}): "
                     + ", ".join(offer["checks"])
                 )
@@ -542,37 +611,49 @@ def _add_command(args: argparse.Namespace) -> int:
                         )
                     )
         else:
-            print(
+            _say(
                 "no metadata available; add checks manually by editing the YAML"
             )
     finally:
         if adapter is not None:
             adapter.close()
 
+    source_entry = None
     if new_source is not None:
-        add_source(config_path, source_name, *new_source)
-        print(f"added source {source_name!r} to {config_path}")
+        type_, params = new_source
+        source_entry = (source_name, {"type": type_, **params})
 
-    if not proposed:
-        print("nothing to write")
+    new_checks: list[dict] = []
+    if proposed:
+        new_checks, already_defined = partition_new_checks(
+            config_path, proposed
+        )
+        for block in already_defined:
+            _say(f"already defined, not proposed again: {block}")
+
+    if source_entry is None and not new_checks:
+        _say("nothing to add")
         return 0
 
-    files = (
-        target_files(config_path) if config_path.exists() else [config_path]
-    )
-    if len(files) > 1:
-        print("Included checks files:")
-        for i, f in enumerate(files, 1):
-            print(f"  {i}. {f}")
-        idx = _prompt_index("Write to which file (number)", "1", len(files))
-        target = files[idx]
-    else:
-        target = files[0] if files else config_path
+    if source_entry is not None:
+        names = referenced_env_vars(source_entry[1])
+        if names:
+            _say("Set these environment variables before running checks:")
+            for name in names:
+                _say(f"  {name}")
+            _say(
+                "`dbfresh env-template` regenerates that list once the source "
+                "is in the config."
+            )
 
-    written, skipped = append_checks(target, proposed, config_path=config_path)
-    print(f"wrote {written} check(s) to {target}")
-    for block in skipped:
-        print(f"  skipped duplicate check: {block}")
+    if config_path.exists():
+        _say(f"Merge this into {config_path}, under the matching keys:")
+    else:
+        _say(
+            f"{config_path} does not exist yet; this is a config to start it:"
+        )
+    _say()
+    _emit_proposal(source_entry, new_checks)
     return 0
 
 
