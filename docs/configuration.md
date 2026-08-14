@@ -270,3 +270,49 @@ unreadable file, invalid YAML, or an `include:` glob matching no files --
 can't be collected past; it still raises immediately and prints as a
 single `config error: ...` line on stderr, exactly as every other
 config-reading command reports it, with the same exit code (`3`).
+
+## Migrating a file to `tables:`
+
+```bash
+dbfresh config migrate [-c config.yaml]
+```
+
+Converting an existing flat `checks:` list into `tables:` entries by hand
+is mechanical. `config migrate` does it for one file: it groups every
+check the file defines -- both a flat `checks:` list and any existing
+`tables:` entries -- into one `tables:` block, one entry per distinct
+`source:`/`object:` pair, and prints that block to stdout. Nothing else
+prints there, so it can be redirected straight into a file. Replace the
+file's `checks:` and `tables:` with what was printed; every other section
+(`sources:`, `store:`, `calendar:`, `defaults:`, `include:`, and every
+comment attached to them) is untouched, because migrate never renders
+them.
+
+Entries come out in the order their pair first appears in the file, and a
+pair's own checks keep their original relative order. Every field on
+every check is preserved verbatim -- `id:`, `by_weekday:`, `on_holiday:`,
+`where:`, `severity:`, `freshness_source:`, anything else -- minus the
+`source:`/`object:` that move up to the entry. Restructuring a config
+this way never changes a check's `check_id` (see `check_id` and
+identity, above), so it never orphans a stored observation.
+
+Comments attached to the individual checks being regrouped are not
+carried over -- the block is re-rendered from parsed data, not copied
+text. Comments elsewhere in the file are untouched, since migrate never
+renders those parts.
+
+`config migrate` operates on the one file `-c` resolves to, never the
+composed config: a config using `include:` keeps checks spread across
+files on purpose, and collapsing them into one block would destroy that
+layout. When the target file declares `include:`, migrate reports that
+on stderr and names each included file, which needs its own run:
+
+```text
+config.yaml declares include:; each included file needs its own
+`dbfresh config migrate -c <file>` run:
+  checks/a.yaml
+  checks/b.yaml
+```
+
+A file whose checks are already fully grouped, or a file with no checks
+at all, prints one line on stderr saying so and emits nothing.

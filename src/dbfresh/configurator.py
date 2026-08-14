@@ -392,6 +392,73 @@ class _IndentedDumper(yaml.SafeDumper):
         return super().increase_indent(flow, False)
 
 
+class _FlowMap(dict):
+    """A mapping rendered inline, as ``{ key: value }``."""
+
+
+class _FlowSeq(list):
+    """A sequence rendered inline, as ``[a, b]``."""
+
+
+_IndentedDumper.add_representer(
+    _FlowMap,
+    lambda dumper, data: dumper.represent_mapping(
+        "tag:yaml.org,2002:map", data, flow_style=True
+    ),
+)
+_IndentedDumper.add_representer(
+    _FlowSeq,
+    lambda dumper, data: dumper.represent_sequence(
+        "tag:yaml.org,2002:seq", data, flow_style=True
+    ),
+)
+
+# The check fields whose values are rendered inline. An expectation is
+# one short operator/operand pair, and `config.example.yaml` and the docs
+# write every one of them as `expect: { max: 5 }`. Block style would
+# spread that over two lines, and `expect: { between: [a, b] }` over
+# four, which is how a config re-rendered wholesale can come back longer
+# than it went in -- enough to cancel what grouping saves.
+_INLINE_CHECK_FIELDS = frozenset({"expect", "on_holiday"})
+
+
+def _inline(value: Any) -> Any:
+    """Mark ``value`` and everything under it for inline rendering."""
+    if isinstance(value, dict):
+        return _FlowMap({key: _inline(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return _FlowSeq([_inline(item) for item in value])
+    return value
+
+
+def inline_check_expectations(check: dict) -> dict:
+    """A copy of ``check`` whose expectation fields render inline.
+
+    ``by_weekday:`` is handled one level down: the day names stay on
+    their own lines, each day's expectation inline beside it, which is
+    the shape the example config uses.
+    """
+    rendered: dict[str, Any] = {}
+    for key, value in check.items():
+        if key in _INLINE_CHECK_FIELDS:
+            rendered[key] = _inline(value)
+        elif key == "by_weekday" and isinstance(value, dict):
+            rendered[key] = {day: _inline(item) for day, item in value.items()}
+        else:
+            rendered[key] = value
+    return rendered
+
+
+def _dump_document(document: dict[str, Any]) -> str:
+    """Render one YAML document with :class:`_IndentedDumper`'s two-space
+    sequence indent -- the single YAML-serialization call every emitted
+    proposal goes through, so a pasted block's indentation always matches
+    ``config.example.yaml`` and the docs regardless of which command
+    produced it.
+    """
+    return yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False)
+
+
 def render_proposal(
     source_entry: tuple[str, dict] | None, checks: list[dict]
 ) -> str:
@@ -411,8 +478,30 @@ def render_proposal(
         name, entry = source_entry
         document["sources"] = {name: entry}
     if checks:
-        document["checks"] = checks
-    return yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False)
+        document["checks"] = [inline_check_expectations(c) for c in checks]
+    return _dump_document(document)
+
+
+def render_tables_proposal(tables: list[dict]) -> str:
+    """Render a ``tables:`` block alone, in the same style
+    :func:`render_proposal` uses for ``sources:``/``checks:``.
+
+    The sole caller is ``dbfresh config migrate``: it emits only the
+    ``tables:`` block a file's checks fold into, never a full document,
+    since every other section of the file stays exactly as the user wrote
+    it.
+    """
+    rendered = [
+        {
+            **entry,
+            "checks": [
+                inline_check_expectations(check)
+                for check in entry.get("checks", [])
+            ],
+        }
+        for entry in tables
+    ]
+    return _dump_document({"tables": rendered})
 
 
 @dataclass(frozen=True)
