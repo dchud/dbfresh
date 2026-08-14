@@ -19,10 +19,12 @@ from dbfresh.adapters.factory import create_adapter, supported_types
 from dbfresh.config import (
     Config,
     ConfigError,
+    ConfigValidation,
     StoreConfig,
     collect_referenced_env_vars,
     load_config,
     load_config_tolerant,
+    validate_config,
 )
 from dbfresh.configurator import (
     build_offered_check,
@@ -172,6 +174,35 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[_verbosity_parent()],
     )
     env_template.add_argument("-c", "--config", default=None)
+
+    config_cmd = subcommands.add_parser(
+        "config",
+        help="inspect and validate configuration",
+        parents=[_verbosity_parent()],
+    )
+    # -c/--config here is unused by the bare `config` group itself (it
+    # only prints help) -- it exists so `args.config` is always defined
+    # once `_CONFIG_READING_COMMANDS` triggers config discovery / .env
+    # loading, which is keyed on the top-level command ("config") and
+    # fires whether or not a subcommand was given.
+    config_cmd.add_argument("-c", "--config", default=None)
+    # `config` with no subcommand prints this parser's own help rather
+    # than the top-level one -- stashed via set_defaults (the public,
+    # documented way to thread a value through subparser dispatch) so
+    # _config_command doesn't need to re-declare the subcommand list to
+    # find it.
+    config_cmd.set_defaults(_config_group_parser=config_cmd)
+    # A group parser holding subcommands of its own: `validate` today,
+    # with `migrate` planned as a sibling -- adding it later is another
+    # `add_parser` call here, not a restructure.
+    config_subcommands = config_cmd.add_subparsers(dest="config_command")
+
+    config_validate = config_subcommands.add_parser(
+        "validate",
+        help="load the config and report every problem found",
+        parents=[_verbosity_parent()],
+    )
+    config_validate.add_argument("-c", "--config", default=None)
 
     ui = subcommands.add_parser(
         "ui",
@@ -692,8 +723,72 @@ def _env_template_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_config_validation(result: ConfigValidation) -> str:
+    """Every problem :func:`~dbfresh.config.validate_config` found,
+    grouped by the file it belongs to with a per-file count, or one line
+    saying the config is clean.
+
+    A problem attributed to more than one file (a duplicate ``check_id``
+    spanning two files) is listed once under each -- the total above the
+    groups counts distinct problems, not listings, so it can be lower
+    than the sum of the per-file counts. When it is, the header says so:
+    a reader who counts the lines and gets a bigger number than the total
+    is otherwise looking at what reads as an arithmetic error.
+    """
+    if not result.problems:
+        return f"{result.path}: no problems found\n"
+
+    config_dir = result.config.config_dir
+    by_file: dict[Path, list[str]] = {}
+    for problem in result.problems:
+        for file in problem.files:
+            by_file.setdefault(file, []).append(problem.message)
+
+    total = len(result.problems)
+    listings = sum(len(messages) for messages in by_file.values())
+    header = (
+        f"{total} problem{'' if total == 1 else 's'} found in "
+        f"{len(by_file)} file{'' if len(by_file) == 1 else 's'}"
+    )
+    header += (
+        ". A problem involving two files is listed under each."
+        if listings > total
+        else ":"
+    )
+    lines = [header]
+    for file in sorted(by_file, key=lambda p: p.as_posix()):
+        try:
+            label = file.resolve().relative_to(config_dir).as_posix()
+        except ValueError:
+            label = str(file)
+        messages = by_file[file]
+        lines.append("")
+        count = len(messages)
+        lines.append(f"{label} ({count} problem{'' if count == 1 else 's'}):")
+        lines.extend(f"  - {message}" for message in messages)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _config_validate_command(args: argparse.Namespace) -> int:
+    config_path = Path(args.config)
+    try:
+        result = validate_config(config_path)
+    except (ConfigError, OSError, yaml.YAMLError) as exc:
+        return _report_config_error(exc)
+    print(_render_config_validation(result), end="")
+    return 0 if result.ok else _CONFIG_ERROR_EXIT
+
+
+def _config_command(args: argparse.Namespace) -> int:
+    if args.config_command == "validate":
+        return _config_validate_command(args)
+    args._config_group_parser.print_help()
+    return 0
+
+
 _CONFIG_READING_COMMANDS = frozenset(
-    {"run", "history", "prune", "add", "ui", "env-template"}
+    {"run", "history", "prune", "add", "ui", "env-template", "config"}
 )
 
 _DEFAULT_CONFIG_FILENAME = "config.yaml"
@@ -804,6 +899,8 @@ def _dispatch(
         return _ui_command(args)
     if args.command == "env-template":
         return _env_template_command(args)
+    if args.command == "config":
+        return _config_command(args)
     parser.print_help()
     return 0
 
