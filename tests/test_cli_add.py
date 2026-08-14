@@ -186,6 +186,56 @@ def test_add_wizard_dedupes_against_included_files_not_just_the_root_config(
     assert _emitted(capsys) == {}
 
 
+def test_add_wizard_dedupes_against_checks_already_defined_under_tables(
+    tmp_path, monkeypatch, capsys
+):
+    # A check already defined under a tables: entry must count as already
+    # defined too -- partition_new_checks's dedup (via
+    # configurator._raw_checks_in) has to see checks nested under tables:,
+    # not only the flat checks: list, or a second `add` run would
+    # re-propose everything the first run already found.
+    from dbfresh.config import load_config
+
+    db = tmp_path / "data.db"
+    sqlite_table(db)
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n')
+
+    def _run():
+        answers = iter(["s", "fct", "y", "", "", ""])
+        monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
+        return main(["add", "-c", str(cfg)])
+
+    assert _run() == 0
+    first = _emitted(capsys)
+    assert first["checks"]
+
+    grouped = {
+        "tables": [
+            {
+                "source": "s",
+                "object": "fct",
+                "checks": [
+                    {
+                        k: v
+                        for k, v in check.items()
+                        if k not in ("source", "object")
+                    }
+                    for check in first["checks"]
+                ],
+            }
+        ]
+    }
+    cfg.write_text(cfg.read_text() + yaml.safe_dump(grouped))
+    config = load_config(cfg)  # the pasted grouped block is loadable
+    assert len(config.checks) == len(first["checks"])
+
+    assert _run() == 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "nothing to add" in captured.err
+
+
 def test_add_wizard_reports_already_defined_checks_on_stderr(
     tmp_path, monkeypatch, capsys
 ):

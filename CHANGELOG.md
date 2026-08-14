@@ -9,6 +9,9 @@ once releases are tagged.
 
 ### Added
 
+- A `tables:` block groups checks that share a `source:` and `object:`,
+  stating both once instead of repeating them on every check. Coexists
+  with the flat `checks:` list; both forms produce identical `check_id`s.
 - `dbfresh env-template` prints an `.env` template listing the `${VAR}`
   secrets a config references, for seeding a committed `.env.example`.
 - Databricks sources can authenticate as a service principal (OAuth M2M)

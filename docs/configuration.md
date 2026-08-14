@@ -31,35 +31,33 @@ sources:
 defaults: # merged into every check when absent; supports
   severity: error #   severity, calendar, where, allow_empty, skip_off_schedule
 
+# tables: groups checks that share a source/object, stating both once
+# instead of repeating them on every check nested under the entry.
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    checks:
+      - id: sales_amount_nonneg # optional stable id
+        assert: "amount >= 0"
+
+      - metric: schema # table-level shape check
+        expect: { unchanged: true } # fail if columns/types drift from last run
+
+      - metric: row_count
+        expect: { between: [10000, 500000] }
+        by_weekday:
+          mon: { between: [0, 500000] }
+          sat: { max: 100 }
+          sun: { max: 100 }
+        on_holiday: { max: 100 }
+
+      - metric: freshness
+        column: modified_at
+        freshness_source: column # or describe_history / describe_detail (Databricks tables)
+        expect: { max_lag: 26h }
+        calendar: business
+
 checks:
-  - source: warehouse
-    object: dbo.fct_sales
-    id: sales_amount_nonneg # optional stable id
-    assert: "amount >= 0"
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: schema # table-level shape check
-    expect: { unchanged: true } # fail if columns/types drift from last run
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: row_count
-    expect: { between: [10000, 500000] }
-    by_weekday:
-      mon: { between: [0, 500000] }
-      sat: { max: 100 }
-      sun: { max: 100 }
-    on_holiday: { max: 100 }
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: freshness
-    column: modified_at
-    freshness_source: column # or describe_history / describe_detail (Databricks tables)
-    expect: { max_lag: 26h }
-    calendar: business
-
   - source: lakehouse
     object: main.gold.customer_360
     metric: null_rate
@@ -90,6 +88,7 @@ checks:
 | `sources` | root only | named source connections |
 | `defaults` | root only | fields merged into checks that omit them |
 | `checks` | root + included | the check list |
+| `tables` | root + included | checks grouped by shared source/object (see Grouping checks under tables) |
 
 A per-check value always overrides the corresponding `defaults:` entry,
 including an explicit falsy value (`allow_empty: false` on a check wins over
@@ -150,9 +149,9 @@ files:
   carries no semantics, since checks are independent of each other.
 - Only the root config may declare `include:`, `sources:`, `calendar:`,
   `store:`, and `defaults:`. An included file contributes only checks:
-  either a mapping with a single `checks:` key, or a bare YAML sequence of
-  check blocks. Any other top-level key in an included file is a validation
-  error.
+  either a mapping with `checks:` and/or `tables:`, or a bare YAML
+  sequence of check blocks. Any other top-level key in an included file
+  is a validation error.
 - The composed check list (root plus every included file) is validated as
   one unit: a duplicate `check_id` anywhere across the files -- explicit or
   derived -- is a validation error, since it would make observation history
@@ -187,6 +186,39 @@ editing `expect: {max: 500000}` to `expect: {max: 600000}` on the same
 check keeps its trend intact. Two checks that resolve to the same identity
 anywhere in the composed config is a validation error; give one of them an
 explicit `id:` to disambiguate an intentional duplicate.
+
+## Grouping checks under `tables:`
+
+Checks that share a `source:` and `object:` can be grouped under a
+`tables:` entry instead of repeating both on every check:
+
+```yaml
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: row_count
+        expect: { between: [10000, 500000] }
+      - assert: "amount >= 0"
+```
+
+Each block under `checks:` there is exactly the check block it would be
+under a flat `checks:` list, minus `source:` and `object:` -- a nested
+check declaring either of those itself is a validation error, naming the
+table entry, since the entry already states them once for every check
+under it. A table entry with no `checks:` at all is valid and
+contributes nothing.
+
+`tables:` and a flat `checks:` list may coexist in the same file, in the
+same config, or split across root and included files -- `tables:` is
+allowed anywhere `checks:` is, root or included. A grouped check is
+otherwise indistinguishable from a flat one: `defaults:` merging,
+`check_id` derivation, and every validation rule apply exactly the same
+way. Restructuring an existing flat config under `tables:` never changes
+a check's `check_id` (see `check_id` and identity, above), so it never
+orphans a stored observation.
 
 ## Validating a config
 

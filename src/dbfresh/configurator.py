@@ -27,7 +27,11 @@ from dbfresh.adapters.base import (
 )
 from dbfresh.adapters.factory import create_adapter
 from dbfresh.checks import Check, check_id
-from dbfresh.config import interpolate_env, resolve_includes
+from dbfresh.config import (
+    flatten_table_checks,
+    interpolate_env,
+    resolve_includes,
+)
 
 _ROW_COUNT_MIN_RATIO = 0.5
 _ROW_COUNT_MAX_RATIO = 2.0
@@ -543,15 +547,27 @@ def check_bearing_files(config_path: str | Path) -> list[Path]:
 
 
 def _raw_checks_in(path: Path) -> list[dict]:
-    """The raw check blocks in one config or included-checks file."""
+    """The raw check blocks in one config or included-checks file --
+    flat ``checks:`` entries plus every check nested under ``tables:``,
+    flattened via :func:`~dbfresh.config.flatten_table_checks` so a check
+    defined either way counts as already-defined the same way. Whether a
+    flattened entry is well-formed is ``config validate``'s job, not
+    this dedup pass's: a problem it finds is simply discarded here,
+    since a raw dict that couldn't be flattened can't collide with
+    anything anyway.
+    """
     if not path.exists():
         return []
     raw = yaml.safe_load(path.read_text())
     if raw is None:
         return []
     if isinstance(raw, list):
-        return raw
-    return list(raw.get("checks") or [])
+        flat, tables = raw, []
+    else:
+        flat = list(raw.get("checks") or [])
+        tables = list(raw.get("tables") or [])
+    table_checks, _problems = flatten_table_checks(tables)
+    return [*flat, *table_checks]
 
 
 def _check_id_of(raw: dict) -> str:

@@ -31,35 +31,33 @@ sources:
 defaults: # merged into every check when absent; supports
   severity: error #   severity, calendar, where, allow_empty, skip_off_schedule
 
+# tables: groups checks that share a source/object, stating both once
+# instead of repeating them on every check nested under the entry.
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    checks:
+      - id: sales_amount_nonneg # optional stable id
+        assert: "amount >= 0"
+
+      - metric: schema # table-level shape check
+        expect: { unchanged: true } # fail if columns/types drift from last run
+
+      - metric: row_count
+        expect: { between: [10000, 500000] }
+        by_weekday:
+          mon: { between: [0, 500000] }
+          sat: { max: 100 }
+          sun: { max: 100 }
+        on_holiday: { max: 100 }
+
+      - metric: freshness
+        column: modified_at
+        freshness_source: column # or describe_history / describe_detail (Databricks tables)
+        expect: { max_lag: 26h }
+        calendar: business
+
 checks:
-  - source: warehouse
-    object: dbo.fct_sales
-    id: sales_amount_nonneg # optional stable id
-    assert: "amount >= 0"
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: schema # table-level shape check
-    expect: { unchanged: true } # fail if columns/types drift from last run
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: row_count
-    expect: { between: [10000, 500000] }
-    by_weekday:
-      mon: { between: [0, 500000] }
-      sat: { max: 100 }
-      sun: { max: 100 }
-    on_holiday: { max: 100 }
-
-  - source: warehouse
-    object: dbo.fct_sales
-    metric: freshness
-    column: modified_at
-    freshness_source: column # or describe_history / describe_detail (Databricks tables)
-    expect: { max_lag: 26h }
-    calendar: business
-
   - source: lakehouse
     object: main.gold.customer_360
     metric: null_rate
