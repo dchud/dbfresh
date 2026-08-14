@@ -20,40 +20,55 @@ checks at the same `[overall, last 7 days]` shape, one row per check.
 | key | action |
 | --- | --- |
 | `r` | Run every configured check now, refresh the grid. |
+| `R` | Re-read the config from disk, picking up edits made by hand. |
 | `c` | Open **Configure**. |
 | `p` | Open **Report** -- the digest from the latest in-session run. |
+| `s` | Open **Store** -- observation counts and retention. |
+| `f` | Show only rows that aren't OK. |
+| `/` | Search the grid. |
+| `?` | Open **Help**. |
 | `q` | Quit. |
+
+`R` is deliberately a separate key from `r`: config is edited outside the
+app, so picking up an edit is a distinct action from running checks, and
+the two are easy to confuse by feel. `R` never touches the observation
+store or starts a run.
 
 Selecting an object row on Home drills into that object's checks; selecting
 a check row there opens that check's **History** drill-down (no separate
-keybinding at either level).
+keybinding at either level). Below the grid, that drill-down also lists
+the object's checks again, each with its expectation, read-only, and
+names the config file to edit by hand to change or remove one.
 
 ## Configure
 
 The Configure screen is the TUI surface of the [configurator](
 authoring-checks.md) -- literally the same `configurator` module
-`dbfresh add` uses, so proposals, YAML shape, and safety behavior are
-identical; only the prompts differ (widgets instead of stdin prompts).
-Pick a source from the dropdown and enter an object name, press
-**Propose** to introspect the object and see both its already-written
-checks and the newly proposed bundle, then **Accept** to append the
-proposed bundle to the config (the root config, or the first included
-checks file when `include:` is configured) exactly as `dbfresh add` would.
-Accepting reloads the config and refreshes the Home grid so the new checks
-show up (dim, no observation yet, until the next run).
+`dbfresh add` uses, so proposals and YAML shape are identical; only the
+prompts differ (widgets instead of stdin prompts). The source dropdown
+only offers sources already in the config -- defining a new one is
+`dbfresh add`'s job, not this screen's. Pick a source, enter an object
+name, and press **Propose** to introspect the object and see both its
+already-written checks (read-only, for reference) and the newly proposed
+bundle. Uncheck any proposed check to trim it, and check any offered
+per-column check to add it, then press **Accept**.
 
-An already-written check with a single-value threshold (`max`, `min`,
-`max_lag`, ...) gets an editable field and its own **Save** button, which
-writes immediately rather than waiting on Accept -- editing a threshold
-never changes a check's identity (`check_id` excludes `expect:` from its
-hash), so its observation history carries over unaffected. A check whose
-expectation isn't a single value (`between`, `vs_previous`, schema's
-`unchanged`) shows read-only; edit those directly in the YAML.
+**Accept** opens a modal with the selected checks rendered as YAML in a
+read-only, selectable text area, plus a **Copy** button -- nothing is
+written to the config. A selected check whose `check_id` already exists
+anywhere in the composed config is left out of the rendered YAML and
+named in a warning instead, so accepting twice can't produce a duplicate.
 
-The proposed `freshness` check gets the same kind of editable field
-directly beside its own checkbox, pre-filled with the "24h" default --
-tune it before pressing Accept instead of accepting the default and
-editing it back in afterward as an already-written check.
+**Copy** puts the block on the system clipboard over OSC 52, which most
+terminals support and macOS's own Terminal.app does not. Where it doesn't
+reach, select the text in the modal and copy it the way you normally
+would -- the text area stays selectable for exactly that reason.
+
+The proposed `freshness` check gets an editable max_lag field directly
+beside its own checkbox, pre-filled with the "24h" default; an offered
+`null_rate` or `freshness` check gets the same kind of field beside its
+own checkbox. Tune the value before pressing Accept -- the rendered YAML
+carries whatever sits in the field at that point.
 
 ## Report
 

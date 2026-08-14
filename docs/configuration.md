@@ -187,3 +187,54 @@ editing `expect: {max: 500000}` to `expect: {max: 600000}` on the same
 check keeps its trend intact. Two checks that resolve to the same identity
 anywhere in the composed config is a validation error; give one of them an
 explicit `id:` to disambiguate an intentional duplicate.
+
+## Validating a config
+
+```bash
+dbfresh config validate [-c config.yaml]
+```
+
+`dbfresh` never writes a config file, so every check starts as a
+hand-typed or pasted YAML block. `config validate` loads the config
+exactly as `run` does, but collects every problem it finds instead of
+stopping at the first: a malformed check (a missing required field, an
+invalid expectation), an unknown check-block field, a check referencing
+an undefined source, a duplicate `check_id` -- explicit or derived -- and
+an undefined `${VAR}` reference. Each problem is attributed to the file it
+came from; a duplicate `check_id` spanning two files is listed under both.
+
+A clean config prints one line and exits `0`:
+
+```text
+config.yaml: no problems found
+```
+
+A config with problems lists a total, grouped by file, and exits `3`:
+
+```text
+2 problems found in 1 file:
+
+config.yaml (2 problems):
+  - demo.orders: invalid expectation: object of type 'int' has no len()
+  - demo.customers/row_count: unknown check field(s): ['colum']
+```
+
+A problem spanning two files -- a duplicate `check_id` -- is listed under
+each, and the header says so, since the bullet count then exceeds the
+problem total:
+
+```text
+1 problem found in 2 files. A problem involving two files is listed under each.
+
+checks/a.yaml (1 problem):
+  - duplicate check_id 'dup': demo.orders/row_count and demo.customers/row_count collide -- add an explicit id: to one of them to disambiguate
+
+config.yaml (1 problem):
+  - duplicate check_id 'dup': demo.orders/row_count and demo.customers/row_count collide -- add an explicit id: to one of them to disambiguate
+```
+
+A problem that blocks resolving the check set at all -- a missing or
+unreadable file, invalid YAML, or an `include:` glob matching no files --
+can't be collected past; it still raises immediately and prints as a
+single `config error: ...` line on stderr, exactly as every other
+config-reading command reports it, with the same exit code (`3`).

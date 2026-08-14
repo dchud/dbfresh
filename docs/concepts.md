@@ -46,15 +46,15 @@ distinct config field.
 ## Definitions in git, observations in SQLite
 
 Check *definitions* are YAML, reviewed like any other code change and
-committed to a team repository; dbfresh never writes a check
-definition anywhere but the config file a human edited or `dbfresh add`
-appended to. Check *observations* -- the scalar or fingerprint a run
-actually saw, its status, and when it ran -- live in a local SQLite
-observation store, separate from the config. That split is what makes
-`vs_previous` expectations, `dbfresh history`, and the TUI's status
-dashboard possible without turning the YAML into a database, and why
-renaming a file or moving a check between included files never loses its
-history.
+committed to a team repository; dbfresh never writes a check definition
+anywhere -- the config file is always edited by hand, whether typed from
+scratch or pasted from a `dbfresh add` proposal. Check *observations* --
+the scalar or fingerprint a run actually saw, its status, and when it ran
+-- live in a local SQLite observation store, separate from the config.
+That split is what makes `vs_previous` expectations, `dbfresh history`,
+and the TUI's status dashboard possible without turning the YAML into a
+database, and why renaming a file or moving a check between included
+files never loses its history.
 
 ## One engine, two front ends
 

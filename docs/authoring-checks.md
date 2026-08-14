@@ -3,15 +3,16 @@
 `configurator.py` is one front-end-agnostic module with two surfaces:
 `dbfresh add` (a CLI wizard) and the TUI's Configure screen -- the
 proposal flow (introspect, propose, accept/trim) is identical between
-them, only the prompt/rendering layer differs; the TUI additionally lets
-you edit an already-written check's threshold in place, which the CLI
-wizard doesn't (see "What it never does" below). It **emits YAML** into
-the version-controlled config; it never writes a check into the
-observation store. The design goal is minimal required input: name a source
-and an object, and the wizard introspects it and proposes a complete check
-bundle, which you accept, edit, or trim check by check -- metadata
-proposes, you confirm, and the result is explicit YAML reviewed like any
-other config change.
+them, only the prompt/rendering layer differs. It **emits YAML**; it
+never writes to the config file and never touches the observation store.
+`dbfresh add` prints the proposal to stdout, with every prompt and bit of
+guidance on stderr, so stdout carries only the YAML to paste into the
+config. The TUI's Configure screen shows the same proposal in a
+read-only, selectable text area with a Copy button. The design goal is
+minimal required input: name a source and an object, and the wizard
+introspects it and proposes a complete check bundle, which you accept,
+edit, or trim check by check -- metadata proposes, you confirm, and the
+result is explicit YAML reviewed like any other config change.
 
 ```bash
 dbfresh add [-c config.yaml]
@@ -70,47 +71,44 @@ offering the check would be redundant.
 
 The offered list also excludes any metric already auto-proposed for that
 same column (for example, `freshness` on the auto-detected timestamp
-column, or `duplicate_count` on a single-column key) -- offering it a
-second time would collide on check identity and be silently dropped when
-written. The proposed `freshness` check itself gets an editable max_lag
-field right beside its checkbox in the TUI Configure screen, pre-filled
-with the "24h" default -- change it there before Accept, no round trip
-needed. To tune an already-*written* check's threshold afterward, use
-the TUI Configure screen's existing-checks list instead (single-value
-operators -- `max`, `min`, `max_lag`, and similar -- get an editable
-field and a Save button there too) or edit the value directly in the
-config; the CLI `dbfresh add` wizard itself still only ever appends new
-checks, with no threshold editing at either point.
+column, or `duplicate_count` on a single-column key) -- proposing it a
+second time would collide on check identity. The proposed `freshness`
+check itself gets an editable max_lag field right beside its checkbox in
+the TUI Configure screen, pre-filled with the "24h" default -- change it
+there before Accept, and the rendered YAML carries whatever value sits in
+the field at that point. To tune an already-configured check's threshold,
+edit the `expect:` value directly in the config; neither the CLI wizard
+nor the TUI Configure screen edits an already-written check.
 
 ## Safety and degradation
 
 - **A new source runs a mandatory connection test** (`probe_connection()`)
-  before anything about it is written to the config.
+  before it can appear in the emitted proposal.
 - **Every named object is existence-checked** via `describe()`
   (`check_object_exists()`).
 - A failed connection or a missing object requires explicit confirmation
-  before anything is written. For an *already-configured* source found
+  before it's proposed at all. For an *already-configured* source found
   unreachable, the wizard degrades to manual entry and marks existence
   unverified rather than reporting the object as missing (it genuinely
   doesn't know). Manual entry is also the fallback whenever metadata is
   unavailable for any other reason.
-- When the config uses `include:`, `target_files()` lists the root config
-  plus every resolved included file, in load order. `dbfresh add` asks
-  which one receives the new block; the TUI's Configure screen instead
-  resolves it automatically to the first included file, naming its choice
-  in the proposal rather than prompting for it. Without `include:`, both
-  surfaces always append to the root config.
+- When the config uses `include:`, a proposed check already defined
+  anywhere in the composed config -- the root config or any resolved
+  included file -- is left out of what's emitted and named instead as
+  "already defined, not proposed again": pasting it a second time would
+  make the next `dbfresh config validate` (or a run) fail on a duplicate
+  `check_id`. Neither surface picks a destination file for you; paste a
+  proposal into whichever file fits your layout.
 
 ## What it never does
 
-The configurator appends well-formed YAML check blocks (via
-`append_checks()`) and, for a brand-new source, a `sources:` entry (via
-`add_source()`); every check it proposes still has to pass the same
-review as a hand-written one. It never writes an observation and never
-touches the SQLite store. The one exception to "never mutates an existing
-check block" is `rewrite_check_expectation()` -- the TUI Configure
-screen's existing-checks editor -- which rewrites only a single-value
-`expect:` operand in place (preserving comments/formatting via a text
-splice where possible, falling back to a full YAML round trip otherwise);
-it never changes a check's identity fields (`source`, `object`, `metric`,
-`column`/`key`), so `check_id` and observation history are unaffected.
+The configurator never writes to the config file. `dbfresh add` renders
+the proposal as YAML on stdout; the TUI's Configure screen renders the
+same YAML in a read-only text area with a Copy button. Both surfaces stop
+there -- pasting the block into the config, choosing where it goes, and
+reviewing it before committing is left to whoever is running the wizard,
+the same as any hand-written check. Neither surface edits an
+already-configured check's threshold, source, or any other field; that
+happens by editing the YAML directly. The configurator also never writes
+an observation and never touches the SQLite store -- it only reads
+catalog metadata via an adapter's `describe()`.
