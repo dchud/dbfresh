@@ -178,7 +178,12 @@ def test_object_detail_screen_shows_check_grid_and_legend(
         "dbfresh.tui.app.display_timezone", lambda calendar: UTC
     )
     cfg_path, store_path = _build_fixture(tmp_path)
-    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
+    # ObjectDetailScreen's checks panel shows the config path verbatim --
+    # chdir and pass its bare filename so the captured text is a stable
+    # "config.yaml" rather than pytest's own tmp_path, which embeds a
+    # session-numbered directory that changes on every run.
+    monkeypatch.chdir(tmp_path)
+    app = DbfreshApp(config_path=cfg_path.name, store_path=str(store_path))
 
     # Home grid: orders_db.orders is the first row -- enter drills into its
     # checks, the same drill-in test_history_screen_shows_trend goes one
@@ -273,36 +278,10 @@ def test_configure_screen_initial_layout(snap_compare, tmp_path):
     )
 
 
-def test_configure_screen_new_source_form_at_zero_sources(
-    snap_compare, tmp_path
-):
-    """A brand-new project's config has no sources at all -- Configure opens
-    straight into the new-source form rather than the propose form (which
-    would just be an empty Select with nothing to do)."""
-    cfg_path = tmp_path / "config.yaml"
-    cfg_path.write_text("sources: {}\nchecks: []\n")
-    store_path = tmp_path / "observations.db"
-    app = DbfreshApp(config_path=cfg_path, store_path=str(store_path))
-
-    async def run_before(pilot):
-        await pilot.press("c")
-        await pilot.pause()
-        pilot.app.screen.set_focus(
-            None
-        )  # no blinking input cursor in the baseline
-
-    assert snap_compare(
-        app, run_before=run_before, terminal_size=_TERMINAL_SIZE
-    )
-
-
 def test_configure_screen_post_propose_layout(snap_compare, tmp_path):
     """Configure's densest state: after a successful Propose, the existing
-    (one editable single-scalar check with its value Input + Save button,
-    one read-only between check), proposed, and offered panels are all
-    populated at once. Guards the three-panel VerticalScroll layout, and
-    in particular the editable existing-check row against clipping its
-    Input/Save off the right edge.
+    (read-only, one row per check), proposed, and offered panels are all
+    populated at once. Guards the three-panel VerticalScroll layout.
     """
     db = tmp_path / "data.db"
     adapter = SqliteAdapter(str(db))

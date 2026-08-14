@@ -213,6 +213,22 @@ def check_label(check: Check) -> str:
     return f"{label} ({context})" if context else label
 
 
+def check_expectation_line(check: Check) -> str:
+    """A check's :func:`check_label` plus its expectation, when it has
+    one -- the one-line read-only rendering both
+    :class:`~dbfresh.tui.screens.ObjectDetailScreen` and
+    :class:`~dbfresh.tui.configure.ConfigureScreen` show for an
+    already-configured check, since neither screen edits one: enough to
+    find the matching block in the config file by eye. An assertion check
+    has no separate ``expect:`` -- its assertion text is already part of
+    its label.
+    """
+    label = check_label(check)
+    if check.expect is None:
+        return label
+    return f"{label}: {check.expect.describe()}"
+
+
 def _worst_or_unknown(statuses: list[Status]) -> Status | None:
     """The worst known status, or ``None`` when there are no known statuses.
 

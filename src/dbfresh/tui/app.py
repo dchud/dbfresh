@@ -1,9 +1,10 @@
 """The dbfresh ui Textual application.
 
 A presentation layer only: the Home dashboard, Run action, and Configure /
-Report / History destinations all read and write through the same
-config/store/engine/configurator modules the CLI uses. No check semantics
-live here.
+Report / History destinations all read config and read/write the
+observation store through the same config/store/engine/configurator
+modules the CLI uses. Config itself is never written here -- it is a file
+the user edits by hand. No check semantics live here.
 """
 
 from __future__ import annotations
@@ -345,11 +346,10 @@ class DbfreshApp(App):
         self.refresh_dashboard()
 
     def _reload_config(self) -> None:
-        # Tolerant, like cli._ui_command's initial load: a reload (after a
-        # Configure write, or the no-initial-config path) keeps working
-        # when a ${VAR} secret is still unset, refreshing missing_secrets
-        # for the banner rather than raising and leaving the dashboard
-        # stuck behind a "reload failed" toast.
+        # Tolerant, like cli._ui_command's initial load: a reload keeps
+        # working when a ${VAR} secret is still unset, refreshing
+        # missing_secrets for the banner rather than raising and leaving
+        # the dashboard stuck behind a "reload failed" toast.
         self.config, missing = load_config_tolerant(self.config_path)
         self.missing_secrets = tuple(sorted(missing))
         self._env_at_risk = committable_env_file(self.config_path)
@@ -357,10 +357,9 @@ class DbfreshApp(App):
     def action_reload_config(self) -> None:
         """Re-read ``config_path`` from disk on demand.
 
-        Config is otherwise only ever (re)loaded at mount time and right
-        after a write this same session made (Configure's Accept, an
-        ObjectDetail edit/delete) -- an edit made in another window or by
-        hand is never picked up without this. A distinct key from 'r'
+        Config is otherwise only ever loaded once, at mount time -- the
+        TUI never writes it, so an edit made by hand (or in another
+        window) is never picked up without this. A distinct key from 'r'
         (Run) deliberately -- the two are easy to confuse by feel, and
         this one never touches the store or starts a worker.
         """
@@ -852,31 +851,8 @@ class DbfreshApp(App):
 
     def action_configure(self) -> None:
         self.push_screen(
-            ConfigureScreen(self.config_path, self._require_config()),
-            self._on_configure_dismissed,
+            ConfigureScreen(self.config_path, self._require_config())
         )
-
-    def _on_configure_dismissed(self, wrote: bool | None) -> None:
-        if not wrote:
-            return
-        try:
-            self._reload_config()
-        except Exception as exc:
-            self.notify(
-                f"config reload failed after write: {exc}",
-                title="Reload failed",
-                severity="error",
-                timeout=10,
-            )
-            return
-        self.refresh_dashboard()
-
-        # Connect the two steps a first-time user would otherwise have to
-        # discover separately: a just-written check renders as unknown
-        # ("never observed") until something runs it, so run immediately
-        # rather than leaving that connection for the user to find via 'r'.
-        self.notify("running the checks you just configured…")
-        self.action_run_checks()
 
     def action_report(self) -> None:
         tz = display_timezone(self._require_config().calendar)
@@ -915,42 +891,8 @@ class DbfreshApp(App):
                 row.source,
                 row.object,
                 tz=tz,
-            ),
-            self._on_object_detail_dismissed,
-        )
-
-    def reload_config_from_disk(self) -> Config | None:
-        """Re-read config_path into self.config after a write this session
-        made, and bring the dashboard back in step. Returns the reloaded
-        Config, or None (after surfacing a toast) when the reload failed,
-        leaving the prior config in place. Shared by the object-detail
-        dismiss path and by an inline save there, so an immediate scoped run
-        reads the just-saved values rather than the stale in-memory config."""
-        try:
-            self._reload_config()
-        except Exception as exc:
-            self.notify(
-                f"config reload failed after write: {exc}",
-                title="Reload failed",
-                severity="error",
-                timeout=10,
             )
-            return None
-        self.refresh_dashboard()
-        return self._require_config()
-
-    def _on_object_detail_dismissed(self, changed: bool | None) -> None:
-        """Mirrors :meth:`_on_configure_dismissed`: an edit or delete made
-        from the drill-in already wrote straight to disk (unlike Configure's
-        own Accept, there's no staged bundle to write here), so all that's
-        left is bringing Home's own config and dashboard back in step with
-        it. No auto-run afterward -- unlike a newly configured check, an
-        edited threshold or a deleted check has no "never observed" status
-        to resolve by running immediately.
-        """
-        if not changed:
-            return
-        self.reload_config_from_disk()
+        )
 
     def on_unmount(self) -> None:
         if self.store is not None:

@@ -35,9 +35,9 @@ Footer {
 
 /* Textual's default Button is deliberately chunky: min-width 16 plus a
  * tall raised border top and bottom make every button three rows tall and
- * wide regardless of its label. Across dbfresh's panels (object-detail
- * edit rows, Store prune, Configure) that reads as oversized, so flatten
- * the border to a single row and let the width hug the label. Applies to
+ * wide regardless of its label. Across dbfresh's panels (Store prune,
+ * Configure) that reads as oversized, so flatten the border to a single
+ * row and let the width hug the label. Applies to
  * every button in the app; the per-screen rules below only add
  * inter-button spacing (margin), not size. App CSS overrides the widget's
  * own DEFAULT_CSS by origin, so no !important is needed to beat Textual's
@@ -242,8 +242,17 @@ Select > SelectCurrent {
     margin: 0 1 1 1;
 }
 
-#detail-edit-scroll {
+#detail-checks-scroll {
     margin: 0 1 1 1;
+}
+
+/* Config is read-only here -- the note above the checks list names the
+ * file to edit by hand, in the same muted metadata tone as the legend and
+ * check-detail line, not a status color.
+ */
+#detail-checks-note {
+    color: $subtext0;
+    margin-bottom: 1;
 }
 
 ObjectDetailScreen Horizontal {
@@ -253,59 +262,6 @@ ObjectDetailScreen Horizontal {
 
 ObjectDetailScreen Button {
     margin-right: 1;
-}
-
-/* Input's own default (width: 100%) would claim the rest of an edit row's
- * width and push its trailing Save/Delete buttons out of the row's
- * overflow-hidden bounds -- a between row has two of these side by side,
- * so both stay narrow enough (a duration or a numeric threshold is short)
- * to leave room for the label ahead of them and the buttons after.
- */
-ObjectDetailScreen #detail-edit-checks Input {
-    width: 10;
-}
-
-/* Each edit row's own three columns: label, value, buttons -- see
- * ObjectDetailScreen._build_edit_widgets. Both widths are fixed rather
- * than auto so every row's value area and buttons start at the same x
- * regardless of how long that row's own label or operator text is.
- * .edit-label is sized to the longest label + operator suffix dbfresh's
- * own fixtures produce ("freshness (modified_at) (max_lag):", 34 chars),
- * plus a couple of columns of breathing room before the value column.
- * .edit-value is sized to the widest value shape any row builds -- a
- * between row's two 10-wide Inputs plus the "and" Label between them (23
- * cells) -- so a between row's own value area exactly fills the column
- * and every narrower row's (a single Input, a read-only describe()
- * string, or nothing at all) leaves blank space before the buttons
- * instead of shifting them.
- */
-ObjectDetailScreen #detail-edit-checks .edit-label {
-    width: 36;
-}
-
-/* The generic "ObjectDetailScreen Horizontal { height: auto; margin-
- * bottom: 1; }" rule above also matches this nested Horizontal (its
- * selector isn't scoped to top-level rows) -- without overriding
- * margin-bottom back to 0 here, the value cell would carry its own
- * trailing gap on top of the edit row's, growing the row's auto height
- * and pushing its Save/Delete buttons out of vertical alignment with the
- * label beside them.
- */
-ObjectDetailScreen #detail-edit-checks .edit-value {
-    width: 23;
-    height: 1;
-    margin-bottom: 0;
-}
-
-/* A fixed-width slot for the Save button, present but empty on rows that
- * have no Save (a non-editable operator, or a delete-only check), so the
- * Delete button always lands in the same rightmost column instead of
- * shifting left into the Save position on Save-less rows. Sized to the
- * compact Save button plus its margin. */
-ObjectDetailScreen #detail-edit-checks .edit-save {
-    width: 8;
-    height: 1;
-    margin-bottom: 0;
 }
 
 /* Report / History */
@@ -362,31 +318,18 @@ HelpScreen {
 
 /* Configure screen */
 
-ConfigureScreen #propose-section,
-ConfigureScreen #new-source-form {
+ConfigureScreen #propose-section {
     padding: 1 2;
 }
 
 /* The single-value form fields default to full width, which is far wider
- * than a source name, object name, timestamp column, or params line needs
- * and leaves the screen looking sparse. Cap them at a readable fixed width
- * (a little wider than the Home search box's 40) that still fits the
- * new-source form into an 80-column terminal. The existing-check value
- * inputs keep their own narrower width: 10 rule below. */
+ * than a source name, object name, or timestamp column needs and leaves
+ * the screen looking sparse. Cap them at a readable fixed width (a little
+ * wider than the Home search box's 40). */
 ConfigureScreen #object-input,
 ConfigureScreen #timestamp-input,
-ConfigureScreen #new-source-name-input,
-ConfigureScreen #new-source-type-select,
-ConfigureScreen #new-source-params {
-    width: 48;
-}
-
-/* The source picker is the one field that shares its row with buttons (the
- * +new / Edit / Remove trio), so it gets a narrower cap than the standalone
- * fields above -- a source name is short, and a wide fixed width here would
- * push the trailing Remove button off the row and out of reach. */
 ConfigureScreen #source-select {
-    width: 32;
+    width: 48;
 }
 
 ConfigureScreen Label {
@@ -407,14 +350,6 @@ ConfigureScreen Button {
     margin-right: 1;
 }
 
-/* Input's default width: 100% would claim the rest of an existing-check
- * edit row and push its Save button past the right edge (the same clip
- * the ObjectDetail edit rows guard against) -- keep the value box narrow
- * so the label ahead of it and the Save button after it both fit. */
-ConfigureScreen #existing-checks Input {
-    width: 10;
-}
-
 .section-title {
     color: $subtext1;
     text-style: bold;
@@ -428,36 +363,38 @@ ConfigureScreen #existing-checks Input {
     margin-top: 1;
 }
 
-#new-source-heading {
-    color: $foreground;
-    text-style: bold;
+/* Proposal YAML modal (ConfigureScreen's Accept) -- read-only text to
+ * copy, never a form; centered like the Help overlay but sized to
+ * actually show a multi-check YAML block rather than a fixed small panel.
+ */
+ProposalYamlScreen {
+    align: center middle;
 }
 
-/* Sibling of #propose-section, not nested inside its own padded
- * container, so the panel border is otherwise flush with the terminal's
- * own edges -- unlike every other panel here -- and the Vertical's
- * default height: 1fr stretches the (mostly empty) border to fill the
- * screen instead of hugging its content. Selector prefixed with
- * ConfigureScreen (matching this ID's other padding rule above) so this
- * one wins on specificity, not just source order. Padding/margin trimmed
- * (vs. the standard .panel + Horizontal spacing) to keep the whole form,
- * button row included, fitting an 80x24 terminal without scrolling. */
-ConfigureScreen #new-source-form {
+#proposal-yaml-panel {
+    width: 90%;
+    height: 80%;
+    background: $mantle;
+    border: round $surface2;
+    padding: 1 2;
+}
+
+#proposal-yaml-note {
+    color: $subtext0;
+    margin-bottom: 1;
+}
+
+/* TextArea's own default height: 1fr divides the panel's definite 80%
+ * screen height above rather than expanding without bound, so no
+ * override is needed here -- unlike a TextArea nested in an auto-height
+ * parent (see the Copy/Close row below), where 1fr has nothing to divide.
+ */
+ProposalYamlScreen Horizontal {
     height: auto;
-    padding: 0 2;
-    margin: 1 2 0 2;
-}
-
-#new-source-form Horizontal {
+    margin-top: 1;
     margin-bottom: 0;
 }
 
-/* TextArea defaults to height: 1fr too -- inside an auto-height parent
- * that has nothing definite to divide, that still expands to fill the
- * screen, so the params field needs its own fixed height for the panel
- * around it to actually close at the bottom -- kept small (a couple of
- * key=value lines is the common case) so the form still fits an 80x24
- * terminal alongside its other fields. */
-#new-source-params {
-    height: 3;
+ProposalYamlScreen Button {
+    margin-right: 1;
 }

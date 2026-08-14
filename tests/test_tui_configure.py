@@ -8,9 +8,7 @@ from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
     Checkbox,
-    DataTable,
     Input,
-    Select,
     TextArea,
 )
 
@@ -18,8 +16,6 @@ from dbfresh.adapters import factory
 from dbfresh.adapters.base import Category, Column, ObjectInfo
 from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.sqlite import SqliteAdapter
-from dbfresh.config import load_config
-from dbfresh.tui import app as app_module
 from dbfresh.tui.app import DbfreshApp
 from dbfresh.tui.configure import ConfigureScreen
 
@@ -114,11 +110,26 @@ def test_configure_preselects_a_lone_source(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configure_screen_proposes_and_appends_checks(tmp_path, pump_until):
+async def _accept_and_open_yaml(pilot) -> str:
+    """Click Accept, wait for :class:`ProposalYamlScreen` to open on top of
+    Configure, and return its rendered YAML text -- the shared assertion
+    point for every test proving what Accept shows rather than writes."""
+    from dbfresh.tui.configure import ProposalYamlScreen
+
+    await pilot.click("#accept-btn")
+    await pilot.pause()
+    assert isinstance(pilot.app.screen, ProposalYamlScreen)
+    return pilot.app.screen.query_one("#proposal-yaml-text", TextArea).text
+
+
+def test_configure_screen_accept_shows_proposed_checks_as_yaml(
+    tmp_path, pump_until
+):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
+        original_text = cfg.read_text()
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
         async with app.run_test() as pilot:
@@ -147,97 +158,13 @@ def test_configure_screen_proposes_and_appends_checks(tmp_path, pump_until):
             accept_btn = app.screen.query_one("#accept-btn")
             assert not accept_btn.disabled
 
-            await pilot.click("#accept-btn")
-            await pilot.pause()
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-            # Back on Home; the config reloaded with the new checks.
-            assert not isinstance(app.screen, ConfigureScreen)
-
-        data = yaml.safe_load(cfg.read_text())
-        metrics = {c["metric"] for c in data["checks"]}
+        rendered = yaml.safe_load(yaml_text)
+        metrics = {c["metric"] for c in rendered["checks"]}
         assert {"schema", "row_count", "freshness"} <= metrics
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_dashboard_reflects_appended_checks(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
-            )
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-            table = app.query_one("#dashboard-grid", DataTable)
-            row_keys = {key.value for key in table.rows}
-            assert "s\x1ffct" in row_keys
-
-    asyncio.run(scenario())
-
-
-def test_accept_fires_a_run_so_new_checks_show_results_without_pressing_r(
-    tmp_path, pump_until
-):
-    """Nothing connects "just configured a check" to "see it run" other
-    than the user finding the 'r' key on their own -- Accept must wire the
-    two together itself, firing the existing Run action once Home has
-    reloaded the config that Accept just wrote."""
-
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
-            )
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-            # Accept dismissed Configure; Home reloaded the config and, on
-            # its own, started a run -- wait for that background worker
-            # (never pressed 'r' in this scenario) before asserting on it.
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(pilot, lambda: app.last_run is not None)
-
-            assert app.last_run is not None
-            table = app.query_one("#dashboard-grid", DataTable)
-            row_keys = {key.value for key in table.rows}
-            assert "s\x1ffct" in row_keys
-            # row_count is one of the checks Accept just wrote for s.fct;
-            # a fresh run gives it a real status rather than "never
-            # observed" ('·').
-            cell = table.get_cell("s\x1ffct", "overall")
-            assert cell.plain != "·"
+        # Accept never writes -- the config file is exactly as it started.
+        assert cfg.read_text() == original_text
 
     asyncio.run(scenario())
 
@@ -369,12 +296,11 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path, pump_until):
             labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
             assert any("freshness" in label for label in labels)
 
-            await pilot.click("#accept-btn")
-            await pilot.pause()
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
+        rendered = yaml.safe_load(yaml_text)
         freshness = next(
-            c for c in data["checks"] if c["metric"] == "freshness"
+            c for c in rendered["checks"] if c["metric"] == "freshness"
         )
         assert freshness["column"] == "updated_at"
 
@@ -413,443 +339,12 @@ def test_configure_screen_unreachable_source_shows_error_not_crash(
 
             # Did not crash: still on the Configure screen, with an error
             # toast rather than a crash -- Propose's connect failure runs
-            # through the same notify() channel as every other error on
-            # this screen (Save, Accept).
+            # through the same notify() channel Accept's own errors use.
             assert isinstance(app.screen, ConfigureScreen)
             messages = [n.message for n in app._notifications]
             assert any("could not connect" in m for m in messages)
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
-
-    asyncio.run(scenario())
-
-
-# -- new-source form (df-ymt) ----------------------------------------------
-
-
-def test_configure_screen_opens_straight_into_new_source_form_at_zero_sources(
-    tmp_path,
-):
-    async def scenario():
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            # No sources to propose against -- the propose form (an empty
-            # Select and nothing else) would be a dead end, so the screen
-            # opens straight into the new-source form instead.
-            assert app.screen.query_one("#new-source-form").display
-            assert not app.screen.query_one("#propose-section").display
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_new_source_button_reveals_form_when_sources_exist(
-    tmp_path,
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            # A source already exists -- the propose form opens by
-            # default, with the new-source form reachable on demand.
-            assert app.screen.query_one("#propose-section").display
-            assert not app.screen.query_one("#new-source-form").display
-
-            await pilot.click("#new-source-btn")
-            await pilot.pause()
-
-            assert app.screen.query_one("#new-source-form").display
-            assert not app.screen.query_one("#propose-section").display
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_new_source_probe_success_adds_and_selects_source(
-    tmp_path, pump_until
-):
-    """A probe that succeeds writes the source to disk (via
-    ``configurator.add_source``, reused verbatim), reflects it into the
-    Select, and returns to the propose form with it selected and already
-    usable for Propose in the same session -- no reopen or reload needed.
-    """
-
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one(
-                "#new-source-type-select", Select
-            ).value = "sqlite"
-            app.screen.query_one("#new-source-params").text = f"database={db}"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: app.screen.query_one("#source-select").value == "s",
-            )
-
-            assert not app.screen.query_one("#new-source-form").display
-            assert app.screen.query_one("#propose-section").display
-            select = app.screen.query_one("#source-select")
-            assert select.value == "s"
-
-            data = yaml.safe_load(cfg.read_text())
-            assert data["sources"]["s"]["type"] == "sqlite"
-            assert data["sources"]["s"]["database"] == str(db)
-
-            # Usable for Propose right away, in this same screen instance.
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: any(
-                    "row_count" in str(cb.label)
-                    for cb in app.screen.query(Checkbox)
-                ),
-            )
-
-            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
-            assert any("row_count" in label for label in labels)
-
-    asyncio.run(scenario())
-
-
-def test_new_source_with_env_var_param_is_resolved_in_memory_for_immediate_use(
-    tmp_path, monkeypatch, pump_until
-):
-    """A new source added with a ${VAR} param keeps ${VAR} in the YAML but
-    resolves it in memory, so an immediate Propose in the same session
-    connects with the real value -- not a literal "${VAR}". The form itself
-    recommends key=${VAR} for secrets, so this is the path a secret-using
-    user actually takes.
-    """
-
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one(
-                "#new-source-type-select", Select
-            ).value = "sqlite"
-            params = app.screen.query_one("#new-source-params")
-            params.text = "database=${DBFRESH_TEST_DB}"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: (
-                    app.screen._config.sources.get("s") is not None
-                    and app.screen._config.sources["s"].params.get("database")
-                    == str(db)
-                ),
-            )
-
-            # Disk keeps the raw ${VAR} -- no resolved secret written to YAML.
-            data = yaml.safe_load(cfg.read_text())
-            assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB}"
-            # In memory it is resolved, so the source is immediately usable.
-            assert app.screen._config.sources["s"].params["database"] == str(
-                db
-            )
-
-            # Propose against the just-added source connects with the real
-            # path; a literal "${DBFRESH_TEST_DB}" would find no fct table.
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: any(
-                    "row_count" in str(cb.label)
-                    for cb in app.screen.query(Checkbox)
-                ),
-            )
-            labels = [str(cb.label) for cb in app.screen.query(Checkbox)]
-            assert any("row_count" in label for label in labels)
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_new_source_probe_failure_shows_toast_and_keeps_form_open(
-    tmp_path, monkeypatch, pump_until
-):
-    async def scenario():
-        monkeypatch.setitem(
-            factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter
-        )
-
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one(
-                "#new-source-type-select", Select
-            ).value = "unreachable"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: any(
-                    "could not connect" in n.message
-                    for n in app._notifications
-                ),
-            )
-
-            # Did not crash: still on Configure, in the new-source form
-            # (not silently dropped back to the propose form), with an
-            # error toast -- the same notify() channel Propose's own
-            # connect failure uses.
-            assert isinstance(app.screen, ConfigureScreen)
-            assert app.screen.query_one("#new-source-form").display
-            messages = [n.message for n in app._notifications]
-            assert any("could not connect" in m for m in messages)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["sources"] == {}
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_new_source_duplicate_name_is_rejected_before_probing(
-    tmp_path,
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            await pilot.click("#new-source-btn")
-            await pilot.pause()
-
-            app.screen.query_one(
-                "#new-source-name-input"
-            ).value = "s"  # already exists
-            app.screen.query_one(
-                "#new-source-type-select", Select
-            ).value = "sqlite"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.pause()
-
-            # Rejected synchronously, before any worker (and therefore any
-            # network probe) ever started.
-            assert not app.workers
-            messages = [n.message for n in app._notifications]
-            assert any("already exists" in m for m in messages)
-
-    asyncio.run(scenario())
-
-
-def test_new_source_type_select_lists_exactly_the_supported_types(tmp_path):
-    """The type dropdown's options are exactly what the adapter factory
-    supports -- never a hand-maintained list that could drift out of sync
-    with what ``create_adapter`` actually accepts."""
-
-    async def scenario():
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            type_select = app.screen.query_one(
-                "#new-source-type-select", Select
-            )
-            values = sorted(
-                v for _, v in type_select._options if v is not Select.NULL
-            )
-            assert values == factory.supported_types()
-
-    asyncio.run(scenario())
-
-
-def test_new_source_no_type_selected_is_rejected_before_probing(tmp_path):
-    async def scenario():
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#new-source-name-input").value = "s"
-            # type left at its default -- unselected (Select.NULL)
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.pause()
-
-            # Rejected synchronously, before any worker (and therefore any
-            # network probe) ever started.
-            assert not app.workers
-            messages = [n.message for n in app._notifications]
-            assert any("select a source type" in m for m in messages)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["sources"] == {}
-
-    asyncio.run(scenario())
-
-
-def test_edit_source_with_unrecognized_type_shows_it_as_extra_option(
-    tmp_path, pump_until
-):
-    """A source whose ``type:`` isn't (or is no longer) registered with the
-    adapter factory -- hand-written, or left over from a removed engine --
-    must not crash the edit form. It's surfaced as an extra dropdown
-    option holding the source's actual current value rather than being
-    silently blanked out, so submitting unchanged still attempts a probe
-    with that value (and fails the same way it would have before this
-    dropdown existed) instead of being refused as "no type selected"."""
-
-    async def scenario():
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources:\n  s: { type: made_up_engine }\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            await pilot.click("#edit-source-btn")
-            await pilot.pause()
-
-            type_select = app.screen.query_one(
-                "#new-source-type-select", Select
-            )
-            assert type_select.value == "made_up_engine"
-            values = [
-                v for _, v in type_select._options if v is not Select.NULL
-            ]
-            assert "made_up_engine" in values
-            assert "made_up_engine" not in factory.supported_types()
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: any(
-                    "could not connect" in n.message
-                    for n in app._notifications
-                ),
-            )
-            messages = [n.message for n in app._notifications]
-            assert any("could not connect" in m for m in messages)
-
-        # The failed probe wrote nothing -- the source's type on disk is
-        # unchanged.
-        data = yaml.safe_load(cfg.read_text())
-        assert data["sources"]["s"]["type"] == "made_up_engine"
-
-    asyncio.run(scenario())
-
-
-def test_new_source_flow_works_when_config_file_did_not_exist_yet(
-    tmp_path, pump_until
-):
-    """The full first-run path: ``dbfresh ui`` against a config path that
-    doesn't exist yet starts ``DbfreshApp`` against an empty in-memory
-    ``Config`` (see ``cli._ui_command`` / test_cli_ui.py's missing-config
-    test for the CLI side of this) -- Configure's new-source form must
-    still work end to end from there, creating ``config.yaml`` for the
-    first time via :func:`~dbfresh.configurator.add_source`.
-    """
-
-    async def scenario():
-        from dbfresh.config import Config
-
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = tmp_path / "config.yaml"
-        assert not cfg.exists()
-
-        initial_config = Config(sources={}, checks=[], config_dir=tmp_path)
-        app = DbfreshApp(
-            config_path=cfg,
-            store_path=str(tmp_path / "obs.db"),
-            initial_config=initial_config,
-        )
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#new-source-name-input").value = "s"
-            app.screen.query_one(
-                "#new-source-type-select", Select
-            ).value = "sqlite"
-            app.screen.query_one("#new-source-params").text = f"database={db}"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: app.screen.query_one("#source-select").value == "s",
-            )
-
-            assert cfg.exists()  # written for the first time by add_source
-            select = app.screen.query_one("#source-select")
-            assert select.value == "s"
 
     asyncio.run(scenario())
 
@@ -997,115 +492,6 @@ def test_dismissing_configure_while_propose_is_in_flight_does_not_crash(
     asyncio.run(scenario())
 
 
-def test_config_reload_failure_after_write_is_caught_not_crashed(
-    tmp_path, monkeypatch, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-
-        real_load_config = app_module.load_config_tolerant
-        calls = {"n": 0}
-
-        def flaky_load_config(path):
-            calls["n"] += 1
-            if calls["n"] > 1:
-                raise ValueError("bad config after write")
-            return real_load_config(path)
-
-        monkeypatch.setattr(
-            app_module, "load_config_tolerant", flaky_load_config
-        )
-
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            previous_config = app.config
-
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
-            )
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-            # Back on Home; the reload failed but the app did not crash,
-            # and the stale config from before the write is kept rather
-            # than being clobbered by a half-completed reload.
-            assert not isinstance(app.screen, ConfigureScreen)
-            assert app.config is previous_config
-
-            messages = [n.message for n in app._notifications]
-            assert any("bad config after write" in m for m in messages)
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_surfaces_target_file_among_several_included(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-
-        checks_dir = tmp_path / "checks"
-        checks_dir.mkdir()
-        (checks_dir / "a.yaml").write_text("checks: []\n")
-        (checks_dir / "b.yaml").write_text("checks: []\n")
-
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
-            "include: [checks/*.yaml]\n"
-            "checks: []\n"
-        )
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: (
-                    "a.yaml"
-                    in str(app.screen.query_one("#proposal-text").content)
-                ),
-            )
-
-            # Several included files match: the proposal names the one
-            # that Accept will actually write to, rather than writing
-            # silently to whichever one happened to sort first.
-            proposal_text = str(app.screen.query_one("#proposal-text").content)
-            assert "a.yaml" in proposal_text
-            assert "2 included files" in proposal_text
-
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-
-        a_data = yaml.safe_load((checks_dir / "a.yaml").read_text())
-        b_data = yaml.safe_load((checks_dir / "b.yaml").read_text())
-        assert a_data["checks"]
-        assert b_data["checks"] == []
-
-    asyncio.run(scenario())
-
-
 def test_configure_screen_unknown_object_disables_accept(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
@@ -1135,13 +521,10 @@ def test_configure_screen_unknown_object_disables_accept(tmp_path, pump_until):
             accept_btn = app.screen.query_one("#accept-btn")
             assert accept_btn.disabled
 
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
-
     asyncio.run(scenario())
 
 
-def test_configure_screen_cancel_button_writes_nothing(tmp_path):
+def test_configure_screen_cancel_button_dismisses(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
@@ -1163,13 +546,10 @@ def test_configure_screen_cancel_button_writes_nothing(tmp_path):
 
             assert not isinstance(app.screen, ConfigureScreen)
 
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
-
     asyncio.run(scenario())
 
 
-def test_configure_screen_escape_cancels_without_writing(tmp_path):
+def test_configure_screen_escape_cancels(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
@@ -1186,9 +566,6 @@ def test_configure_screen_escape_cancels_without_writing(tmp_path):
             await pilot.pause()
 
             assert not isinstance(app.screen, ConfigureScreen)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
 
     asyncio.run(scenario())
 
@@ -1228,11 +605,10 @@ def test_configure_screen_trim_deselects_a_proposed_check(
             assert freshness_cb.value is True  # proposed checks start selected
             freshness_cb.value = False
 
-            await pilot.click("#accept-btn")
-            await pilot.pause()
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
-        metrics = [c["metric"] for c in data["checks"]]
+        rendered = yaml.safe_load(yaml_text)
+        metrics = [c["metric"] for c in rendered["checks"]]
         assert "freshness" not in metrics
         assert "schema" in metrics
         assert "row_count" in metrics
@@ -1268,11 +644,10 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
             assert sum_cb.value is False
             sum_cb.value = True
 
-            await pilot.click("#accept-btn")
-            await pilot.pause()
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
-        sum_check = next(c for c in data["checks"] if c["metric"] == "sum")
+        rendered = yaml.safe_load(yaml_text)
+        sum_check = next(c for c in rendered["checks"] if c["metric"] == "sum")
         assert sum_check["column"] == "amount"
 
     asyncio.run(scenario())
@@ -1323,7 +698,7 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
         ),
     ],
 )
-def test_configure_screen_offered_check_value_is_written(
+def test_configure_screen_offered_check_value_is_rendered(
     tmp_path,
     metric,
     build_table,
@@ -1337,8 +712,8 @@ def test_configure_screen_offered_check_value_is_written(
     """The threshold Input beside an offered null_rate/freshness checkbox is
     pre-filled with the CLI wizard's own default for that metric (asserted
     before touching it, so the default-value coverage from the un-parametrized
-    version survives), and Accept writes whichever value sits in the Input at
-    that point -- the untouched default, or a value typed over it."""
+    version survives), and Accept renders whichever value sits in the Input
+    at that point -- the untouched default, or a value typed over it."""
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1371,13 +746,12 @@ def test_configure_screen_offered_check_value_is_written(
                 value_input.value = set_value
 
             app.screen.query_one(f"#offered-{column}-{metric}").value = True
-            await pilot.click("#accept-btn")
-            await pilot.pause()
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
+        rendered = yaml.safe_load(yaml_text)
         check = next(
             c
-            for c in data["checks"]
+            for c in rendered["checks"]
             if c["metric"] == metric and c["column"] == column
         )
         assert check["expect"][expect_key] == expect_value
@@ -1409,7 +783,7 @@ def test_configure_screen_offered_check_invalid_value_shows_error_toast(
 ):
     """An offered null_rate/freshness threshold that doesn't parse for its
     metric is reported back as an error toast -- the same value formats the
-    CLI wizard's prompt accepts -- rather than being written, or crashing
+    CLI wizard's prompt accepts -- rather than being rendered, or crashing
     the screen."""
 
     async def scenario():
@@ -1440,14 +814,11 @@ def test_configure_screen_offered_check_invalid_value_shows_error_toast(
             await pilot.click("#accept-btn")
             await pilot.pause()
 
-            # Did not crash: still on the Configure screen, with an error
-            # toast.
+            # Did not crash: still on the Configure screen (no YAML modal
+            # opened), with an error toast.
             assert isinstance(app.screen, ConfigureScreen)
             messages = [n.message for n in app._notifications]
             assert any(invalid_value in m for m in messages)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
 
     asyncio.run(scenario())
 
@@ -1490,7 +861,7 @@ def test_configure_screen_does_not_offer_metric_already_proposed_for_column(
     asyncio.run(scenario())
 
 
-def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
+def test_configure_screen_deselecting_everything_accepts_nothing(tmp_path):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
@@ -1514,23 +885,22 @@ def test_configure_screen_deselecting_everything_writes_nothing(tmp_path):
             await pilot.click("#accept-btn")
             await pilot.pause()
 
-            # Nothing was selected, so Accept is a no-op: still on Configure.
+            # Nothing was selected, so Accept is a no-op: no YAML modal
+            # opened, still on Configure.
             assert isinstance(app.screen, ConfigureScreen)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert data["checks"] == []
 
     asyncio.run(scenario())
 
 
-def test_configure_screen_accept_notifies_when_everything_dedups_away(
+def test_configure_screen_accept_warns_when_everything_dedups_away(
     tmp_path, pump_until
 ):
     """Every check the table would propose already exists in the config
     (same source/object/metric/column identity, regardless of threshold),
-    so Accept's dedup skips all of them and nothing new is written. Accept
-    must still tell the user that, rather than dismissing silently as if
-    something had been saved."""
+    so Accept's dedup (:func:`~dbfresh.configurator.partition_new_checks`)
+    excludes all of them from the rendered YAML. Accept must still tell the
+    user that, rather than opening an empty modal as if there were
+    something new to copy."""
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1580,12 +950,10 @@ def test_configure_screen_accept_notifies_when_everything_dedups_away(
             await pilot.click("#accept-btn")
             await pilot.pause()
 
+            # No new checks to show, so no modal opens.
+            assert isinstance(app.screen, ConfigureScreen)
             messages = [n.message for n in app._notifications]
-            assert any("0" in m and "wrote" in m for m in messages)
-            assert any("4" in m and "skipped" in m for m in messages)
-
-        data = yaml.safe_load(cfg.read_text())
-        assert len(data["checks"]) == 4
+            assert any("already defined" in m for m in messages)
 
     asyncio.run(scenario())
 
@@ -1596,10 +964,11 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
     """The Configure screen must open/propose cleanly against a config that
     already carries manually-tuned checks (non-default thresholds someone
     edited by hand) for the very object being configured, and Accept must
-    not silently overwrite the tuned value. A freshly proposed freshness
-    check on the same column collides on check_id with the existing
-    hand-tuned one -- identity deliberately ignores `expect` -- and is
-    skipped by append_checks's dedup, leaving the tuned threshold intact."""
+    not render a duplicate that would overwrite the tuned value if pasted.
+    A freshly proposed freshness check on the same column collides on
+    check_id with the existing hand-tuned one -- identity deliberately
+    ignores `expect` -- and is excluded from the rendered YAML by
+    :func:`~dbfresh.configurator.partition_new_checks`."""
 
     async def scenario():
         db = tmp_path / "data.db"
@@ -1645,21 +1014,16 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
 
             accept_btn = app.screen.query_one("#accept-btn")
             assert not accept_btn.disabled
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-            assert not isinstance(app.screen, ConfigureScreen)
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
-        freshness_checks = [
-            c
-            for c in data["checks"]
-            if c["metric"] == "freshness" and c["column"] == "modified_at"
-        ]
+            messages = [n.message for n in app._notifications]
+            assert any("already defined" in m for m in messages)
+
+        rendered = yaml.safe_load(yaml_text)
         # The proposed freshness (default 24h) collided on identity with
-        # the existing hand-tuned one and was skipped -- the tuned value
-        # survives rather than being duplicated or overwritten.
-        assert len(freshness_checks) == 1
-        assert freshness_checks[0]["expect"]["max_lag"] == "2h"
+        # the existing hand-tuned one and was excluded -- the modal never
+        # offers a block that would clobber the tuned threshold if pasted.
+        assert not any(c["metric"] == "freshness" for c in rendered["checks"])
 
     asyncio.run(scenario())
 
@@ -1681,45 +1045,6 @@ def _config_with_existing_checks(cfg_path, db):
         "    id: fct_between\n"
     )
     return cfg_path
-
-
-def test_existing_check_edit_row_keeps_input_and_save_on_screen(
-    tmp_path, pump_until
-):
-    """The editable existing-check row is Label + value Input + Save button
-    in a Horizontal; a full-width label or Input would push the Save button
-    off the right edge (the clip the ObjectDetail edit rows also guard).
-    The row renders below a 30-row fold, so assert the geometry directly
-    rather than lean on a snapshot.
-    """
-
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test(size=(100, 30)) as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-save-0"))
-            )
-
-            value_input = app.screen.query_one("#existing-value-0", Input)
-            save_button = app.screen.query_one("#existing-save-0", Button)
-            row = value_input.parent
-            # Neither the value box nor the Save button is pushed past the
-            # row's own right edge (with the pre-fix full-width Static label
-            # the Save button landed far off the 100-column screen).
-            assert value_input.region.right <= row.region.right
-            assert save_button.region.right <= row.region.right
-
-    asyncio.run(scenario())
 
 
 def test_configure_screen_shows_no_existing_checks_placeholder(
@@ -1754,9 +1079,15 @@ def test_configure_screen_shows_no_existing_checks_placeholder(
     asyncio.run(scenario())
 
 
-def test_configure_screen_existing_check_input_prefilled_with_current_value(
+def test_configure_screen_existing_checks_shown_read_only(
     tmp_path, pump_until
 ):
+    """The object's already-written checks are listed for reference beside
+    the proposal -- each as plain text (label plus its expectation, see
+    ``dbfresh.tui.dashboard.check_expectation_line``) -- with no Input or
+    Save button anywhere in the panel: config is a file the user edits by
+    hand, this panel only shows what's already there."""
+
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
@@ -1774,203 +1105,23 @@ def test_configure_screen_existing_check_input_prefilled_with_current_value(
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-value-0"))
+                pilot,
+                lambda: bool(
+                    app.screen.query_one("#existing-checks").children
+                ),
             )
 
-            value_input = app.screen.query_one("#existing-value-0")
-            assert value_input.value == "100"
+            existing = app.screen.query_one("#existing-checks")
+            lines = [str(child.render()) for child in existing.children]
+            assert any("100" in line for line in lines)
+            assert any("between" in line for line in lines)
+            assert not existing.query(Input)
+            assert not existing.query(Button)
 
     asyncio.run(scenario())
 
 
-def test_configure_screen_between_operator_check_is_read_only(tmp_path):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-
-            # Only the row_count/max check (index 0) is editable -- the
-            # row_count/between check has no single-scalar operand to edit.
-            with pytest.raises(NoMatches):
-                app.screen.query_one("#existing-value-1")
-            with pytest.raises(NoMatches):
-                app.screen.query_one("#existing-save-1")
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_save_existing_check_rewrites_expect_on_disk(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-value-0"))
-            )
-
-            app.screen.query_one("#existing-value-0").value = "500"
-            app.screen.query_one("#existing-save-0", Button).press()
-            await pilot.pause()
-
-        data = yaml.safe_load(cfg.read_text())
-        row_count_checks = [
-            c
-            for c in data["checks"]
-            if c["metric"] == "row_count" and "max" in c["expect"]
-        ]
-        assert row_count_checks[0]["expect"]["max"] == 500.0
-        # The other check is untouched.
-        between_checks = [
-            c for c in data["checks"] if "between" in c["expect"]
-        ]
-        assert between_checks[0]["expect"]["between"] == [1, 1000]
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_save_existing_check_does_not_change_check_id(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-value-0"))
-            )
-
-            app.screen.query_one("#existing-value-0").value = "500"
-            app.screen.query_one("#existing-save-0", Button).press()
-            await pilot.pause()
-
-        config = load_config(cfg)
-        matches = [
-            c
-            for c in config.checks
-            if c.metric == "row_count" and c.expect.operator == "max"
-        ]
-        assert len(matches) == 1  # still one check, not duplicated or forked
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_save_existing_check_invalid_value_notifies_and_keeps_disk(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-        original_text = cfg.read_text()
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-value-0"))
-            )
-
-            app.screen.query_one("#existing-value-0").value = "not-a-number"
-            app.screen.query_one("#existing-save-0", Button).press()
-            await pilot.pause()
-
-            messages = [n.message for n in app._notifications]
-            assert any("not a number" in m for m in messages)
-
-        assert cfg.read_text() == original_text
-
-    asyncio.run(scenario())
-
-
-def test_configure_screen_cancel_after_existing_edit_still_reloads_home(
-    tmp_path, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "s"
-            app.screen.query_one("#object-input").value = "fct"
-            await pilot.click("#propose-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot, lambda: bool(app.screen.query("#existing-value-0"))
-            )
-
-            app.screen.query_one("#existing-value-0").value = "500"
-            app.screen.query_one("#existing-save-0", Button).press()
-            await pilot.pause()
-
-            await pilot.click("#cancel-btn")
-            await pilot.pause()
-            assert not isinstance(app.screen, ConfigureScreen)
-
-        data = yaml.safe_load(cfg.read_text())
-        row_count_checks = [
-            c
-            for c in data["checks"]
-            if c["metric"] == "row_count" and "max" in c["expect"]
-        ]
-        assert row_count_checks[0]["expect"]["max"] == 500.0
-
-    asyncio.run(scenario())
-
-
-# -- proposed-check threshold input (df-cpj) -------------------------------
+# -- proposed-check threshold input -----------------------------------------
 #
 # sqlite_table's schema (id PK, amount REAL, modified_at TIMESTAMP) always
 # proposes in the same order: schema(0), row_count(1), freshness(2),
@@ -2065,13 +1216,11 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(
             )
 
             app.screen.query_one("#proposed-value-2").value = "48h"
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-            assert not isinstance(app.screen, ConfigureScreen)
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
+        rendered = yaml.safe_load(yaml_text)
         freshness_checks = [
-            c for c in data["checks"] if c["metric"] == "freshness"
+            c for c in rendered["checks"] if c["metric"] == "freshness"
         ]
         assert len(freshness_checks) == 1
         assert freshness_checks[0]["expect"]["max_lag"] == "48h"
@@ -2079,14 +1228,13 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(
     asyncio.run(scenario())
 
 
-def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing(
+def test_configure_screen_accept_invalid_proposed_freshness_value_shows_error(
     tmp_path, pump_until
 ):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
         cfg = _config(tmp_path / "config.yaml", db)
-        original_text = cfg.read_text()
 
         app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
         async with app.run_test() as pilot:
@@ -2107,13 +1255,11 @@ def test_configure_screen_accept_invalid_proposed_freshness_value_writes_nothing
             await pilot.click("#accept-btn")
             await pilot.pause()
 
-            # Errors keep the screen open rather than dismissing with a
-            # partially-accepted bundle.
+            # Errors keep the screen open rather than opening a modal with
+            # a partially-accepted bundle.
             assert isinstance(app.screen, ConfigureScreen)
             messages = [n.message for n in app._notifications]
             assert any("invalid max lag" in m for m in messages)
-
-        assert cfg.read_text() == original_text
 
     asyncio.run(scenario())
 
@@ -2141,16 +1287,16 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(
                 pilot, lambda: bool(app.screen.query("#proposed-value-2"))
             )
 
+            # An unparseable value in an unchecked freshness row must never
+            # block Accept -- only checked rows are rebuilt and validated.
             app.screen.query_one("#proposed-value-2").value = "not-a-duration"
             app.screen.query_one(
                 "#proposed-2-freshness", Checkbox
             ).value = False
-            await pilot.click("#accept-btn")
-            await pilot.pause()
-            assert not isinstance(app.screen, ConfigureScreen)
+            yaml_text = await _accept_and_open_yaml(pilot)
 
-        data = yaml.safe_load(cfg.read_text())
-        assert not any(c["metric"] == "freshness" for c in data["checks"])
+        rendered = yaml.safe_load(yaml_text)
+        assert not any(c["metric"] == "freshness" for c in rendered["checks"])
 
     asyncio.run(scenario())
 
@@ -2257,281 +1403,10 @@ def test_object_input_suggester_empty_when_source_has_no_known_objects(
     asyncio.run(scenario())
 
 
-# -- edit / remove a configured source (source-edit-and-object-picker) -----
+# -- ProposalYamlScreen (Accept's read-only YAML modal) ---------------------
 
 
-def test_edit_and_remove_source_buttons_disabled_at_zero_sources(tmp_path):
-    async def scenario():
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources: {}\nchecks: []\n")
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            assert app.screen.query_one("#edit-source-btn", Button).disabled
-            assert app.screen.query_one("#remove-source-btn", Button).disabled
-
-    asyncio.run(scenario())
-
-
-def test_edit_source_prefills_raw_var_token_not_resolved(
-    tmp_path, monkeypatch
-):
-    """The edit form must pre-fill the ${VAR} token exactly as it's written
-    in the YAML -- never a resolved secret -- even though the referenced
-    variable is set (and thus resolvable) in this test's own environment."""
-
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        monkeypatch.setenv("DBFRESH_TEST_DB", str(db))
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            "sources:\n  s: { type: sqlite, database: '${DBFRESH_TEST_DB}' }\n"
-            "checks: []\n"
-        )
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            await pilot.click("#edit-source-btn")
-            await pilot.pause()
-
-            assert app.screen.query_one("#new-source-form").display
-            heading = str(app.screen.query_one("#new-source-heading").render())
-            assert "Edit source: s" in heading
-
-            name_input = app.screen.query_one("#new-source-name-input", Input)
-            assert name_input.value == "s"
-            assert name_input.disabled
-            type_select = app.screen.query_one(
-                "#new-source-type-select", Select
-            )
-            assert type_select.value == "sqlite"
-
-            params_text = app.screen.query_one(
-                "#new-source-params", TextArea
-            ).text
-            assert "${DBFRESH_TEST_DB}" in params_text
-            assert str(db) not in params_text
-
-    asyncio.run(scenario())
-
-
-def test_edit_source_probe_success_rewrites_source_keeping_var_raw(
-    tmp_path, monkeypatch, pump_until
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        new_db = tmp_path / "new-data.db"
-        sqlite_table(new_db)
-        monkeypatch.setenv("DBFRESH_TEST_DB", str(new_db))
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\nchecks: []\n'
-        )
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            await pilot.click("#edit-source-btn")
-            await pilot.pause()
-
-            app.screen.query_one(
-                "#new-source-params", TextArea
-            ).text = "database=${DBFRESH_TEST_DB}"
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: (
-                    app.screen._config.sources.get("s") is not None
-                    and app.screen._config.sources["s"].params.get("database")
-                    == str(new_db)
-                ),
-            )
-
-            # Back on the propose form, source still selected, in-memory
-            # params resolved for immediate use this session.
-            assert not app.screen.query_one("#new-source-form").display
-            assert app.screen.query_one("#source-select").value == "s"
-            assert app.screen._config.sources["s"].params["database"] == str(
-                new_db
-            )
-            # The edit already wrote to disk -- Home must reload on dismiss.
-            assert app.screen._config_changed is True
-
-        # Disk keeps the raw ${VAR} token -- never a resolved secret.
-        data = yaml.safe_load(cfg.read_text())
-        assert data["sources"]["s"]["database"] == "${DBFRESH_TEST_DB}"
-
-    asyncio.run(scenario())
-
-
-def test_edit_source_probe_failure_shows_error_and_writes_nothing(
-    tmp_path, monkeypatch, pump_until
-):
-    async def scenario():
-        monkeypatch.setitem(
-            factory._ADAPTERS, "unreachable", _FakeUnreachableAdapter
-        )
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text("sources:\n  s: { type: unreachable }\nchecks: []\n")
-        original = cfg.read_text()
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            await pilot.click("#edit-source-btn")
-            await pilot.pause()
-
-            await pilot.click("#new-source-add-btn")
-            await pilot.app.workers.wait_for_complete()
-            await pilot.pause()
-            await pump_until(
-                pilot,
-                lambda: any(
-                    "could not connect" in n.message
-                    for n in app._notifications
-                ),
-            )
-
-            # Did not crash: still on Configure, edit form still open, an
-            # error toast -- nothing written.
-            assert isinstance(app.screen, ConfigureScreen)
-            assert app.screen.query_one("#new-source-form").display
-            messages = [n.message for n in app._notifications]
-            assert any("could not connect" in m for m in messages)
-
-        assert cfg.read_text() == original
-
-    asyncio.run(scenario())
-
-
-def test_remove_source_two_press_confirm_then_cancel_keeps_source(tmp_path):
-    async def scenario():
-        db_a = tmp_path / "a.db"
-        db_b = tmp_path / "b.db"
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            f"sources:\n"
-            f'  a: {{ type: sqlite, database: "{db_a}" }}\n'
-            f'  b: {{ type: sqlite, database: "{db_b}" }}\n'
-            "checks: []\n"
-        )
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "a"
-            await pilot.pause()
-
-            await pilot.click("#remove-source-btn")
-            await pilot.pause()
-            assert app.screen.query_one("#remove-source-confirm-row").display
-
-            await pilot.click("#remove-source-cancel-btn")
-            await pilot.pause()
-            assert not app.screen.query_one(
-                "#remove-source-confirm-row"
-            ).display
-
-        data = yaml.safe_load(cfg.read_text())
-        assert set(data["sources"]) == {"a", "b"}
-
-    asyncio.run(scenario())
-
-
-def test_remove_source_second_press_removes_and_selects_remaining(tmp_path):
-    async def scenario():
-        db_a = tmp_path / "a.db"
-        db_b = tmp_path / "b.db"
-        cfg = tmp_path / "config.yaml"
-        cfg.write_text(
-            f"sources:\n"
-            f'  a: {{ type: sqlite, database: "{db_a}" }}\n'
-            f'  b: {{ type: sqlite, database: "{db_b}" }}\n'
-            "checks: []\n"
-        )
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            app.screen.query_one("#source-select").value = "a"
-            await pilot.pause()
-
-            await pilot.click("#remove-source-btn")
-            await pilot.pause()
-            await pilot.click("#remove-source-confirm-btn")
-            await pilot.pause()
-
-            assert not app.screen.query_one(
-                "#remove-source-confirm-row"
-            ).display
-            select = app.screen.query_one("#source-select")
-            assert select.value == "b"
-            assert "a" not in app.screen._config.sources
-            assert app.screen._config_changed is True
-
-        data = yaml.safe_load(cfg.read_text())
-        assert set(data["sources"]) == {"b"}
-
-    asyncio.run(scenario())
-
-
-def test_remove_source_with_orphaned_checks_shows_error_and_writes_nothing(
-    tmp_path,
-):
-    async def scenario():
-        db = tmp_path / "data.db"
-        sqlite_table(db)
-        cfg = _config_with_existing_checks(tmp_path / "config.yaml", db)
-        original = cfg.read_text()
-
-        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
-        async with app.run_test() as pilot:
-            await pilot.pause()
-            await pilot.press("c")
-            await pilot.pause()
-
-            assert app.screen.query_one("#source-select").value == "s"
-            await pilot.click("#remove-source-btn")
-            await pilot.pause()
-            await pilot.click("#remove-source-confirm-btn")
-            await pilot.pause()
-
-            messages = [n.message for n in app._notifications]
-            assert any("check(s) still reference" in m for m in messages)
-            assert isinstance(app.screen, ConfigureScreen)
-            assert "s" in app.screen._config.sources
-
-        assert cfg.read_text() == original
-
-    asyncio.run(scenario())
-
-
-def test_remove_last_source_opens_new_source_form(tmp_path):
+def test_proposal_yaml_screen_names_the_config_path(tmp_path, pump_until):
     async def scenario():
         db = tmp_path / "data.db"
         sqlite_table(db)
@@ -2543,17 +1418,145 @@ def test_remove_last_source_opens_new_source_form(tmp_path):
             await pilot.press("c")
             await pilot.pause()
 
-            assert app.screen.query_one("#source-select").value == "s"
-            await pilot.click("#remove-source-btn")
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
             await pilot.pause()
-            await pilot.click("#remove-source-confirm-btn")
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
+
+            await _accept_and_open_yaml(pilot)
+
+            note = str(app.screen.query_one("#proposal-yaml-note").render())
+            assert str(cfg) in note
+            assert "checks:" in note
+
+    asyncio.run(scenario())
+
+
+def test_proposal_yaml_screen_copy_button_copies_to_clipboard(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        sqlite_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
             await pilot.pause()
 
-            assert app.screen.query_one("#new-source-form").display
-            assert not app.screen.query_one("#propose-section").display
-            assert app.screen._config_changed is True
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
 
-        data = yaml.safe_load(cfg.read_text())
-        assert not data.get("sources")  # {} or None both count as "empty"
+            yaml_text = await _accept_and_open_yaml(pilot)
+            await pilot.click("#proposal-yaml-copy-btn")
+            await pilot.pause()
+
+            assert app._clipboard == yaml_text
+
+    asyncio.run(scenario())
+
+
+def test_proposal_yaml_screen_close_button_returns_to_configure(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        sqlite_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
+
+            await _accept_and_open_yaml(pilot)
+            await pilot.click("#proposal-yaml-close-btn")
+            await pilot.pause()
+
+            # Back on Configure, not Home -- Accept only ever opens a modal
+            # on top of it, never dismisses Configure itself.
+            assert isinstance(app.screen, ConfigureScreen)
+
+    asyncio.run(scenario())
+
+
+def test_proposal_yaml_screen_escape_returns_to_configure(
+    tmp_path, pump_until
+):
+    async def scenario():
+        db = tmp_path / "data.db"
+        sqlite_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
+
+            await _accept_and_open_yaml(pilot)
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert isinstance(app.screen, ConfigureScreen)
+
+    asyncio.run(scenario())
+
+
+def test_proposal_yaml_screen_text_area_is_read_only(tmp_path, pump_until):
+    async def scenario():
+        db = tmp_path / "data.db"
+        sqlite_table(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("c")
+            await pilot.pause()
+
+            app.screen.query_one("#source-select").value = "s"
+            app.screen.query_one("#object-input").value = "fct"
+            await pilot.click("#propose-btn")
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+            await pump_until(
+                pilot, lambda: not app.screen.query_one("#accept-btn").disabled
+            )
+
+            await _accept_and_open_yaml(pilot)
+            text_area = app.screen.query_one("#proposal-yaml-text", TextArea)
+            assert text_area.read_only
 
     asyncio.run(scenario())
