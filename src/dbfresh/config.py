@@ -143,6 +143,41 @@ class ConfigError(ValueError):
     """
 
 
+@dataclass(frozen=True)
+class ConfigProblem:
+    """One problem found while validating a config, attributed to the
+    file(s) it involves.
+
+    ``files`` holds one entry for almost every problem -- the file a
+    malformed check or an unresolved ``${VAR}`` came from. A duplicate
+    ``check_id`` spanning two files is the one case with two entries, so
+    a report grouped by file can list it under both.
+    """
+
+    files: tuple[Path, ...]
+    message: str
+
+
+@dataclass
+class ConfigValidation:
+    """The result of :func:`validate_config`: every problem found, plus
+    the :class:`Config` it was still able to resolve.
+
+    ``config`` is populated even when ``problems`` is non-empty -- a check
+    that failed to build is simply left out of ``config.checks`` -- so a
+    report can be built directly on top of what the config resolves to,
+    without re-loading anything.
+    """
+
+    path: Path
+    config: Config
+    problems: list[ConfigProblem]
+
+    @property
+    def ok(self) -> bool:
+        return not self.problems
+
+
 def _parse_by_weekday(
     raw: Any, metric: str | None = None
 ) -> dict[str, Any] | None:
@@ -233,6 +268,32 @@ def _build_check(raw: dict, defaults: dict) -> Check:
     )
 
 
+def _describe_raw_check(raw: Any) -> str:
+    """A best-effort check label for a raw block that failed to even
+    build into a :class:`Check` -- :func:`~dbfresh.checks.describe_check`
+    needs a built ``Check``, which doesn't exist yet for one of these, so
+    this falls back to whatever of ``source``/``object`` the raw block
+    does have.
+    """
+    if not isinstance(raw, dict):
+        return "check"
+    return f"{raw.get('source', '?')}.{raw.get('object', '?')}"
+
+
+def _config_error_text(exc: Exception) -> str:
+    """Translate a check-build exception into message text.
+
+    Shared by :func:`_load_config_or_raise` (the single-error path) and
+    :func:`_load_config`'s collecting path, so the two never drift on
+    wording for the same underlying exception.
+    """
+    if isinstance(exc, KeyError):
+        return f"missing required field: {exc}"
+    if isinstance(exc, TypeError):
+        return f"invalid expectation: {exc}"
+    return str(exc)
+
+
 def resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
     """Resolve root-only ``include:`` globs to matched files.
 
@@ -297,17 +358,31 @@ def _read_included_file(
 
 
 def _load_config_or_raise(
-    path: str | Path, env: dict[str, str] | None, collect_missing: bool
-) -> tuple[Config, frozenset[str]]:
-    """Shared exception-translation boundary for :func:`load_config` and
-    :func:`load_config_tolerant` -- both call :func:`_load_config` and
-    turn every failure mode into a single :class:`ConfigError`, chained
-    from its underlying cause: a missing or unreadable file, a YAML parse
-    error, a missing required field, an invalid expectation, or any of
-    the validation checks in :func:`_validate_checks` / :func:`_validate_sources`.
+    path: str | Path,
+    env: dict[str, str] | None,
+    collect_missing: bool,
+    collect_all_errors: bool = False,
+) -> tuple[Config, frozenset[str], list[ConfigProblem]]:
+    """Shared exception-translation boundary for :func:`load_config`,
+    :func:`load_config_tolerant`, and :func:`validate_config` -- all
+    three call :func:`_load_config` and turn every failure mode into a
+    single :class:`ConfigError`, chained from its underlying cause: a
+    missing or unreadable file, a YAML parse error, a missing required
+    field, an invalid expectation, or any of the validation checks in
+    :func:`_validate_checks` / :func:`_validate_sources`.
+
+    Only :func:`validate_config` passes ``collect_all_errors=True``; even
+    then, a problem that blocks resolving the check set at all (bad YAML,
+    an unmatched ``include:`` glob, ...) still raises here rather than
+    being collected -- see :func:`_load_config`.
     """
     try:
-        return _load_config(path, env, collect_missing=collect_missing)
+        return _load_config(
+            path,
+            env,
+            collect_missing=collect_missing,
+            collect_all_errors=collect_all_errors,
+        )
     except ConfigError:
         raise
     except FileNotFoundError as exc:
@@ -316,12 +391,8 @@ def _load_config_or_raise(
         raise ConfigError(f"cannot read config file {path}: {exc}") from exc
     except yaml.YAMLError as exc:
         raise ConfigError(f"invalid YAML in {path}: {exc}") from exc
-    except KeyError as exc:
-        raise ConfigError(f"missing required field: {exc}") from exc
-    except TypeError as exc:
-        raise ConfigError(f"invalid expectation: {exc}") from exc
-    except ValueError as exc:
-        raise ConfigError(str(exc)) from exc
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ConfigError(_config_error_text(exc)) from exc
 
 
 def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
@@ -342,7 +413,9 @@ def load_config(path: str | Path, env: dict[str, str] | None = None) -> Config:
     for the one caller (``dbfresh ui``) that needs an undefined variable
     to not be fatal.
     """
-    config, _missing = _load_config_or_raise(path, env, collect_missing=False)
+    config, _missing, _problems = _load_config_or_raise(
+        path, env, collect_missing=False
+    )
     return config
 
 
@@ -367,7 +440,32 @@ def load_config_tolerant(
     missing secret, since a CLI run against an unresolved secret should
     fail clearly rather than silently query the wrong thing.
     """
-    return _load_config_or_raise(path, env, collect_missing=True)
+    config, missing, _problems = _load_config_or_raise(
+        path, env, collect_missing=True
+    )
+    return config, missing
+
+
+def validate_config(
+    path: str | Path, env: dict[str, str] | None = None
+) -> ConfigValidation:
+    """Load ``path`` exactly as :func:`load_config` does, but collect
+    every check-build and validation problem instead of stopping at the
+    first -- the engine behind ``dbfresh config validate``.
+
+    Every malformed check, unknown source reference, duplicate
+    ``check_id``, and undefined ``${VAR}`` reference is collected and
+    attributed to the file it came from, via :func:`_load_config`'s
+    ``collect_all_errors`` path. A problem that blocks resolving the
+    check set entirely -- a missing or unreadable file, invalid YAML, or
+    an ``include:`` glob matching no files -- cannot be collected past
+    and still raises :class:`ConfigError`, exactly as :func:`load_config`
+    does.
+    """
+    config, _missing, problems = _load_config_or_raise(
+        path, env, collect_missing=True, collect_all_errors=True
+    )
+    return ConfigValidation(path=Path(path), config=config, problems=problems)
 
 
 def collect_referenced_env_vars(path: str | Path) -> list[str]:
@@ -487,7 +585,7 @@ def _validate_checks(
     checks: list[Check],
     sources: dict[str, SourceConfig],
     calendar: BusinessCalendar | None,
-) -> list[ValueError]:
+) -> list[tuple[tuple[int, ...], ValueError]]:
     """Collect every check-level validation problem instead of raising on
     the first one found.
 
@@ -498,17 +596,25 @@ def _validate_checks(
     ``severity``, ``max_lag`` used outside ``freshness``, freshness-source
     problems (missing column, dialect capability), duplicate ``check_id``s,
     and calendar features used without a top-level ``calendar:`` block.
+
+    Each error is paired with the index (into ``checks``) of the check
+    responsible for it -- both indices, for a duplicate ``check_id``, since
+    two checks collide. :func:`_load_config`'s collecting path uses this
+    to attribute a problem to the file the offending check came from; the
+    raising path discards the tag and raises the bare errors, in the same
+    order, exactly as before this tagging existed.
     """
-    errors: list[ValueError] = []
-    seen: dict[str, Check] = {}
+    errors: list[tuple[tuple[int, ...], ValueError]] = []
+    seen: dict[str, tuple[int, Check]] = {}
     metric_names = {spec.name for spec in METRICS}
 
-    for raw, check in zip(raw_checks, checks, strict=True):
+    for i, (raw, check) in enumerate(zip(raw_checks, checks, strict=True)):
         label = describe_check(check)
+        check_errors: list[ValueError] = []
 
         extra_keys = sorted(set(raw) - _CHECK_KEYS)
         if extra_keys:
-            errors.append(
+            check_errors.append(
                 ValueError(f"{label}: unknown check field(s): {extra_keys}")
             )
 
@@ -522,13 +628,13 @@ def _validate_checks(
             if present
         ]
         if not primitives:
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"{label}: check has none of metric, assert, or assert_sql"
                 )
             )
         elif len(primitives) > 1:
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"{label}: check has more than one of metric/assert/assert_sql "
                     f"({', '.join(primitives)}) -- a check must set exactly one"
@@ -536,7 +642,7 @@ def _validate_checks(
             )
 
         if check.severity not in _VALID_SEVERITIES:
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"{label}: severity must be 'error' or 'warn', "
                     f"got {check.severity!r}"
@@ -548,25 +654,27 @@ def _validate_checks(
             and check.expect.operator == "max_lag"
             and check.metric != "freshness"
         ):
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"{label}: 'max_lag' is only valid for the freshness metric"
                 )
             )
 
         if check.source not in sources:
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"check references unknown source: {check.source!r}"
                 )
             )
         elif check.metric is not None and check.metric not in metric_names:
-            errors.append(
+            check_errors.append(
                 ValueError(f"{label}: unknown metric: {check.metric!r}")
             )
         elif check.metric is not None:
-            errors.extend(_validate_metric_fields(check, label))
-            errors.extend(_validate_freshness_source(check, sources, label))
+            check_errors.extend(_validate_metric_fields(check, label))
+            check_errors.extend(
+                _validate_freshness_source(check, sources, label)
+            )
 
         if not calendar and (
             check.by_weekday
@@ -574,7 +682,7 @@ def _validate_checks(
             or check.calendar == "business"
             or check.skip_off_schedule
         ):
-            errors.append(
+            check_errors.append(
                 ValueError(
                     f"check on {check.object!r} uses calendar features "
                     "(by_weekday/on_holiday/calendar/skip_off_schedule) but no "
@@ -582,17 +690,23 @@ def _validate_checks(
                 )
             )
 
+        errors.extend(((i,), error) for error in check_errors)
+
         cid = check_id(check)
         if cid in seen:
+            seen_index, seen_check = seen[cid]
             errors.append(
-                ValueError(
-                    f"duplicate check_id {cid!r}: {describe_check(seen[cid])} and "
-                    f"{label} collide -- add an explicit id: to "
-                    "one of them to disambiguate"
+                (
+                    (seen_index, i),
+                    ValueError(
+                        f"duplicate check_id {cid!r}: {describe_check(seen_check)} "
+                        f"and {label} collide -- add an explicit id: to "
+                        "one of them to disambiguate"
+                    ),
                 )
             )
         else:
-            seen[cid] = check
+            seen[cid] = (i, check)
 
     return errors
 
@@ -721,20 +835,44 @@ def _load_config(
     path: str | Path,
     env: dict[str, str] | None = None,
     collect_missing: bool = False,
-) -> tuple[Config, frozenset[str]]:
+    collect_all_errors: bool = False,
+) -> tuple[Config, frozenset[str], list[ConfigProblem]]:
     """``collect_missing`` mirrors :func:`interpolate_env`'s own ``missing``
     parameter: false (the default, used by :func:`load_config`) raises on
-    any undefined ``${VAR}``; true (used by :func:`load_config_tolerant`)
-    collects every undefined name into the returned set instead, leaving
-    the ``${VAR}`` token literal in place rather than resolving it.
+    any undefined ``${VAR}``; true (used by :func:`load_config_tolerant`
+    and :func:`validate_config`) collects every undefined name into the
+    returned set instead, leaving the ``${VAR}`` token literal in place
+    rather than resolving it.
+
+    ``collect_all_errors`` (only ``True`` for :func:`validate_config`)
+    changes how a broken check list is handled: a check that fails to
+    build is skipped and recorded as a :class:`ConfigProblem` instead of
+    raising immediately, and the :func:`_validate_sources` /
+    :func:`_validate_checks` problems are likewise collected and returned
+    rather than raised via :func:`_raise_validation_errors`. Everything
+    upstream of the check list -- YAML parsing, ``include:`` resolution --
+    is unaffected and still raises: a config whose check set can't even be
+    determined has nothing to collect past that point. The returned
+    ``list[ConfigProblem]`` is always empty when ``collect_all_errors`` is
+    false, since any problem would already have raised by the time this
+    function returns.
     """
     path = Path(path)
     config_dir = path.resolve().parent
     data = yaml.safe_load(path.read_text()) or {}
-    missing: set[str] = set()
-    data = interpolate_env(data, env, missing)
 
-    raw_checks = list(data.get("checks") or [])
+    # Each file's undefined ${VAR} names are collected into their own set
+    # (not one set shared across the root and every included file) so the
+    # collecting path can attribute each one to the file that referenced
+    # it; `missing` below re-merges them into the single flat set the
+    # raising path has always used.
+    missing_by_file: dict[Path, set[str]] = {}
+    root_missing: set[str] = set()
+    data = interpolate_env(data, env, root_missing)
+    missing_by_file[path] = root_missing
+
+    raw_checks: list[dict] = list(data.get("checks") or [])
+    check_files: list[Path] = [path] * len(raw_checks)
     include_patterns = data.get("include")
     if include_patterns:
         if isinstance(include_patterns, list):
@@ -750,7 +888,13 @@ def _load_config(
                 if not (isinstance(pattern, str) and _VAR.search(pattern))
             ]
         for include_path in resolve_includes(config_dir, include_patterns):
-            raw_checks.extend(_read_included_file(include_path, env, missing))
+            file_missing: set[str] = set()
+            included = _read_included_file(include_path, env, file_missing)
+            missing_by_file[include_path] = file_missing
+            raw_checks.extend(included)
+            check_files.extend([include_path] * len(included))
+
+    missing: set[str] = set().union(*missing_by_file.values())
 
     if missing and not collect_missing:
         names = ", ".join(sorted(missing))
@@ -775,7 +919,36 @@ def _load_config(
 
     defaults = data.get("defaults") or {}
 
-    checks = [_build_check(raw, defaults) for raw in raw_checks]
+    # A check that fails to build is either fatal (the default, matching
+    # `[_build_check(raw, defaults) for raw in raw_checks]`'s old
+    # first-failure behavior exactly) or, when collecting, skipped and
+    # recorded as a ConfigProblem -- `checks`/`checks_raw`/`checks_files`
+    # then hold only the ones that built, kept in lockstep for
+    # _validate_checks's zip below.
+    problems: list[ConfigProblem] = []
+    checks: list[Check] = []
+    checks_raw: list[dict] = []
+    checks_files: list[Path] = []
+    for raw, file in zip(raw_checks, check_files, strict=True):
+        try:
+            check = _build_check(raw, defaults)
+        except (KeyError, TypeError, ValueError) as exc:
+            if not collect_all_errors:
+                raise
+            problems.append(
+                ConfigProblem(
+                    files=(file,),
+                    message=(
+                        f"{_describe_raw_check(raw)}: "
+                        f"{_config_error_text(exc)}"
+                    ),
+                )
+            )
+            continue
+        checks.append(check)
+        checks_raw.append(raw)
+        checks_files.append(file)
+
     for check in checks:
         source = sources.get(check.source)
         if source is not None and source.timezone:
@@ -784,11 +957,36 @@ def _load_config(
     calendar_raw = data.get("calendar")
     calendar = build_calendar(calendar_raw) if calendar_raw else None
 
-    errors = _validate_sources(sources) + _validate_checks(
-        raw_checks, checks, sources, calendar
-    )
-    if errors:
-        _raise_validation_errors(errors)
+    source_errors = _validate_sources(sources)
+    check_errors = _validate_checks(checks_raw, checks, sources, calendar)
+
+    if collect_all_errors:
+        # Sources are root-only (an included file may declare only
+        # `checks:`), so every source problem is attributed to the root
+        # config file.
+        problems.extend(
+            ConfigProblem(files=(path,), message=str(error))
+            for error in source_errors
+        )
+        problems.extend(
+            ConfigProblem(
+                files=tuple(checks_files[i] for i in indices),
+                message=str(error),
+            )
+            for indices, error in check_errors
+        )
+        problems.extend(
+            ConfigProblem(
+                files=(file,),
+                message=f"undefined environment variable: {name}",
+            )
+            for file, names in missing_by_file.items()
+            for name in sorted(names)
+        )
+    else:
+        errors = source_errors + [error for _, error in check_errors]
+        if errors:
+            _raise_validation_errors(errors)
 
     return (
         Config(
@@ -799,4 +997,5 @@ def _load_config(
             calendar=calendar,
         ),
         frozenset(missing),
+        problems,
     )

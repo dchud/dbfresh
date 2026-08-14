@@ -20,6 +20,10 @@ once releases are tagged.
   and repeats it in the config-reload toast — surfacing checks a pulled
   config added.
 - Documentation of the versioned-config and `.env` team sharing workflow.
+- `dbfresh config validate` loads a config the way a run would and reports
+  every problem it finds — malformed checks, unknown source references,
+  duplicate check IDs, undefined `${VAR}` references — grouped by the file
+  each one came from, instead of stopping at the first.
 
 ### Changed
 
