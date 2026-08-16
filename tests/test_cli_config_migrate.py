@@ -102,6 +102,7 @@ checks:
     metric: row_count
     where: "region = 'US'"
     severity: warn
+    note: dips legitimately on month-end close
     by_weekday:
       mon: { max: 500 }
     on_holiday: { max: 50 }
@@ -124,6 +125,7 @@ checks:
             "metric": "row_count",
             "where": "region = 'US'",
             "severity": "warn",
+            "note": "dips legitimately on month-end close",
             "by_weekday": {"mon": {"max": 500}},
             "on_holiday": {"max": 50},
             "expect": {"max": 1000},

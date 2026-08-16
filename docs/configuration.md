@@ -62,6 +62,7 @@ tables:
 
       - metric: row_count
         expect: { between: [10000, 500000] }
+        note: dips legitimately on month-end close
         by_weekday:
           mon: { between: [0, 500000] }
           sat: { max: 100 }
@@ -343,6 +344,31 @@ parameters already cover that), `use:` taking a list of sets, a set
 referencing another set, conditionals, and computed expressions inside a
 placeholder.
 
+## `note:` -- recording why a check is written the way it is
+
+```yaml
+checks:
+  - source: warehouse
+    object: dbo.fct_sales
+    metric: row_count
+    expect: { between: [10000, 500000] }
+    note: dips legitimately on month-end close
+```
+
+`note:` is a plain string on a check block, with no structure and no
+validation beyond "is a string." It holds the context a threshold or a
+`where:` clause can't carry on its own -- why the bound sits where it
+does, what changed it, what it doesn't cover -- and shows up next to the
+check in `dbfresh ui`'s object detail panel, so that context is visible
+without opening the config file. It plays no part in `check_id`: editing
+or adding a note never orphans a stored observation.
+
+A note written on a `note: "{{ note }}"`-templated `check_sets:` item and
+filled from each table's own `with:` reads per table; a literal note
+written directly on a set item is shared verbatim by every table that
+pulls that set in with `use:` -- there is no per-table override of a
+set's own literal text, only what a placeholder lets a table supply.
+
 ## Validating a config
 
 ```bash
@@ -413,9 +439,10 @@ them.
 
 Entries come out in the order their pair first appears in the file, and a
 pair's own checks keep their original relative order. Every field on
-every check is preserved verbatim -- `id:`, `by_weekday:`, `on_holiday:`,
-`where:`, `severity:`, `freshness_source:`, anything else -- minus the
-`source:`/`object:` that move up to the entry. Restructuring a config
+every check is preserved verbatim -- `id:`, `note:`, `by_weekday:`,
+`on_holiday:`, `where:`, `severity:`, `freshness_source:`, anything else
+-- minus the `source:`/`object:` that move up to the entry. Restructuring
+a config
 this way never changes a check's `check_id` (see `check_id` and
 identity, above), so it never orphans a stored observation.
 

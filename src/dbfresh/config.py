@@ -40,6 +40,7 @@ _CHECK_KEYS = frozenset(
         "allow_empty",
         "severity",
         "id",
+        "note",
         "by_weekday",
         "on_holiday",
         "calendar",
@@ -701,6 +702,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
         allow_empty=raw.get("allow_empty", defaults.get("allow_empty", False)),
         severity=raw.get("severity", defaults.get("severity", "error")),
         id=raw.get("id"),
+        note=raw.get("note"),
         by_weekday=_parse_by_weekday(raw.get("by_weekday"), metric=metric),
         on_holiday=(
             parse_expectation(on_holiday, metric=metric)
@@ -1097,9 +1099,10 @@ def _validate_checks(
     discriminating fields, a metric check with no expectation, a check with
     none of metric/assert/assert_sql (or more than one of them -- exactly
     one primitive is required), unknown check-block keys, an invalid
-    ``severity``, ``max_lag`` used outside ``freshness``, freshness-source
-    problems (missing column, dialect capability), duplicate ``check_id``s,
-    and calendar features used without a top-level ``calendar:`` block.
+    ``severity``, a non-string ``note``, ``max_lag`` used outside
+    ``freshness``, freshness-source problems (missing column, dialect
+    capability), duplicate ``check_id``s, and calendar features used
+    without a top-level ``calendar:`` block.
 
     Each error is paired with the index (into ``checks``) of the check
     responsible for it -- both indices, for a duplicate ``check_id``, since
@@ -1150,6 +1153,13 @@ def _validate_checks(
                 ValueError(
                     f"{label}: severity must be 'error' or 'warn', "
                     f"got {check.severity!r}"
+                )
+            )
+
+        if check.note is not None and not isinstance(check.note, str):
+            check_errors.append(
+                ValueError(
+                    f"{label}: note must be a string, got {check.note!r}"
                 )
             )
 

@@ -4,9 +4,9 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static
 
-from dbfresh.checks import Check, check_id
+from dbfresh.checks import Check, check_id, parse_expectation
 from dbfresh.config import Config
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
@@ -14,7 +14,9 @@ from dbfresh.tui.dashboard import (
     GridRow,
     GridView,
     bucket_by_day,
+    check_expectation_line,
     check_label,
+    check_line_renderable,
     check_rows,
     header_key,
     is_header_key,
@@ -420,6 +422,91 @@ def test_check_label_key_level_metric_includes_key():
         source="s", object="orders", metric="duplicate_count", key="sku"
     )
     assert check_label(check) == "duplicate_count (sku)"
+
+
+# -- check_expectation_line -------------------------------------------------
+
+
+def test_check_expectation_line_without_a_note_is_unchanged():
+    check = Check(
+        source="s",
+        object="orders",
+        metric="row_count",
+        expect=parse_expectation({"between": [1, 10]}),
+    )
+    assert check_expectation_line(check) == "row_count: between 1 and 10"
+
+
+def test_check_expectation_line_appends_the_note_labeled_and_separated():
+    check = Check(
+        source="s",
+        object="orders",
+        metric="row_count",
+        expect=parse_expectation({"between": [1, 10]}),
+        note="dips legitimately on month-end close",
+    )
+    line = check_expectation_line(check)
+    assert line == (
+        "row_count: between 1 and 10 · "
+        "note: dips legitimately on month-end close"
+    )
+
+
+def test_check_expectation_line_note_on_an_assert_check_with_no_expectation():
+    check = Check(
+        source="s", object="orders", assert_="amount >= 0", note="see ticket"
+    )
+    assert (
+        check_expectation_line(check)
+        == "assert amount >= 0 · note: see ticket"
+    )
+
+
+def test_check_line_renderable_shows_bracketed_text_verbatim():
+    # A Static parses a str as console markup, so bracketed text that
+    # happens to name a style is swallowed from the display. Every part
+    # of this line is author-written -- an assertion's SQL, a note -- so
+    # the whole line renders through a Text, not just the field that
+    # prompted the question.
+    async def scenario():
+        for check, expected in (
+            (
+                Check(
+                    source="s",
+                    object="orders",
+                    assert_="status NOT IN [1,2] AND tag <> '[red]'",
+                ),
+                "'[red]'",
+            ),
+            (
+                Check(
+                    source="s",
+                    object="orders",
+                    metric="row_count",
+                    expect=parse_expectation({"max": 5}),
+                    note="widened after [red]2026-06[/red] backfill",
+                ),
+                "[red]2026-06[/red]",
+            ),
+        ):
+            renderable = check_line_renderable(check)
+
+            class T(App):
+                # Bound at class-creation time, inside the loop: a
+                # closure over `renderable` would read whatever the last
+                # iteration left behind.
+                line = renderable
+
+                def compose(self) -> ComposeResult:
+                    yield Static(self.line)
+
+            app = T()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                rendered = str(app.query_one(Static).render())
+                assert expected in rendered
+
+    asyncio.run(scenario())
 
 
 # -- status_glyph / status_style / status_legend ---------------------------
