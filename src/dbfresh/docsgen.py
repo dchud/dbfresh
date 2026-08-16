@@ -107,11 +107,17 @@ def render_matrix() -> str:
 
 def _subparsers_action(
     parser: argparse.ArgumentParser,
-) -> argparse._SubParsersAction:
+) -> argparse._SubParsersAction | None:
+    """The subcommands a parser declares, or ``None`` if it declares none.
+
+    Called on the top-level parser and again on each subparser, since a
+    subcommand may be a group holding subcommands of its own -- so "no
+    subcommands" is the ordinary answer for a leaf command, not an error.
+    """
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
             return action
-    raise RuntimeError("parser declares no subcommands")
+    return None
 
 
 def _command_help(sub_action: argparse._SubParsersAction) -> dict[str, str]:
@@ -125,7 +131,13 @@ def _command_help(sub_action: argparse._SubParsersAction) -> dict[str, str]:
 def _flag_rows(subparser: argparse.ArgumentParser) -> list[str]:
     rows = []
     for action in subparser._actions:
-        if isinstance(action, argparse._HelpAction):
+        # A group's subcommands are rendered as their own sections below
+        # it, so its subparsers action contributes no flag row -- left in,
+        # it prints the argparse dest name ("config_command") as though it
+        # were a flag the user types.
+        if isinstance(
+            action, (argparse._HelpAction, argparse._SubParsersAction)
+        ):
             continue
         flags = (
             ", ".join(action.option_strings)
@@ -141,19 +153,21 @@ def _flag_rows(subparser: argparse.ArgumentParser) -> list[str]:
     return rows
 
 
-def render_cli() -> str:
-    """The CLI reference: every command, its flags, and exit codes."""
-    parser = build_parser()
-    sub_action = _subparsers_action(parser)
+def _command_sections(
+    prog: str, sub_action: argparse._SubParsersAction, depth: int
+) -> list[str]:
+    """One section per subcommand, recursing into any that are groups.
+
+    ``prog`` is the command path so far, so a nested subcommand's heading
+    names the whole invocation (``dbfresh config validate``) rather than
+    the bare word a reader would not know where to type. ``depth`` is the
+    heading level, so a group's subcommands nest under it.
+    """
     command_help = _command_help(sub_action)
-
-    lines = [_GENERATED_BANNER, "# CLI reference", ""]
-    lines.append(f"`{parser.prog}` supports a global `--version` flag and the")
-    lines.append("following subcommands.")
-    lines.append("")
-
+    lines: list[str] = []
     for name, subparser in sub_action.choices.items():
-        lines.append(f"## `{parser.prog} {name}`")
+        path = f"{prog} {name}"
+        lines.append(f"{'#' * depth} `{path}`")
         lines.append("")
         lines.append(command_help.get(name, ""))
         lines.append("")
@@ -161,6 +175,25 @@ def render_cli() -> str:
         lines.append("| --- | --- | --- |")
         lines.extend(_flag_rows(subparser))
         lines.append("")
+
+        nested = _subparsers_action(subparser)
+        if nested is not None:
+            lines.extend(_command_sections(path, nested, depth + 1))
+    return lines
+
+
+def render_cli() -> str:
+    """The CLI reference: every command, its flags, and exit codes."""
+    parser = build_parser()
+    sub_action = _subparsers_action(parser)
+    if sub_action is None:
+        raise RuntimeError("parser declares no subcommands")
+
+    lines = [_GENERATED_BANNER, "# CLI reference", ""]
+    lines.append(f"`{parser.prog}` supports a global `--version` flag and the")
+    lines.append("following subcommands.")
+    lines.append("")
+    lines.extend(_command_sections(parser.prog, sub_action, depth=2))
 
     lines.append("## Exit codes")
     lines.append("")
