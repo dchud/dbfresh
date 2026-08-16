@@ -9,11 +9,13 @@ from dbfresh.adapters.databricks import DatabricksDialect
 from dbfresh.adapters.factory import create_adapter
 from dbfresh.adapters.sqlite import SqliteAdapter, SqliteDialect
 from dbfresh.adapters.sqlserver import TSqlDialect
+from dbfresh.checks import check_id
 from dbfresh.config import load_config
 from dbfresh.configurator import (
     key_introspection_note,
     offered_column_checks,
     propose_checks,
+    render_proposal,
 )
 from dbfresh.engine import Status, run_checks
 
@@ -239,6 +241,42 @@ def test_proposal_bundle_reparses_and_runs_under_load_config(tmp_path):
     run = run_checks(adapters, config.checks)
     adapters["s"].close()
     assert all(r.status != Status.ERROR for r in run.results)
+
+
+def test_rendered_tables_block_resolves_to_the_same_check_ids_as_flat_checks(
+    tmp_path,
+):
+    # render_proposal groups the same proposed dicts under tables: instead
+    # of a flat checks: list -- check_id hashes source/object/metric/
+    # column/key, never how the check was written, so grouping must not
+    # change a single check_id either form resolves to.
+    db = tmp_path / "data.db"
+    adapter = SqliteAdapter(str(db))
+    adapter.rows(
+        "CREATE TABLE fct (id INTEGER PRIMARY KEY, amount REAL, modified_at TIMESTAMP)"
+    )
+    info = adapter.describe("fct")
+    proposals = propose_checks("s", "fct", info, adapter.dialect)
+    adapter.close()
+
+    source_header = f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+
+    flat_path = tmp_path / "flat.yaml"
+    flat_path.write_text(
+        source_header + yaml.safe_dump({"checks": proposals}, sort_keys=False)
+    )
+    flat_config = load_config(flat_path)
+
+    grouped_path = tmp_path / "grouped.yaml"
+    grouped_path.write_text(source_header + render_proposal(None, proposals))
+    grouped_config = load_config(grouped_path)
+
+    assert (
+        len(flat_config.checks) == len(grouped_config.checks) == len(proposals)
+    )
+    assert {check_id(c) for c in flat_config.checks} == {
+        check_id(c) for c in grouped_config.checks
+    }
 
 
 def test_offered_checks_exclude_what_the_propose_flow_already_covers():

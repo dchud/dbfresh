@@ -40,6 +40,9 @@ once releases are tagged.
   you to paste; wizard prompts and guidance move to stderr so stdout holds
   only the YAML. Checks already defined anywhere in the composed config are
   still left out of the proposal.
+- `dbfresh add` and the TUI Configure screen emit proposed checks grouped
+  under a `tables:` entry, stating `source:`/`object:` once, instead of a
+  flat `checks:` list repeating them on every block.
 - The TUI no longer edits config files. The object-detail screen shows
   each check's threshold read-only, alongside the config path to edit by
   hand. The Configure screen still proposes checks against a live source,

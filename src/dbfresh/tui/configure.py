@@ -128,8 +128,13 @@ class ProposalYamlScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="proposal-yaml-panel"):
             yield Static("Proposed checks", classes="screen-heading")
+            # Names the line to start from rather than just the key: the
+            # block below carries its own `tables:`, and pasting that
+            # under an existing one would nest a second mapping inside
+            # the first instead of adding an entry to it.
             yield Static(
-                f"Paste under `checks:` in {self._config_path}.",
+                f"Merge into {self._config_path}: paste as-is, or from "
+                "`- source:` down if the file already has a `tables:` key.",
                 id="proposal-yaml-note",
             )
             yield TextArea(
