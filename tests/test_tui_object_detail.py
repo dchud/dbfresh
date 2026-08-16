@@ -144,6 +144,41 @@ def test_object_detail_shows_config_path_and_check_identity(tmp_path):
     asyncio.run(scenario())
 
 
+def test_object_detail_checks_panel_shows_a_checks_note(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = tmp_path / "config.yaml"
+        cfg.write_text(
+            f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+            "checks:\n"
+            "  - source: s\n"
+            "    object: t\n"
+            "    metric: row_count\n"
+            "    expect: { between: [1, 1000] }\n"
+            "    note: dips legitimately on month-end close\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            lines = [
+                str(child.render())
+                for child in app.screen.query_one(
+                    "#detail-checks-list"
+                ).children
+            ]
+            assert any(
+                "row_count" in line
+                and "between 1 and 1000" in line
+                and "note: dips legitimately on month-end close" in line
+                for line in lines
+            )
+
+    asyncio.run(scenario())
+
+
 def test_object_detail_checks_panel_has_no_edit_affordances(tmp_path):
     """Every check's threshold and delete controls are gone -- config is
     edited by hand, so the panel below the grid is text only."""

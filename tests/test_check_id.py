@@ -98,6 +98,17 @@ def test_check_id_assert_sql_differs_from_assert_with_same_text():
     assert check_id(predicate) != check_id(raw_sql)
 
 
+def test_check_id_ignores_note():
+    # note is never part of the identity tuple -- editing it (or adding
+    # one to a check that had none) preserves observation history exactly
+    # like editing an expectation threshold does.
+    unnoted = Check(source="s", object="t", metric="row_count")
+    noted = Check(
+        source="s", object="t", metric="row_count", note="dips at month-end"
+    )
+    assert check_id(unnoted) == check_id(noted)
+
+
 def test_check_id_ignores_freshness_source():
     # freshness_source is not part of the identity tuple: switching a
     # freshness check's origin preserves its observation history.

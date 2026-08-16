@@ -211,6 +211,7 @@ class Check:
     allow_empty: bool = False
     severity: str = "error"
     id: str | None = None
+    note: str | None = None
     by_weekday: dict[str, Expectation] | None = None
     on_holiday: Expectation | None = None
     calendar: str | None = None

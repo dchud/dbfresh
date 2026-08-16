@@ -48,7 +48,7 @@ from dbfresh.configurator import (
     propose_checks,
     render_proposal,
 )
-from dbfresh.tui.dashboard import check_expectation_line
+from dbfresh.tui.dashboard import check_line_renderable
 
 _PROPOSE_WORKER_GROUP = "propose"
 
@@ -418,7 +418,7 @@ class ConfigureScreen(Screen[None]):
             container.mount(Static("(none yet)"))
             return
         for check in checks:
-            container.mount(Static(check_expectation_line(check)))
+            container.mount(Static(check_line_renderable(check)))
 
     def _propose(self) -> None:
         """Validate the form, then hand introspection off to a worker thread.

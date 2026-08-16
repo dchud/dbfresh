@@ -41,8 +41,8 @@ from dbfresh.tui.dashboard import (
     GridRow,
     _status_cell,
     cancel_flashes,
-    check_expectation_line,
     check_label,
+    check_line_renderable,
     check_rows,
     flash_cell,
     populate_grid,
@@ -612,7 +612,7 @@ class ObjectDetailScreen(Screen[None]):
         yield Static(status_legend(), id="status-legend")
         checks = self._object_checks()
         check_lines = (
-            [Static(check_expectation_line(c)) for c in checks]
+            [Static(check_line_renderable(c)) for c in checks]
             if checks
             else [Static("(no checks for this object)")]
         )

@@ -32,6 +32,9 @@ once releases are tagged.
   each one came from, instead of stopping at the first.
 - `dbfresh config migrate` groups one file's checks into a `tables:` block
   and prints it to paste in place of that file's `checks:`/`tables:`.
+- An optional `note:` field on a check records freeform context (why a
+  threshold is set where it is, what changed it) and shows next to the
+  check in the TUI's object detail panel.
 
 ### Changed
 

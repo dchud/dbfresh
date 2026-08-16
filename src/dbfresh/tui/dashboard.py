@@ -222,11 +222,44 @@ def check_expectation_line(check: Check) -> str:
     find the matching block in the config file by eye. An assertion check
     has no separate ``expect:`` -- its assertion text is already part of
     its label.
+
+    A ``note:`` -- freeform author context, never validated beyond "is a
+    string" -- is appended after a ``·`` separator, the same joiner
+    :func:`_check_detail_text` uses for its own "expected ... observed
+    ..." pairing, so the two stay visually consistent rather than
+    inventing a second on-screen convention. Its own ``note:`` label makes
+    it identifiable at a glance without a dedicated color, and it comes
+    last so label and expectation -- which identify the check -- stay the
+    first thing read.
+
+    Returns plain text with no console markup of its own. Every part of it
+    is author-written -- an assertion's SQL, an object name, a note -- and
+    any of them may contain a literal ``[...]`` that console markup would
+    read as a style tag and swallow. Callers render it through
+    :func:`check_line_renderable` rather than escaping a field at a time,
+    so the whole line is literal and no future field has to remember.
     """
     label = check_label(check)
-    if check.expect is None:
-        return label
-    return f"{label}: {check.expect.describe()}"
+    line = (
+        label
+        if check.expect is None
+        else f"{label}: {check.expect.describe()}"
+    )
+    if check.note:
+        line = f"{line} · note: {check.note}"
+    return line
+
+
+def check_line_renderable(check: Check) -> Text:
+    """:func:`check_expectation_line` as a renderable that shows verbatim.
+
+    A ``Static`` parses a ``str`` as console markup, so an assertion like
+    ``status NOT IN [1,2] AND tag <> '[red]'`` loses the ``[red]`` from
+    the display entirely. A :class:`~rich.text.Text` is rendered as it
+    stands, which removes the whole class of problem rather than escaping
+    each field that might contain a bracket.
+    """
+    return Text(check_expectation_line(check))
 
 
 def _worst_or_unknown(statuses: list[Status]) -> Status | None:
