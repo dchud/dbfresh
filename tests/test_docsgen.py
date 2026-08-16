@@ -50,15 +50,44 @@ def test_matrix_page_matches_category_offers_exactly():
         assert marked == set(offered)
 
 
-def test_cli_page_lists_every_subcommand_and_exit_code():
-    content = docsgen.render_cli()
-    parser = build_parser()
+def _command_paths(parser, prefix="dbfresh"):
+    """Every command the parser accepts, at every depth, as the full
+    invocation a reader would type."""
     sub_action = docsgen._subparsers_action(parser)
-    for name in sub_action.choices:
-        assert f"`dbfresh {name}`" in content
+    if sub_action is None:
+        return []
+    paths = []
+    for name, subparser in sub_action.choices.items():
+        path = f"{prefix} {name}"
+        paths.append(path)
+        paths.extend(_command_paths(subparser, path))
+    return paths
+
+
+def test_cli_page_lists_every_subcommand_and_exit_code():
+    # Walks the whole parser tree, not just its top level: a subcommand
+    # group's own subcommands are where a reader learns the command
+    # exists at all, and asserting only top-level names would pass while
+    # leaving them undocumented.
+    content = docsgen.render_cli()
+    paths = _command_paths(build_parser())
+    assert any(path.count(" ") > 1 for path in paths), (
+        "expected at least one nested subcommand to exercise the recursion"
+    )
+    for path in paths:
+        assert f"`{path}`" in content
     for status in Status:
         assert str(exit_code(status)) in content
         assert status.value in content
+
+
+def test_cli_page_does_not_print_a_subcommand_dest_as_a_flag():
+    # A group's subparsers action carries the dest argparse dispatches on
+    # ("config_command"). Rendered as a flag row it reads as something
+    # the user types, which it is not -- the subcommands themselves are
+    # rendered as their own sections instead.
+    content = docsgen.render_cli()
+    assert "config_command" not in content
 
 
 def test_write_all_creates_the_four_generated_pages(tmp_path):
