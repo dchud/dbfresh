@@ -27,7 +27,7 @@ def test_config_example_yaml_exists():
 def test_config_example_loads_cleanly():
     cfg = load_config(_EXAMPLE_CONFIG, env=_ENV)
     assert set(cfg.sources) == {"warehouse", "lakehouse"}
-    assert len(cfg.checks) == 6
+    assert len(cfg.checks) == 11
 
 
 def test_config_example_sources_carry_timeout_and_timezone():

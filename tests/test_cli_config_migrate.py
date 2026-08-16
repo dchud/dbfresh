@@ -311,6 +311,95 @@ checks:
     assert "untouched" not in captured.out
 
 
+def test_set_backed_table_entry_is_preserved_verbatim(tmp_path, capsys):
+    # A tables: entry that uses a check set must survive migrate
+    # untouched, keeping its use:/with:/skip: -- expanding it here would
+    # bake the set's checks into the file as literal blocks, silently
+    # undoing the factoring and making the file bigger, the opposite of
+    # what migrate is for.
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+check_sets:
+  standard:
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: freshness
+        column: "{{ ts_column }}"
+        expect: { max_lag: 24h }
+
+tables:
+  - source: s
+    object: orders
+    use: standard
+    with: { ts_column: modified_at }
+    skip: [freshness]
+checks:
+  - source: s
+    object: customers
+    metric: row_count
+    expect: { max: 5 }
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    captured = capsys.readouterr()
+    doc = yaml.safe_load(captured.out)
+    assert code == 0
+    assert "carried over unchanged" in captured.err
+
+    set_backed = next(e for e in doc["tables"] if e.get("use") == "standard")
+    assert set_backed == {
+        "source": "s",
+        "object": "orders",
+        "use": "standard",
+        "with": {"ts_column": "modified_at"},
+        "skip": ["freshness"],
+    }
+    flat_entry = next(e for e in doc["tables"] if e["object"] == "customers")
+    assert flat_entry["checks"][0]["metric"] == "row_count"
+
+    # A table's parameters render inline, the way the docs write them. A
+    # block-style copy costs a line per parameter on every table in the
+    # file, in output whose whole purpose is a smaller one.
+    assert "with: {ts_column: modified_at}" in captured.out
+
+
+def test_already_grouped_file_with_a_set_backed_entry_needs_no_migration(
+    tmp_path, capsys
+):
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+check_sets:
+  standard:
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+
+tables:
+  - source: s
+    object: customers
+    checks:
+      - metric: row_count
+        expect: { max: 5 }
+  - source: s
+    object: orders
+    use: standard
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert captured.out == ""
+    assert "already" in captured.err.lower()
+
+
 def test_malformed_table_entry_is_a_config_error(tmp_path, capsys):
     cfg = write_file(
         tmp_path / "config.yaml",

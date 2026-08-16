@@ -31,6 +31,23 @@ sources:
 defaults: # merged into every check when absent; supports
   severity: error #   severity, calendar, where, allow_empty, skip_off_schedule
 
+# check_sets: named, parameterized check batteries -- see Named check
+# batteries under check_sets below.
+check_sets:
+  standard:
+    with:
+      rows: { vs_previous: { baseline: previous, min_ratio: 0.8, max_ratio: 1.2 } }
+      max_lag: 26h
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: row_count
+        expect: "{{ rows }}"
+      - metric: freshness
+        column: "{{ ts_column }}"
+        expect: { max_lag: "{{ max_lag }}" }
+        calendar: business
+
 # tables: groups checks that share a source/object, stating both once
 # instead of repeating them on every check nested under the entry.
 tables:
@@ -56,6 +73,21 @@ tables:
         freshness_source: column # or describe_history / describe_detail (Databricks tables)
         expect: { max_lag: 26h }
         calendar: business
+
+  # use: pulls in the standard battery; with: overrides ts_column, which
+  # has no set-level default. rows and max_lag fall through to the set's
+  # own defaults.
+  - source: warehouse
+    object: dbo.dim_customer
+    use: standard
+    with: { ts_column: modified_at }
+
+  # skip: drops the freshness item, so ts_column is never needed here.
+  - source: warehouse
+    object: dbo.ref_currency
+    use: standard
+    skip: [freshness]
+    with: { rows: { between: [1, 500] } }
 
 checks:
   - source: lakehouse
@@ -89,6 +121,7 @@ checks:
 | `defaults` | root only | fields merged into checks that omit them |
 | `checks` | root + included | the check list |
 | `tables` | root + included | checks grouped by shared source/object (see Grouping checks under tables) |
+| `check_sets` | root + included | named, parameterized check batteries a table pulls in via `use:` (see Named check batteries under check_sets) |
 
 A per-check value always overrides the corresponding `defaults:` entry,
 including an explicit falsy value (`allow_empty: false` on a check wins over
@@ -149,9 +182,13 @@ files:
   carries no semantics, since checks are independent of each other.
 - Only the root config may declare `include:`, `sources:`, `calendar:`,
   `store:`, and `defaults:`. An included file contributes only checks:
-  either a mapping with `checks:` and/or `tables:`, or a bare YAML
+  either a mapping with `checks:`/`tables:`/`check_sets:`, or a bare YAML
   sequence of check blocks. Any other top-level key in an included file
   is a validation error.
+- `check_sets:` composes the same way `checks:`/`tables:` does: a set
+  defined in one file can be `use:`d by a table in any other, root or
+  included. A set name defined in more than one file is a validation
+  error.
 - The composed check list (root plus every included file) is validated as
   one unit: a duplicate `check_id` anywhere across the files -- explicit or
   derived -- is a validation error, since it would make observation history
@@ -219,6 +256,92 @@ otherwise indistinguishable from a flat one: `defaults:` merging,
 way. Restructuring an existing flat config under `tables:` never changes
 a check's `check_id` (see `check_id` and identity, above), so it never
 orphans a stored observation.
+
+## Named check batteries under `check_sets:`
+
+Tables that share a shape -- the same handful of checks, differing only
+in a column name or a threshold -- can pull in a named battery instead of
+repeating the check bodies too:
+
+```yaml
+check_sets:
+  standard:
+    with: # parameter defaults; a table's own with: wins
+      rows: { vs_previous: { baseline: previous, min_ratio: 0.8, max_ratio: 1.2 } }
+      max_lag: 26h
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: row_count
+        expect: "{{ rows }}"
+      - metric: freshness
+        column: "{{ ts_column }}"
+        expect: { max_lag: "{{ max_lag }}" }
+        calendar: business
+
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    use: standard
+    with: { ts_column: modified_at }
+    checks: # custom checks, alongside the expanded set
+      - assert: "amount >= 0"
+
+  - source: warehouse
+    object: dbo.ref_currency
+    use: standard
+    skip: [freshness]
+    with: { rows: { between: [1, 500] } }
+```
+
+A `check_sets:` entry is always a mapping: `checks:` (required) is a list
+of check blocks exactly like the ones under a `tables:` entry, with
+`{{ name }}` placeholders standing in for values the table supplies; and
+`with:` (optional) gives those placeholders their defaults. An unknown key
+on a set is a validation error.
+
+A table pulls a set in with `use: <name>` (one set name; `use:` does not
+take a list). Its own `with:` overrides the set's defaults **key by key,
+shallow** -- a key a table supplies replaces that key's default value
+outright, never merged into it, since deep-merging two expectations (a
+`vs_previous` default and a `between` override, say) would produce
+nonsense. A placeholder with no value from either the set's `with:` or the
+table's is a validation error naming the table, the set, and the
+parameter. A `with:` key -- on the set or the table -- matching no
+placeholder anywhere in the set is a validation error too, naming the
+table, the set, and the key: it is almost always a misspelling. That check
+runs against the set's *full* placeholder set, ignoring `skip:`, so a
+set-level default used only by a skipped item never becomes an error for
+every table that skips it.
+
+Substitution has one mechanism, applied uniformly to every value in a
+set's `checks:`: a placeholder occupying an **entire scalar node** is
+replaced by the parameter's full value with its type preserved -- a
+mapping, a list, a number, or a string -- which is what lets
+`expect: "{{ rows }}"` carry a whole expectation mapping. A placeholder
+**embedded in a longer string** interpolates as text instead, and requires
+a scalar parameter; a mapping or list parameter used that way is a
+validation error.
+
+`skip:` names metrics and drops every set item carrying that metric from
+the expansion. Skipping a metric the set does not define is a validation
+error, not a silent no-op. A set item with no `metric:` (an `assert:`
+item) cannot be skipped by name, since `skip:` only ever matches on
+`metric:`. A table's own `with:` may still supply a parameter used only
+by an item it skips, without error.
+
+Checks expanded from a set come before the table's own inline `checks:`.
+An expanded check is, once resolved, indistinguishable from one written
+by hand: `defaults:` merging, `check_id` derivation, and every validation
+rule apply exactly the same way, so factoring an existing config under
+`check_sets:` never changes a check's `check_id`. `check_sets:` composes
+across files the same way `checks:`/`tables:` do (see Composition,
+above): a set defined in one file can be used by a table in any other.
+
+Out of scope, deliberately: per-item threshold overrides (a set's
+parameters already cover that), `use:` taking a list of sets, a set
+referencing another set, conditionals, and computed expressions inside a
+placeholder.
 
 ## Validating a config
 
@@ -295,6 +418,11 @@ every check is preserved verbatim -- `id:`, `by_weekday:`, `on_holiday:`,
 `source:`/`object:` that move up to the entry. Restructuring a config
 this way never changes a check's `check_id` (see `check_id` and
 identity, above), so it never orphans a stored observation.
+
+A `tables:` entry that pulls in a `check_sets:` battery via `use:` is
+carried over unchanged, keeping its `use:`/`with:`/`skip:` -- migrate
+never expands it into literal checks, since that would undo the factoring
+`check_sets:` exists for and grow the file instead of shrinking it.
 
 Comments attached to the individual checks being regrouped are not
 carried over -- the block is re-rendered from parsed data, not copied

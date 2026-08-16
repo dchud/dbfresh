@@ -55,17 +55,44 @@ _CHECK_KEYS = frozenset(
 # keeping their key sets apart is what lets `description`/`tags`/
 # `upstream`/`downstream` (a later addition, entry-level metadata with no
 # check-block equivalent) get added to this set alone, without touching
-# what a flat check accepts.
-_TABLE_ENTRY_KEYS = frozenset({"source", "object", "checks"})
+# what a flat check accepts. `use`/`with`/`skip` are the same story for
+# check_sets: table-entry fields that select and parameterize a named
+# battery, with no equivalent on a hand-written check block.
+_TABLE_ENTRY_KEYS = frozenset(
+    {"source", "object", "checks", "use", "with", "skip"}
+)
 
 # The two fields a table entry states once for every check nested under
 # it. A nested check repeating either is rejected outright rather than
 # silently allowed to override -- if a nested value could win, "the table
 # states it once" would stop being true, and a reader could no longer
-# trust the table header without checking every check under it.
+# trust the table header without checking every check under it. A
+# check_sets item is held to the same rule (see _expand_check_set): a set
+# describes check bodies, never which table they belong to.
 _TABLE_CHECK_OWN_FIELDS = frozenset({"source", "object"})
 
+# A check_sets entry is always {with: {...}, checks: [...]} -- with:
+# optional, checks: required -- never a bare list. One shape, not "a list
+# or a mapping", so a stray list-shaped entry is exactly as wrong as a
+# missing checks:.
+_CHECK_SET_KEYS = frozenset({"with", "checks"})
+
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+# {{ name }} references a with: parameter, distinct from ${VAR}'s
+# environment secrets -- interpolate_env (above) runs first, over the
+# whole parsed document, and never touches these; substitution happens
+# later, per check_sets use:, once a table's own with: is known. Internal
+# whitespace inside the braces is allowed (`{{ name }}` and `{{name}}`
+# both match); the name itself follows the same identifier shape ${VAR}
+# uses.
+_PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+# A placeholder that is the *entire* scalar node (matched with fullmatch,
+# not search) gets whole-value substitution: the parameter's full value,
+# any type, replaces the string outright. Anything else containing a
+# placeholder is embedded-text substitution instead, which requires a
+# scalar parameter -- see _substitute_placeholders.
+_WHOLE_PLACEHOLDER = re.compile(r"^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
 
 
 def interpolate_env(
@@ -254,7 +281,254 @@ def _describe_table_entry(entry: dict) -> str:
     return f"table {entry.get('source', '?')}.{entry.get('object', '?')}"
 
 
-def flatten_table_checks(tables: list[Any]) -> tuple[list[dict], list[str]]:
+def _placeholder_names(value: Any) -> set[str]:
+    """Every ``{{ name }}`` referenced anywhere under ``value``, whole-node
+    or embedded alike -- the set's *full* placeholder set a with: key is
+    checked against, deliberately gathered without regard to ``skip:``
+    (see :func:`_expand_check_set`): a set-level default for a parameter
+    used only by a skipped item must not become an error for every table
+    that skips it.
+    """
+    if isinstance(value, str):
+        return set(_PLACEHOLDER.findall(value))
+    if isinstance(value, dict):
+        names: set[str] = set()
+        for item in value.values():
+            names |= _placeholder_names(item)
+        return names
+    if isinstance(value, list):
+        names = set()
+        for item in value:
+            names |= _placeholder_names(item)
+        return names
+    return set()
+
+
+def _substitute_placeholders(value: Any, params: dict[str, Any]) -> Any:
+    """Replace every ``{{ name }}`` under ``value`` with ``params[name]``.
+
+    Two substitution rules, chosen per scalar string node: a placeholder
+    that is the *entire* node (``_WHOLE_PLACEHOLDER`` fullmatches) is
+    replaced by the parameter's value outright, type and all -- this is
+    what lets ``expect: "{{ rows }}"`` carry a whole expectation mapping.
+    A placeholder embedded in a longer string is replaced as text, which
+    requires the parameter to be a scalar; a mapping or list there raises,
+    since there is no sane way to embed one in a string.
+
+    Raises ``ValueError`` -- caught and turned into a provenance-tagged
+    problem string by the caller (:func:`_expand_check_set`), which is
+    also the only place that knows which table/set/item to name.
+    """
+    if isinstance(value, str):
+        whole = _WHOLE_PLACEHOLDER.match(value)
+        if whole:
+            name = whole.group(1)
+            if name not in params:
+                raise ValueError(name)
+            return params[name]
+        if not _PLACEHOLDER.search(value):
+            return value
+
+        def replace(match: re.Match) -> str:
+            name = match.group(1)
+            if name not in params:
+                raise ValueError(name)
+            param_value = params[name]
+            if isinstance(param_value, dict | list):
+                raise ValueError(f"{name}\x1fembedded")
+            return str(param_value)
+
+        return _PLACEHOLDER.sub(replace, value)
+    if isinstance(value, dict):
+        return {
+            k: _substitute_placeholders(v, params) for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_substitute_placeholders(v, params) for v in value]
+    return value
+
+
+def normalize_check_sets(
+    raw: Any, file: Path
+) -> tuple[dict[str, dict[str, Any]], list[ConfigProblem]]:
+    """Validate and normalize one file's ``check_sets:`` mapping into
+    ``{name: {"with": dict, "checks": list}}``.
+
+    A malformed set -- not a mapping, an unknown key, a missing or
+    non-list ``checks:``, a non-dict ``with:`` -- is reported as a
+    :class:`ConfigProblem` and left out of the returned dict entirely: a
+    set that failed to normalize can't be expanded into anything
+    downstream needs to see, mirroring how :func:`flatten_table_checks`
+    handles a malformed ``tables:`` entry.
+
+    Tolerant by design, not just by convention: :func:`dbfresh.configurator._raw_checks_in`
+    reuses this for cross-file dedup scanning, where a broken
+    ``check_sets:`` entry is ``config validate``'s problem to report, not
+    this pass's -- discarding the returned problems there and keeping only
+    the sets that did normalize is exactly the same tolerance
+    ``_raw_checks_in`` already applies to a malformed ``tables:`` entry.
+    """
+    if raw is None:
+        return {}, []
+    if not isinstance(raw, dict):
+        return {}, [
+            ConfigProblem(
+                files=(file,),
+                message=f"check_sets: must be a mapping, got {raw!r}",
+            )
+        ]
+
+    sets: dict[str, dict[str, Any]] = {}
+    problems: list[ConfigProblem] = []
+    for name, definition in raw.items():
+        label = f"check_sets {name!r}"
+        if not isinstance(definition, dict):
+            problems.append(
+                ConfigProblem(
+                    files=(file,),
+                    message=f"{label}: must be a mapping, got {definition!r}",
+                )
+            )
+            continue
+        extra_keys = sorted(set(definition) - _CHECK_SET_KEYS)
+        if extra_keys:
+            problems.append(
+                ConfigProblem(
+                    files=(file,),
+                    message=f"{label}: unknown check_sets field(s): {extra_keys}",
+                )
+            )
+        checks = definition.get("checks")
+        if not isinstance(checks, list):
+            problems.append(
+                ConfigProblem(
+                    files=(file,),
+                    message=f"{label}: 'checks' is required and must be a list",
+                )
+            )
+            continue
+        with_defaults = definition.get("with")
+        if with_defaults is None:
+            with_defaults = {}
+        elif not isinstance(with_defaults, dict):
+            problems.append(
+                ConfigProblem(
+                    files=(file,),
+                    message=f"{label}: 'with' must be a mapping, got {with_defaults!r}",
+                )
+            )
+            continue
+        sets[name] = {"with": with_defaults, "checks": checks}
+    return sets, problems
+
+
+def _expand_check_set(
+    label: str,
+    entry: dict,
+    check_sets: Mapping[str, dict[str, Any]],
+) -> tuple[list[dict], list[str]]:
+    """Expand one ``tables:`` entry's ``use:``/``with:``/``skip:`` into raw
+    check dicts, carrying the entry's ``source``/``object`` exactly like
+    every other block :func:`flatten_table_checks` returns.
+
+    Every problem found here is prefixed with ``label`` and, once the set
+    itself is known, the set's name -- "table dbo.fct_sales, set
+    'standard', item 3" -- so a problem with an expanded check is
+    traceable even though it appears verbatim in no file.
+    """
+    set_name = entry.get("use")
+    if not isinstance(set_name, str):
+        return [], [f"{label}: 'use' must be a string, got {set_name!r}"]
+
+    set_def = check_sets.get(set_name)
+    if set_def is None:
+        return [], [
+            f"{label}: use: references unknown check_sets entry {set_name!r}"
+        ]
+
+    table_with = entry.get("with")
+    if table_with is not None and not isinstance(table_with, dict):
+        return [], [f"{label}: 'with' must be a mapping, got {table_with!r}"]
+    table_with = table_with or {}
+
+    table_skip = entry.get("skip")
+    if table_skip is not None and not isinstance(table_skip, list):
+        return [], [f"{label}: 'skip' must be a list, got {table_skip!r}"]
+    skip = set(table_skip or [])
+
+    problems: list[str] = []
+    set_label = f"{label}, set {set_name!r}"
+
+    set_checks = set_def["checks"]
+    full_placeholders = _placeholder_names(set_checks)
+    merged_params = {**set_def["with"], **table_with}
+    for key in sorted(set(merged_params) - full_placeholders):
+        problems.append(
+            f"{set_label}: with: key {key!r} matches no placeholder in "
+            "this set"
+        )
+
+    set_metrics = {
+        item.get("metric")
+        for item in set_checks
+        if isinstance(item, dict) and item.get("metric") is not None
+    }
+    for name in sorted(skip - set_metrics):
+        problems.append(
+            f"{set_label}: skip: {name!r} is not a metric defined in this set"
+        )
+
+    expanded: list[dict] = []
+    for item_index, item in enumerate(set_checks):
+        if not isinstance(item, dict):
+            problems.append(
+                f"{set_label} item {item_index}: check block must be a "
+                f"mapping, got {item!r}"
+            )
+            continue
+        metric = item.get("metric")
+        if metric is not None and metric in skip:
+            continue
+        restated = sorted(set(item) & _TABLE_CHECK_OWN_FIELDS)
+        if restated:
+            problems.append(
+                f"{set_label} item {item_index}: declares its own "
+                f"{restated}; the table already sets it for every check "
+                "expanded from the set"
+            )
+            continue
+        item_label = f"{set_label} item {item_index}"
+        try:
+            substituted = _substitute_placeholders(item, merged_params)
+        except ValueError as exc:
+            [detail] = exc.args
+            if "\x1f" in detail:
+                name, _ = detail.split("\x1f", 1)
+                param_value = merged_params[name]
+                problems.append(
+                    f"{item_label}: parameter {name!r} is a "
+                    f"{type(param_value).__name__}; a value embedded in a "
+                    "longer string must be a scalar"
+                )
+            else:
+                problems.append(
+                    f"{item_label}: parameter {detail!r} has no value -- "
+                    f"not supplied by with: on set {set_name!r} or by "
+                    f"{label}'s own with:"
+                )
+            continue
+        block = dict(substituted)
+        block["source"] = entry["source"]
+        block["object"] = entry["object"]
+        expanded.append(block)
+
+    return expanded, problems
+
+
+def flatten_table_checks(
+    tables: list[Any],
+    check_sets: Mapping[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict], list[str]]:
     """Flatten ``tables:`` entries into raw check dicts carrying the
     entry's ``source``/``object`` -- the raw-dict pass that runs before
     :func:`_build_check` ever sees a check. Once flattened, a check that
@@ -279,7 +553,16 @@ def flatten_table_checks(tables: list[Any]) -> tuple[list[dict], list[str]]:
     given, each entry's checks in their own order) and the problem
     strings in the order found. A problem entry contributes no checks; a
     problem check contributes no dict but does not block its siblings.
+
+    ``check_sets`` is the composed ``{name: {with, checks}}`` mapping a
+    ``use:`` entry expands against (see :func:`normalize_check_sets` and
+    :func:`_expand_check_set`); omit it -- or pass an entry with no
+    ``use:`` -- and a table entry behaves exactly as it did before
+    check_sets existed. An entry's expanded-from-set checks come before
+    its own nested ``checks:``, so a table's inline checks always read as
+    "on top of the battery" rather than interleaved with it.
     """
+    check_sets = check_sets or {}
     checks: list[dict] = []
     problems: list[str] = []
 
@@ -306,6 +589,19 @@ def flatten_table_checks(tables: list[Any]) -> tuple[list[dict], list[str]]:
             problems.append(
                 f"{label}: table entry must set {missing_fields}; "
                 "it states them once for every check nested under it"
+            )
+            continue
+
+        if "use" in entry:
+            set_checks, set_problems = _expand_check_set(
+                label, entry, check_sets
+            )
+            checks.extend(set_checks)
+            problems.extend(set_problems)
+        elif "with" in entry or "skip" in entry:
+            problems.append(
+                f"{label}: 'with'/'skip' require 'use' -- they parameterize "
+                "and filter a named check set, and mean nothing without one"
             )
             continue
 
@@ -468,46 +764,57 @@ def resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
     return sorted(matched, key=lambda p: p.as_posix())
 
 
-_INCLUDED_FILE_ALLOWED_KEYS = frozenset({"checks", "tables"})
+_INCLUDED_FILE_ALLOWED_KEYS = frozenset({"checks", "tables", "check_sets"})
 
 
 def _load_included_checks(
     raw: Any, path: Path
-) -> tuple[list[dict], list[Any]]:
+) -> tuple[list[dict], list[Any], Any]:
     """Normalize an included file's parsed YAML into its flat ``checks:``
-    list and its ``tables:`` list, both unexpanded.
+    list, its ``tables:`` list, and its own ``check_sets:`` mapping (or
+    ``None``), all unexpanded/unnormalized.
 
     An included file contributes checks two ways: a bare sequence of
-    check blocks (equivalent to ``checks:`` alone), or a mapping with
-    ``checks:`` and/or ``tables:``. ``include:``, ``sources:``,
-    ``calendar:``, ``store:``, and ``defaults:`` may appear only in the
-    root config, so any other top-level key here is a validation error.
-    Expansion of ``tables:`` happens later, uniformly for the root config
-    and every included file, in :func:`_collect_file_checks` -- this
-    function only validates the file's shape and hands back what it
-    declared.
+    check blocks (equivalent to ``checks:`` alone, and never carries
+    ``check_sets:``), or a mapping with ``checks:``/``tables:``/
+    ``check_sets:``. ``include:``, ``sources:``, ``calendar:``,
+    ``store:``, and ``defaults:`` may appear only in the root config, so
+    any other top-level key here is a validation error. A team shares one
+    standards file this way: a ``check_sets:``-only included file, used
+    by ``tables:`` entries anywhere in the composed config.
+
+    Expansion of ``tables:`` (which needs every file's ``check_sets:``
+    composed first -- see :func:`_load_config`) happens later, uniformly
+    for the root config and every included file, in
+    :func:`_collect_file_checks` -- this function only validates the
+    file's shape and hands back what it declared.
     """
     if raw is None:
-        return [], []
+        return [], [], None
     if isinstance(raw, list):
-        return raw, []
+        return raw, [], None
     if isinstance(raw, dict):
         extra = sorted(set(raw) - _INCLUDED_FILE_ALLOWED_KEYS)
         if extra:
             raise ValueError(
                 f"included file {path} may only declare top-level "
-                f"'checks:' and 'tables:' keys; found disallowed key(s): {extra}"
+                "'checks:', 'tables:', and 'check_sets:' keys; found "
+                f"disallowed key(s): {extra}"
             )
-        return list(raw.get("checks") or []), list(raw.get("tables") or [])
+        return (
+            list(raw.get("checks") or []),
+            list(raw.get("tables") or []),
+            raw.get("check_sets"),
+        )
     raise ValueError(
         f"included file {path} must be a checks list or a "
-        "{checks: [...], tables: [...]} mapping"
+        "{checks: [...], tables: [...], check_sets: {...}} mapping"
     )
 
 
 def _read_included_file(
     path: Path, env: dict[str, str] | None, missing: set[str] | None = None
-) -> tuple[list[dict], list[Any]]:
+) -> tuple[list[dict], list[Any], Any]:
     raw = yaml.safe_load(path.read_text())
     raw = interpolate_env(raw, env, missing)
     return _load_included_checks(raw, path)
@@ -518,6 +825,7 @@ def _collect_file_checks(
     tables: list[Any],
     file: Path,
     collect_all_errors: bool,
+    check_sets: Mapping[str, dict[str, Any]] | None = None,
 ) -> tuple[list[dict], list[Path], list[ConfigProblem]]:
     """One file's raw checks: the flat ``checks:`` list first, then
     ``tables:`` entries flattened (via :func:`flatten_table_checks`) in
@@ -525,6 +833,11 @@ def _collect_file_checks(
     :func:`_load_config` composes across files, root first then each
     included file in turn. Every check returned here is attributed to
     ``file``, whichever list it came from.
+
+    ``check_sets`` is the mapping composed across every file in the
+    config (root plus every included file) -- a ``use:`` reference is
+    resolved against all of it, not just this file's own, since a table
+    in one file may use a set defined in another.
 
     Never raises itself, even when ``collect_all_errors`` is false: this
     only assembles the raw check list, before ``_load_config`` has even
@@ -534,7 +847,9 @@ def _collect_file_checks(
     surfaced first. ``_load_config`` raises on the first collected
     problem itself, once that point is reached, when not collecting.
     """
-    table_checks, table_problem_texts = flatten_table_checks(tables)
+    table_checks, table_problem_texts = flatten_table_checks(
+        tables, check_sets
+    )
     problems = [
         ConfigProblem(files=(file,), message=text)
         for text in table_problem_texts
@@ -1063,13 +1378,24 @@ def _load_config(
     # built from it, and `collect_all_errors` must see those problems too.
     problems: list[ConfigProblem] = []
 
-    raw_checks, check_files, root_problems = _collect_file_checks(
-        list(data.get("checks") or []),
-        list(data.get("tables") or []),
-        path,
-        collect_all_errors,
-    )
-    problems.extend(root_problems)
+    # Every file is read before any `tables:` is flattened -- root first,
+    # then each included file in resolved order -- because a table in one
+    # file may `use:` a check_sets: entry defined in another. Flattening
+    # file-by-file, as this used to, could never see across that boundary:
+    # by the time an included file's tables were flattened, a check_sets:
+    # entry the *root* declares later in this same function wouldn't exist
+    # yet, and the reverse (a table in the root using a set an included
+    # file declares) never worked at all. `file_entries` holds each file's
+    # unexpanded pieces; check_sets: composition and `tables:` flattening
+    # both run as a second pass below, once every file has been read.
+    file_entries: list[tuple[Path, list[dict], list[Any], Any]] = [
+        (
+            path,
+            list(data.get("checks") or []),
+            list(data.get("tables") or []),
+            data.get("check_sets"),
+        )
+    ]
 
     include_patterns = data.get("include")
     if include_patterns:
@@ -1087,16 +1413,13 @@ def _load_config(
             ]
         for include_path in resolve_includes(config_dir, include_patterns):
             file_missing: set[str] = set()
-            inc_flat, inc_tables = _read_included_file(
+            inc_flat, inc_tables, inc_check_sets = _read_included_file(
                 include_path, env, file_missing
             )
             missing_by_file[include_path] = file_missing
-            inc_checks, inc_files, inc_problems = _collect_file_checks(
-                inc_flat, inc_tables, include_path, collect_all_errors
+            file_entries.append(
+                (include_path, inc_flat, inc_tables, inc_check_sets)
             )
-            raw_checks.extend(inc_checks)
-            check_files.extend(inc_files)
-            problems.extend(inc_problems)
 
     missing: set[str] = set().union(*missing_by_file.values())
 
@@ -1107,6 +1430,46 @@ def _load_config(
             if len(missing) == 1
             else f"undefined environment variables: {names}"
         )
+
+    # check_sets: composed across every file, root first then included
+    # files in resolved order -- the same order file_entries already
+    # holds them in. A name defined in more than one file is reported
+    # rather than letting whichever file happens to be read last silently
+    # win; the first file to define a name keeps it, and normalize_check_sets's
+    # own per-file problems (an unknown key, a missing checks:, ...) are
+    # collected right alongside.
+    check_sets: dict[str, dict[str, Any]] = {}
+    check_sets_file: dict[str, Path] = {}
+    for file, _flat, _tables, raw_check_sets in file_entries:
+        normalized, cs_problems = normalize_check_sets(raw_check_sets, file)
+        problems.extend(cs_problems)
+        for name, definition in normalized.items():
+            if name in check_sets:
+                problems.append(
+                    ConfigProblem(
+                        files=(check_sets_file[name], file),
+                        message=(
+                            f"check_sets {name!r} is defined in more than "
+                            "one file"
+                        ),
+                    )
+                )
+                continue
+            check_sets[name] = definition
+            check_sets_file[name] = file
+
+    # `tables:` flattening is the second pass over file_entries, now that
+    # check_sets is fully composed -- a `use:` in the root config can
+    # resolve to a set an included file declares, and vice versa.
+    raw_checks: list[dict] = []
+    check_files: list[Path] = []
+    for file, flat, tables, _raw_check_sets in file_entries:
+        file_checks, file_files, file_problems = _collect_file_checks(
+            flat, tables, file, collect_all_errors, check_sets
+        )
+        raw_checks.extend(file_checks)
+        check_files.extend(file_files)
+        problems.extend(file_problems)
 
     # A `tables:` problem found while assembling raw_checks above (an
     # unknown table field, a nested check restating `source`/`object`, a
