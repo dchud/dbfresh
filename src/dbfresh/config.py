@@ -652,8 +652,11 @@ def group_checks_by_table(checks: list[dict]) -> list[dict]:
     onto the entry and are dropped from the nested block, matching what a
     hand-written ``tables:`` entry looks like.
 
-    The sole caller is ``dbfresh config migrate``, the one place that
-    builds ``tables:`` entries rather than consuming them.
+    Used by ``dbfresh config migrate`` to fold an existing file's checks
+    into ``tables:``, and by
+    :func:`~dbfresh.configurator.render_proposal` to group a freshly
+    proposed bundle the same way -- both are "build ``tables:`` entries
+    rather than consume them", just from different sources of raw checks.
     """
     order: list[tuple[Any, Any]] = []
     grouped: dict[tuple[Any, Any], list[dict]] = {}

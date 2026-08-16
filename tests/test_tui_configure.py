@@ -161,7 +161,7 @@ def test_configure_screen_accept_shows_proposed_checks_as_yaml(
             yaml_text = await _accept_and_open_yaml(pilot)
 
         rendered = yaml.safe_load(yaml_text)
-        metrics = {c["metric"] for c in rendered["checks"]}
+        metrics = {c["metric"] for c in rendered["tables"][0]["checks"]}
         assert {"schema", "row_count", "freshness"} <= metrics
         # Accept never writes -- the config file is exactly as it started.
         assert cfg.read_text() == original_text
@@ -300,7 +300,9 @@ def test_configure_screen_uses_picked_timestamp_column(tmp_path, pump_until):
 
         rendered = yaml.safe_load(yaml_text)
         freshness = next(
-            c for c in rendered["checks"] if c["metric"] == "freshness"
+            c
+            for c in rendered["tables"][0]["checks"]
+            if c["metric"] == "freshness"
         )
         assert freshness["column"] == "updated_at"
 
@@ -608,7 +610,7 @@ def test_configure_screen_trim_deselects_a_proposed_check(
             yaml_text = await _accept_and_open_yaml(pilot)
 
         rendered = yaml.safe_load(yaml_text)
-        metrics = [c["metric"] for c in rendered["checks"]]
+        metrics = [c["metric"] for c in rendered["tables"][0]["checks"]]
         assert "freshness" not in metrics
         assert "schema" in metrics
         assert "row_count" in metrics
@@ -647,7 +649,9 @@ def test_configure_screen_offered_check_can_be_selected(tmp_path, pump_until):
             yaml_text = await _accept_and_open_yaml(pilot)
 
         rendered = yaml.safe_load(yaml_text)
-        sum_check = next(c for c in rendered["checks"] if c["metric"] == "sum")
+        sum_check = next(
+            c for c in rendered["tables"][0]["checks"] if c["metric"] == "sum"
+        )
         assert sum_check["column"] == "amount"
 
     asyncio.run(scenario())
@@ -751,7 +755,7 @@ def test_configure_screen_offered_check_value_is_rendered(
         rendered = yaml.safe_load(yaml_text)
         check = next(
             c
-            for c in rendered["checks"]
+            for c in rendered["tables"][0]["checks"]
             if c["metric"] == metric and c["column"] == column
         )
         assert check["expect"][expect_key] == expect_value
@@ -1023,7 +1027,9 @@ def test_configure_screen_propose_and_accept_preserve_manually_tuned_checks(
         # The proposed freshness (default 24h) collided on identity with
         # the existing hand-tuned one and was excluded -- the modal never
         # offers a block that would clobber the tuned threshold if pasted.
-        assert not any(c["metric"] == "freshness" for c in rendered["checks"])
+        assert not any(
+            c["metric"] == "freshness" for c in rendered["tables"][0]["checks"]
+        )
 
     asyncio.run(scenario())
 
@@ -1220,7 +1226,9 @@ def test_configure_screen_accept_uses_edited_proposed_freshness_value(
 
         rendered = yaml.safe_load(yaml_text)
         freshness_checks = [
-            c for c in rendered["checks"] if c["metric"] == "freshness"
+            c
+            for c in rendered["tables"][0]["checks"]
+            if c["metric"] == "freshness"
         ]
         assert len(freshness_checks) == 1
         assert freshness_checks[0]["expect"]["max_lag"] == "48h"
@@ -1296,7 +1304,9 @@ def test_configure_screen_unchecking_proposed_freshness_ignores_its_value(
             yaml_text = await _accept_and_open_yaml(pilot)
 
         rendered = yaml.safe_load(yaml_text)
-        assert not any(c["metric"] == "freshness" for c in rendered["checks"])
+        assert not any(
+            c["metric"] == "freshness" for c in rendered["tables"][0]["checks"]
+        )
 
     asyncio.run(scenario())
 
@@ -1431,7 +1441,7 @@ def test_proposal_yaml_screen_names_the_config_path(tmp_path, pump_until):
 
             note = str(app.screen.query_one("#proposal-yaml-note").render())
             assert str(cfg) in note
-            assert "checks:" in note
+            assert "tables:" in note
 
     asyncio.run(scenario())
 

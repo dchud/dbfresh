@@ -1,8 +1,9 @@
 """group_checks_by_table -- the inverse of flatten_table_checks, folding
-raw check dicts into tables: entries. Exercised directly here since
-dbfresh config migrate is its only caller; the CLI-level round trip and
-behavior live in test_cli_config_migrate.py, not this function's own
-grouping logic.
+raw check dicts into tables: entries. Exercised directly here rather than
+through either caller (dbfresh config migrate, and
+configurator.render_proposal); the CLI-level round trips and behavior
+live in test_cli_config_migrate.py and test_cli_add.py, not this
+function's own grouping logic.
 """
 
 from dbfresh.config import group_checks_by_table

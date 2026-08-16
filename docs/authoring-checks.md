@@ -44,6 +44,23 @@ justify from catalog metadata. There is no foreign-key graph traversal, no
 cross-object inference, and no threshold learning: proposals use only the
 named object's own metadata.
 
+The bundle is emitted under `tables:`, one entry per source/object pair,
+`source:`/`object:` stated once and the checks nested beneath them:
+
+```yaml
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+      - metric: row_count
+        expect: { vs_previous: { baseline: previous, min_ratio: 0.5, max_ratio: 2.0 } }
+```
+
+A brand-new source's connection block is emitted as a `sources:` entry
+above the `tables:` block, in the same document.
+
 ## The timestamp-column heuristic
 
 `pick_timestamp_column()` selects the `freshness` column among a table's

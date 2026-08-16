@@ -29,6 +29,7 @@ from dbfresh.adapters.factory import create_adapter
 from dbfresh.checks import Check, check_id
 from dbfresh.config import (
     flatten_table_checks,
+    group_checks_by_table,
     interpolate_env,
     normalize_check_sets,
     resolve_includes,
@@ -460,37 +461,13 @@ def _dump_document(document: dict[str, Any]) -> str:
     return yaml.dump(document, Dumper=_IndentedDumper, sort_keys=False)
 
 
-def render_proposal(
-    source_entry: tuple[str, dict] | None, checks: list[dict]
-) -> str:
-    """Render the proposal as one valid YAML document.
-
-    Keyed by ``sources:`` / ``checks:`` rather than emitted as bare
-    entries: the two would otherwise concatenate into text that is not
-    YAML at all, and a document carrying its own keys is both a complete
-    starter config when there is no config file yet and, when there is,
-    a block whose entries sit at the indent they need under the matching
-    key. Shared by ``dbfresh add`` (prints this to stdout) and the TUI
-    Configure screen (shows this in a copyable text area), so both front
-    ends emit identical YAML for the same proposal.
-    """
-    document: dict[str, Any] = {}
-    if source_entry is not None:
-        name, entry = source_entry
-        document["sources"] = {name: entry}
-    if checks:
-        document["checks"] = [inline_check_expectations(c) for c in checks]
-    return _dump_document(document)
-
-
-def render_tables_proposal(tables: list[dict]) -> str:
-    """Render a ``tables:`` block alone, in the same style
-    :func:`render_proposal` uses for ``sources:``/``checks:``.
-
-    The sole caller is ``dbfresh config migrate``: it emits only the
-    ``tables:`` block a file's checks fold into, never a full document,
-    since every other section of the file stays exactly as the user wrote
-    it.
+def _rendered_table_entries(tables: list[dict]) -> list[dict]:
+    """Table entries with inline-style ``checks:``/``with:`` rendering
+    applied -- the per-entry rendering shared by :func:`render_proposal`
+    (a synthesized ``tables:`` block, grouped from a flat proposal) and
+    :func:`render_tables_proposal` (a full-file regroup for
+    ``config migrate``), so both dumps look identical for identical
+    entries regardless of which command built them.
 
     An entry with no ``checks:`` key at all -- a ``use:``-backed entry
     carried over unchanged, with no inline checks of its own -- keeps it
@@ -515,7 +492,49 @@ def render_tables_proposal(tables: list[dict]) -> str:
         if isinstance(entry.get("with"), dict):
             out["with"] = _inline(entry["with"])
         rendered.append(out)
-    return _dump_document({"tables": rendered})
+    return rendered
+
+
+def render_proposal(
+    source_entry: tuple[str, dict] | None, checks: list[dict]
+) -> str:
+    """Render the proposal as one valid YAML document.
+
+    Keyed by ``sources:`` / ``tables:`` rather than emitted as bare
+    entries: the two would otherwise concatenate into text that is not
+    YAML at all, and a document carrying its own keys is both a complete
+    starter config when there is no config file yet and, when there is,
+    a block whose entries sit at the indent they need under the matching
+    key. ``checks`` is grouped into ``tables:`` entries by
+    :func:`~dbfresh.config.group_checks_by_table` -- the same grouping
+    ``dbfresh config migrate`` uses -- so ``source:``/``object:`` are
+    stated once per object rather than repeated on every check; a single
+    object's checks (the wizard's normal case) group into one entry the
+    same way several would. Shared by ``dbfresh add`` (prints this to
+    stdout) and the TUI Configure screen (shows this in a copyable text
+    area), so both front ends emit identical YAML for the same proposal.
+    """
+    document: dict[str, Any] = {}
+    if source_entry is not None:
+        name, entry = source_entry
+        document["sources"] = {name: entry}
+    if checks:
+        document["tables"] = _rendered_table_entries(
+            group_checks_by_table(checks)
+        )
+    return _dump_document(document)
+
+
+def render_tables_proposal(tables: list[dict]) -> str:
+    """Render a ``tables:`` block alone, in the same style
+    :func:`render_proposal` uses for ``sources:``/``tables:``.
+
+    The sole caller is ``dbfresh config migrate``: it emits only the
+    ``tables:`` block a file's checks fold into, never a full document,
+    since every other section of the file stays exactly as the user wrote
+    it.
+    """
+    return _dump_document({"tables": _rendered_table_entries(tables)})
 
 
 @dataclass(frozen=True)

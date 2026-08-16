@@ -97,7 +97,10 @@ def test_add_wizard_emits_proposed_bundle_for_existing_source(
     assert code == 0
 
     emitted = _emitted(capsys)
-    metrics = {c["metric"] for c in emitted["checks"]}
+    [table] = emitted["tables"]
+    assert table["source"] == "s"
+    assert table["object"] == "fct"
+    metrics = {c["metric"] for c in table["checks"]}
     assert {"schema", "row_count", "freshness", "duplicate_count"} <= metrics
     assert cfg.read_text() == original  # the wizard never writes
 
@@ -107,7 +110,7 @@ def test_add_wizard_emits_checks_at_the_indent_they_paste_at(
 ):
     # PyYAML's default renders a sequence indentless, putting items in the
     # parent key's own column. Items in that form cannot be pasted under an
-    # existing indented `checks:` -- a sequence's items must share one
+    # existing indented `tables:` -- a sequence's items must share one
     # indentation -- so the emitted block has to use the indented form.
     db = tmp_path / "data.db"
     sqlite_table(db)
@@ -122,7 +125,7 @@ def test_add_wizard_emits_checks_at_the_indent_they_paste_at(
     assert main(["add", "-c", str(cfg)]) == 0
 
     out = capsys.readouterr().out
-    assert "checks:\n  - source: s\n" in out
+    assert "tables:\n  - source: s\n" in out
 
 
 def test_add_wizard_run_twice_for_same_object_emits_nothing_the_second_time(
@@ -146,11 +149,12 @@ def test_add_wizard_run_twice_for_same_object_emits_nothing_the_second_time(
 
     assert _run() == 0
     first = _emitted(capsys)
-    assert first["checks"]
+    assert first["tables"]
+    proposed_count = sum(len(t["checks"]) for t in first["tables"])
 
     cfg.write_text(cfg.read_text() + yaml.safe_dump(first))
     config = load_config(cfg)  # the pasted block is a loadable config
-    assert len(config.checks) == len(first["checks"])
+    assert len(config.checks) == proposed_count
 
     assert _run() == 0
     captured = capsys.readouterr()
@@ -189,46 +193,40 @@ def test_add_wizard_dedupes_against_included_files_not_just_the_root_config(
 def test_add_wizard_dedupes_against_checks_already_defined_under_tables(
     tmp_path, monkeypatch, capsys
 ):
-    # A check already defined under a tables: entry must count as already
-    # defined too -- partition_new_checks's dedup (via
-    # configurator._raw_checks_in) has to see checks nested under tables:,
-    # not only the flat checks: list, or a second `add` run would
-    # re-propose everything the first run already found.
+    # A check already defined under a hand-authored tables: entry must
+    # count as already defined too, not only one the wizard itself emitted
+    # -- partition_new_checks's dedup (via configurator._raw_checks_in) has
+    # to see checks nested under tables:, not only the flat checks: list,
+    # or a second `add` run would re-propose everything.
     from dbfresh.config import load_config
 
     db = tmp_path / "data.db"
     sqlite_table(db)
     cfg = tmp_path / "config.yaml"
-    cfg.write_text(f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n')
+    cfg.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "tables:\n"
+        "  - source: s\n"
+        "    object: fct\n"
+        "    checks:\n"
+        "      - metric: schema\n"
+        "        expect: { unchanged: true }\n"
+        "      - metric: row_count\n"
+        "        expect: { vs_previous: { baseline: previous, min_ratio: 0.5 } }\n"
+        "      - metric: freshness\n"
+        "        column: modified_at\n"
+        "        expect: { max_lag: 24h }\n"
+        "      - metric: duplicate_count\n"
+        "        key: id\n"
+        "        expect: { max: 0 }\n"
+    )
+    config = load_config(cfg)  # the hand-authored grouped block is loadable
+    assert len(config.checks) == 4
 
     def _run():
         answers = iter(["s", "fct", "y", "", "", ""])
         monkeypatch.setattr("builtins.input", lambda *a: next(answers, ""))
         return main(["add", "-c", str(cfg)])
-
-    assert _run() == 0
-    first = _emitted(capsys)
-    assert first["checks"]
-
-    grouped = {
-        "tables": [
-            {
-                "source": "s",
-                "object": "fct",
-                "checks": [
-                    {
-                        k: v
-                        for k, v in check.items()
-                        if k not in ("source", "object")
-                    }
-                    for check in first["checks"]
-                ],
-            }
-        ]
-    }
-    cfg.write_text(cfg.read_text() + yaml.safe_dump(grouped))
-    config = load_config(cfg)  # the pasted grouped block is loadable
-    assert len(config.checks) == len(first["checks"])
 
     assert _run() == 0
     captured = capsys.readouterr()
@@ -253,12 +251,22 @@ def test_add_wizard_reports_already_defined_checks_on_stderr(
     first = _emitted(capsys)
     # Paste back only the row_count check, so the next run has one
     # already-defined block and several new ones.
-    row_count = next(c for c in first["checks"] if c["metric"] == "row_count")
-    cfg.write_text(cfg.read_text() + yaml.safe_dump({"checks": [row_count]}))
+    row_count = next(
+        c for c in first["tables"][0]["checks"] if c["metric"] == "row_count"
+    )
+    cfg.write_text(
+        cfg.read_text()
+        + yaml.safe_dump(
+            {"checks": [{"source": "s", "object": "fct", **row_count}]}
+        )
+    )
 
     assert _run() == 0
     captured = capsys.readouterr()
-    metrics = {c["metric"] for c in (yaml.safe_load(captured.out))["checks"]}
+    metrics = {
+        c["metric"]
+        for c in (yaml.safe_load(captured.out))["tables"][0]["checks"]
+    }
     assert "row_count" not in metrics
     assert "already defined" in captured.err
 
@@ -321,7 +329,7 @@ def test_add_wizard_new_source_keeps_env_var_placeholder_in_emitted_yaml(
     emitted = yaml.safe_load(captured.out)
     assert emitted["sources"]["s"]["database"] == "${DBFRESH_TEST_DB_PATH}"
     assert str(db) not in captured.out
-    assert len(emitted["checks"]) >= 1
+    assert len(emitted["tables"][0]["checks"]) >= 1
     # The variable the pasted source will need is named for the user.
     assert "DBFRESH_TEST_DB_PATH" in captured.err
 
@@ -434,7 +442,7 @@ def test_prompts_go_to_stderr_so_stdout_holds_only_the_emitted_yaml(
     assert main(["add", "-c", str(cfg)]) == 0
 
     captured = capsys.readouterr()
-    assert captured.out.startswith("checks:")
+    assert captured.out.startswith("tables:")
     assert "Object name" in captured.err
     assert "Proposed" in captured.err
 
@@ -461,7 +469,7 @@ def test_add_wizard_passes_is_view_so_no_freshness_is_proposed_for_a_view(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    metrics = {c["metric"] for c in _emitted(capsys)["checks"]}
+    metrics = {c["metric"] for c in _emitted(capsys)["tables"][0]["checks"]}
     assert "freshness" not in metrics
 
 
@@ -513,7 +521,7 @@ def test_add_wizard_prompts_and_uses_choice_for_ambiguous_timestamp(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    checks = _emitted(capsys)["checks"]
+    checks = _emitted(capsys)["tables"][0]["checks"]
     freshness = next(c for c in checks if c["metric"] == "freshness")
     assert freshness["column"] == "updated_at"
 
@@ -542,7 +550,7 @@ def test_add_wizard_skips_freshness_when_ambiguity_prompt_left_blank(
     code = main(["add", "-c", str(cfg)])
     assert code == 0
 
-    metrics = {c["metric"] for c in _emitted(capsys)["checks"]}
+    metrics = {c["metric"] for c in _emitted(capsys)["tables"][0]["checks"]}
     assert "freshness" not in metrics
 
 
@@ -574,15 +582,15 @@ def test_add_wizard_new_source_runs_connection_test(
 
     emitted = _emitted(capsys)
     assert emitted["sources"]["s"]["type"] == "sqlite"
-    assert len(emitted["checks"]) >= 1
+    assert len(emitted["tables"][0]["checks"]) >= 1
 
 
 def test_add_wizard_emits_a_startable_config_when_none_exists(
     tmp_path, monkeypatch, capsys
 ):
     # With no config file to merge into, the emitted document has to stand
-    # on its own: source and checks under their own keys, loadable as
-    # written.
+    # on its own: source under sources: and checks grouped under tables:,
+    # both in the one document, loadable as written.
     from dbfresh.config import load_config
 
     db = tmp_path / "data.db"
@@ -608,6 +616,10 @@ def test_add_wizard_emits_a_startable_config_when_none_exists(
     captured = capsys.readouterr()
     assert not cfg.exists()  # emitted, not written
     assert "does not exist yet" in captured.err
+
+    emitted = yaml.safe_load(captured.out)
+    assert "sources" in emitted
+    assert "tables" in emitted
 
     cfg.write_text(captured.out)
     config = load_config(cfg)
