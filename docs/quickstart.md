@@ -2,40 +2,69 @@
 
 ## Install
 
-dbfresh runs from a checkout of this repository. Install its dependencies
-with `uv` and invoke it through `uv run`:
+dbfresh runs from a checkout of this repository. There are two ways to
+install it, and they differ in how you invoke the command afterwards, so
+pick one per machine.
+
+### In the project environment
+
+`uv sync` installs into the checkout's `.venv`, and `uv run` invokes it:
 
 ```bash
 uv sync
 uv run dbfresh --version
 ```
 
-The rest of this page uses `uv run dbfresh ...`.
+This is the setup for working on dbfresh itself.
+
+### As a tool
+
+`uv tool install` puts dbfresh in its own environment, separate from the
+checkout's `.venv`, and gives you a global `dbfresh` command:
+
+```bash
+uv tool install -e ".[sqlserver,databricks]"
+dbfresh --version
+```
+
+`.` is the clone, `-e` makes it an editable install that tracks your
+checkout, and extras go comma-separated in the brackets.
+
+If `dbfresh` isn't found afterwards, the directory `uv` installed the
+command into isn't on your `PATH`. Run `uv tool update-shell` and open a
+new shell.
+
+Use the bare `dbfresh` command from then on. `uv run dbfresh ...` resolves
+the checkout's `.venv` instead and ignores the tool environment entirely,
+so it won't see what you installed this way.
+
+### Database drivers
 
 **SQL Server** and **Databricks** sources need their database driver, which
 ships as an optional extra rather than a core dependency -- so a sqlite-only
 install isn't forced to build the native `pymssql` or Databricks driver.
+Without the extra, adding such a source fails with a hint that names the
+extra to install.
 
-Add the matching extra to `uv sync`. `uv sync` makes the environment match
-*exactly* the extras you pass, so `--extra databricks` alone uninstalls the
-`sqlserver` extra (and vice versa) -- to use more than one source type, pass
-them together:
+For a tool install, the extras go in the brackets, as above. For the
+project environment, pass them to `uv sync`:
 
 ```bash
 uv sync --extra sqlserver --extra databricks   # or: uv sync --all-extras
 ```
 
-Without an extra, adding such a source fails with a hint that names the
-extra to install.
+The project environment is *exact*: `uv sync` makes it match precisely the
+extras you pass, so `--extra databricks` alone uninstalls the `sqlserver`
+extra. `uv run` re-syncs the same way, so a bare `uv run dbfresh ...`, or
+`just test`, or `just run`, will prune extras you installed earlier, and
+the next run against a SQL Server or Databricks source then fails on the
+missing driver with nothing having changed in your config. Either pass the extras every time, or use a tool
+install, whose environment is separate from the checkout's and so isn't
+affected. The latter is the better fit for a machine that runs dbfresh
+against live sources.
 
-To get a global `dbfresh` command instead of prefixing every call with
-`uv run`, install the checkout as a tool -- `.` is the clone, extras go
-comma-separated in the brackets, and `-e` makes it an editable install that
-tracks your checkout:
-
-```bash
-uv tool install ".[sqlserver,databricks]"
-```
+The rest of this page writes `uv run dbfresh ...`; drop the prefix if you
+installed as a tool.
 
 ## A minimal config
 
