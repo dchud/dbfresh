@@ -58,10 +58,10 @@ extras you pass, so `--extra databricks` alone uninstalls the `sqlserver`
 extra. `uv run` re-syncs the same way, so a bare `uv run dbfresh ...`, or
 `just test`, or `just run`, will prune extras you installed earlier, and
 the next run against a SQL Server or Databricks source then fails on the
-missing driver with nothing having changed in your config. Either pass the extras every time, or use a tool
-install, whose environment is separate from the checkout's and so isn't
-affected. The latter is the better fit for a machine that runs dbfresh
-against live sources.
+missing driver with nothing having changed in your config. Either pass the
+extras every time, or use a tool install, whose environment is separate
+from the checkout's and so isn't affected. The latter is the better fit for
+a machine that runs dbfresh against live sources.
 
 The rest of this page writes `uv run dbfresh ...`; drop the prefix if you
 installed as a tool.
