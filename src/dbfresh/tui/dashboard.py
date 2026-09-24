@@ -17,6 +17,7 @@ import contextlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
+from rich.style import Style
 from rich.text import Text
 from textual.binding import Binding
 from textual.coordinate import Coordinate
@@ -26,7 +27,7 @@ from textual.widgets import DataTable
 from textual.widgets.data_table import CellDoesNotExist
 
 from dbfresh.checks import Check, check_id
-from dbfresh.config import Config
+from dbfresh.config import Config, LineageRef
 from dbfresh.models import Status, worst_status
 from dbfresh.store import Store
 
@@ -260,6 +261,39 @@ def check_line_renderable(check: Check) -> Text:
     each field that might contain a bracket.
     """
     return Text(check_expectation_line(check))
+
+
+# A lineage item's `kind` in the muted subtext0 tone the screen's other
+# metadata uses (app.tcss's $subtext0). It stays here, not in app.tcss,
+# because it colors a span inside one line of text, which a TCSS rule
+# can't select. Not overlay0: the never-observed status owns that hex.
+_LINEAGE_KIND = "#a5adcb"  # subtext0
+
+
+def lineage_ref_renderable(ref: LineageRef) -> Text:
+    """One ``upstream:``/``downstream:`` item as ``name (kind)  url``.
+
+    The URL is shown in full, so it can be read and copied in a terminal
+    that can't follow links, and is also clickable: Textual runs a style's
+    ``@click`` meta as an action, and ``app.open_url`` hands it to the
+    browser. A plain Rich ``link`` style would not work here, because the
+    app captures the mouse before the terminal sees the click. The URL's
+    color and underline come from the widget's ``link-*`` TCSS rules (see
+    ``.lineage-item`` in app.tcss), which Textual lays over any ``@click``
+    span -- a color set here would be overridden. Built as a
+    :class:`~rich.text.Text` so a name containing ``[`` shows verbatim, the
+    same reason as :func:`check_line_renderable`.
+    """
+    line = Text(ref.name)
+    if ref.kind:
+        line.append(f" ({ref.kind})", style=_LINEAGE_KIND)
+    if ref.url:
+        line.append("  ")
+        line.append(
+            ref.url,
+            style=Style(meta={"@click": f"app.open_url({ref.url!r})"}),
+        )
+    return line
 
 
 def _worst_or_unknown(statuses: list[Status]) -> Status | None:

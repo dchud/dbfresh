@@ -45,6 +45,7 @@ from dbfresh.tui.dashboard import (
     check_line_renderable,
     check_rows,
     flash_cell,
+    lineage_ref_renderable,
     populate_grid,
     status_glyph,
     status_legend,
@@ -637,6 +638,7 @@ class ObjectDetailScreen(Screen[None]):
             else [Static("(no checks for this object)")]
         )
         yield VerticalScroll(
+            *self._about_section(),
             Vertical(
                 Static("Checks", classes="section-title"),
                 Static(
@@ -651,6 +653,43 @@ class ObjectDetailScreen(Screen[None]):
             id="detail-checks-scroll",
         )
         yield Footer()
+
+    def _about_section(self) -> list[Vertical]:
+        """The "About this table" panel -- the table's lineage metadata
+        from its ``tables:`` entry, above the Checks panel -- or nothing
+        when the entry sets none. Below the grid rather than above it, so
+        the grid stays where a drill-in into a failing table lands and a
+        long lineage list never pushes it down. Empty fields are left out.
+        """
+        meta = self._config.tables.get((self._source, self._object))
+        if meta is None:
+            return []
+        parts: list[Static] = [
+            Static("About this table", classes="section-title")
+        ]
+        if meta.description:
+            parts.append(
+                Static(Text(meta.description), id="about-description")
+            )
+        if meta.tags:
+            parts.append(
+                Static(Text(f"tags: {', '.join(meta.tags)}"), id="about-tags")
+            )
+        for heading, refs in (
+            ("Upstream", meta.upstream),
+            ("Downstream", meta.downstream),
+        ):
+            if not refs:
+                continue
+            parts.append(Static(heading, classes="lineage-heading"))
+            parts.extend(
+                Static(
+                    lineage_ref_renderable(ref),
+                    classes=f"lineage-item {heading.lower()}",
+                )
+                for ref in refs
+            )
+        return [Vertical(*parts, id="detail-about-section", classes="panel")]
 
     def on_mount(self) -> None:
         self.refresh_grid()

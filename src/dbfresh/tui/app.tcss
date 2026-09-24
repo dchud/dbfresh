@@ -20,6 +20,7 @@ $subtext1: #b8c0e0;
 $blue: #8aadf4;
 $teal: #8bd5ca;
 $sky: #91d7e3;
+$lavender: #b7bdf8;
 
 Screen {
     background: $background;
@@ -253,6 +254,35 @@ Select > SelectCurrent {
 #detail-checks-note {
     color: $subtext0;
     margin-bottom: 1;
+}
+
+/* "About this table" -- lineage metadata above the Checks panel. Both
+ * panels are sized to their content so the scroll area scrolls them
+ * together; left at a Vertical's default 1fr, they split the area between
+ * them and a long lineage list clips one or the other. Its
+ * Upstream/Downstream sub-headings use the same muted tone as the other
+ * panel labels. An item's `kind` color lives in the renderable
+ * (dbfresh.tui.dashboard.lineage_ref_renderable), since it colors a span
+ * inside the line; its URL color is the .lineage-item rule below.
+ */
+#detail-about-section,
+#detail-checks-section,
+#detail-checks-list {
+    height: auto;
+}
+
+.lineage-heading {
+    color: $subtext1;
+    margin-top: 1;
+}
+
+/* A lineage item's URL is an @click span, which Textual styles from these
+ * link-* rules rather than from the renderable. Lavender is outside the
+ * status palette; hover keeps the theme default (a $primary background).
+ */
+.lineage-item {
+    link-color: $lavender;
+    link-style: underline;
 }
 
 ObjectDetailScreen Horizontal {

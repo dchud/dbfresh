@@ -918,3 +918,168 @@ def test_object_detail_seeding_ignores_another_objects_live_result(tmp_path):
             assert overall_glyph(detail_table, row_count_id) == "·"
 
     asyncio.run(scenario())
+
+
+# -- "About this table" lineage panel -------------------------------------
+
+
+def _lineage_config(path, db, entry_extra):
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "tables:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        f"{entry_extra}"
+        "    checks:\n"
+        "      - metric: row_count\n"
+        "        expect: { between: [1, 1000] }\n"
+    )
+    return path
+
+
+_FULL_METADATA = (
+    "    description: Nightly sales fact, one row per line item.\n"
+    "    tags: [tier1, finance]\n"
+    "    upstream:\n"
+    "      - usp_load_t\n"
+    "      - name: pl_ingest\n"
+    "        kind: pipeline\n"
+    "        url: https://adf.example.com/pl_ingest\n"
+    "    downstream:\n"
+    "      - name: Exec Daily [v2]\n"
+    "        kind: dashboard\n"
+)
+
+
+def _about_lines(screen, selector):
+    return [str(w.render()) for w in screen.query(selector)]
+
+
+def test_about_panel_shows_every_metadata_field(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _lineage_config(tmp_path / "config.yaml", db, _FULL_METADATA)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            screen = app.screen
+
+            section = screen.query_one("#detail-about-section")
+            texts = [str(w.render()) for w in section.query(Static)]
+            assert texts[0] == "About this table"
+            assert (
+                str(screen.query_one("#about-description").render())
+                == "Nightly sales fact, one row per line item."
+            )
+            assert (
+                str(screen.query_one("#about-tags").render())
+                == "tags: tier1, finance"
+            )
+            assert _about_lines(screen, ".lineage-heading") == [
+                "Upstream",
+                "Downstream",
+            ]
+            assert _about_lines(screen, ".lineage-item.upstream") == [
+                "usp_load_t",
+                "pl_ingest (pipeline)  https://adf.example.com/pl_ingest",
+            ]
+            # A bracket in a name is shown as written, not read as markup.
+            assert _about_lines(screen, ".lineage-item.downstream") == [
+                "Exec Daily [v2] (dashboard)"
+            ]
+            # The panel sits above the Checks panel, below the grid.
+            scroll = screen.query_one("#detail-checks-scroll")
+            assert [c.id for c in scroll.children] == [
+                "detail-about-section",
+                "detail-checks-section",
+            ]
+
+    asyncio.run(scenario())
+
+
+def test_about_panel_is_absent_without_metadata(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            assert not app.screen.query("#detail-about-section")
+            assert app.screen.query_one("#detail-checks-section")
+
+    asyncio.run(scenario())
+
+
+def test_about_panel_leaves_out_empty_fields(tmp_path):
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _lineage_config(
+            tmp_path / "config.yaml", db, "    upstream: [usp_load_t]\n"
+        )
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            screen = app.screen
+            assert screen.query_one("#detail-about-section")
+            assert not screen.query("#about-description")
+            assert not screen.query("#about-tags")
+            assert _about_lines(screen, ".lineage-heading") == ["Upstream"]
+            assert _about_lines(screen, ".lineage-item") == ["usp_load_t"]
+
+    asyncio.run(scenario())
+
+
+def test_clicking_a_lineage_url_opens_it(tmp_path, monkeypatch):
+    opened: list[str] = []
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _lineage_config(tmp_path / "config.yaml", db, _FULL_METADATA)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        monkeypatch.setattr(
+            app, "open_url", lambda url, **kwargs: opened.append(url)
+        )
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _open_object_detail(pilot)
+            item = app.screen.query(".lineage-item.upstream").last()
+            item.scroll_visible(animate=False)
+            await pilot.pause()
+            text = str(item.render())
+            url_x = text.index("https://")
+            await pilot.click(item, offset=(url_x + 2, 0))
+            await pilot.pause()
+
+    asyncio.run(scenario())
+    assert opened == ["https://adf.example.com/pl_ingest"]
+
+
+def test_lineage_url_is_rendered_in_the_link_color(tmp_path):
+    # The URL's color comes from the .lineage-item link-* TCSS rules, which
+    # Textual lays over any @click span; a color set in the renderable would
+    # be overridden, so this checks what is actually drawn.
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _lineage_config(tmp_path / "config.yaml", db, _FULL_METADATA)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _open_object_detail(pilot)
+            item = app.screen.query(".lineage-item.upstream").last()
+            (url,) = [
+                segment
+                for segment in item.render_line(0)
+                if segment.text.startswith("https://")
+            ]
+            assert url.style.color.triplet.hex == "#b7bdf8"  # lavender
+            assert url.style.underline
+
+    asyncio.run(scenario())
