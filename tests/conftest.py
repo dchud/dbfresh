@@ -14,6 +14,10 @@ extension, which the committed ``tests/__snapshots__/`` filenames and CI
 would surface immediately, not silently.
 """
 
+import importlib.util
+import sys
+from types import ModuleType
+
 import pytest
 from pytest_textual_snapshot import SVGImageExtension
 
@@ -22,6 +26,45 @@ from dbfresh.models import Status
 from dbfresh.store import Store
 
 SVGImageExtension.file_extension = "svg"
+
+
+@pytest.fixture
+def missing_driver(monkeypatch):
+    """Make the named driver modules unimportable for one test.
+
+    A ``None`` entry in ``sys.modules`` makes ``import`` of that name raise
+    ``ModuleNotFoundError`` (with ``.name`` set to it), the same failure an
+    uninstalled driver produces. Tests of the missing-driver path use this
+    rather than assuming the extras are absent: with them installed, the
+    real driver would load and the test would attempt a live connection.
+    Name a package's submodules too (``databricks`` and ``databricks.sql``),
+    since an already-imported submodule would otherwise still resolve.
+    """
+
+    def block(*names: str) -> None:
+        for name in names:
+            monkeypatch.setitem(sys.modules, name, None)
+
+    return block
+
+
+def _import_fresh(module_name: str) -> ModuleType:
+    """Execute ``module_name``'s source as a new, separate module object.
+
+    The module is already imported and cached, so a plain ``import`` proves
+    nothing about what its top level imports. Loading its file under a
+    throwaway name re-runs the top level without replacing the cached
+    module or its attribute on the parent package, which other tests patch.
+    """
+    spec = importlib.util.find_spec(module_name)
+    assert spec is not None and spec.origin is not None
+    fresh = importlib.util.spec_from_file_location(
+        f"_fresh_{module_name.replace('.', '_')}", spec.origin
+    )
+    assert fresh is not None and fresh.loader is not None
+    module = importlib.util.module_from_spec(fresh)
+    fresh.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -93,3 +136,10 @@ def seed_observations():
         store.close()
 
     return _seed
+
+
+@pytest.fixture
+def import_fresh():
+    """:func:`_import_fresh`, for tests that pair it with ``missing_driver``
+    to prove a module has no top-level import of an optional driver."""
+    return _import_fresh

@@ -23,15 +23,21 @@ from dbfresh.adapters.postgres import (
 PG_URL = os.environ.get("DBFRESH_PG_URL")
 
 
-def test_module_imports_without_psycopg_installed():
-    # psycopg is an optional extra, not a core dependency; this test
-    # environment doesn't install it, so a bare import proves the module has
-    # no module-level `import psycopg`. Constructing an adapter still needs
-    # the driver -- see test_constructing_adapter_needs_psycopg below.
-    import dbfresh.adapters.postgres as _  # noqa: F401
+def test_module_imports_without_psycopg_installed(
+    missing_driver, import_fresh
+):
+    # psycopg is an optional extra, not a core dependency. With the driver
+    # blocked, a fresh import of the module proves it has no module-level
+    # `import psycopg`. Constructing an adapter still needs the driver --
+    # see test_constructing_adapter_needs_psycopg below.
+    missing_driver("psycopg")
+    import_fresh("dbfresh.adapters.postgres")
 
 
-def test_constructing_adapter_needs_psycopg_only_at_connect_time():
+def test_constructing_adapter_needs_psycopg_only_at_connect_time(
+    missing_driver,
+):
+    missing_driver("psycopg")
     with pytest.raises(ModuleNotFoundError):
         PostgresAdapter(host="localhost")
 
