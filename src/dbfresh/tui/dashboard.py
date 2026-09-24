@@ -263,11 +263,10 @@ def check_line_renderable(check: Check) -> Text:
     return Text(check_expectation_line(check))
 
 
-# Lineage items on the object detail screen's "About this table" panel:
-# links in Macchiato lavender and a `kind` in the muted subtext0 tone the
-# screen's other metadata uses. Neither hex is in _STATUS_STYLE -- the
-# never-observed status owns overlay0, so a muted kind must not use it.
-_LINEAGE_LINK = "#b7bdf8"  # lavender
+# A lineage item's `kind` in the muted subtext0 tone the screen's other
+# metadata uses (app.tcss's $subtext0). It stays here, not in app.tcss,
+# because it colors a span inside one line of text, which a TCSS rule
+# can't select. Not overlay0: the never-observed status owns that hex.
 _LINEAGE_KIND = "#a5adcb"  # subtext0
 
 
@@ -278,7 +277,10 @@ def lineage_ref_renderable(ref: LineageRef) -> Text:
     that can't follow links, and is also clickable: Textual runs a style's
     ``@click`` meta as an action, and ``app.open_url`` hands it to the
     browser. A plain Rich ``link`` style would not work here, because the
-    app captures the mouse before the terminal sees the click. Built as a
+    app captures the mouse before the terminal sees the click. The URL's
+    color and underline come from the widget's ``link-*`` TCSS rules (see
+    ``.lineage-item`` in app.tcss), which Textual lays over any ``@click``
+    span -- a color set here would be overridden. Built as a
     :class:`~rich.text.Text` so a name containing ``[`` shows verbatim, the
     same reason as :func:`check_line_renderable`.
     """
@@ -289,11 +291,7 @@ def lineage_ref_renderable(ref: LineageRef) -> Text:
         line.append("  ")
         line.append(
             ref.url,
-            style=Style(
-                color=_LINEAGE_LINK,
-                underline=True,
-                meta={"@click": f"app.open_url({ref.url!r})"},
-            ),
+            style=Style(meta={"@click": f"app.open_url({ref.url!r})"}),
         )
     return line
 

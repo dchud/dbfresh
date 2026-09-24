@@ -1059,3 +1059,27 @@ def test_clicking_a_lineage_url_opens_it(tmp_path, monkeypatch):
 
     asyncio.run(scenario())
     assert opened == ["https://adf.example.com/pl_ingest"]
+
+
+def test_lineage_url_is_rendered_in_the_link_color(tmp_path):
+    # The URL's color comes from the .lineage-item link-* TCSS rules, which
+    # Textual lays over any @click span; a color set in the renderable would
+    # be overridden, so this checks what is actually drawn.
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _lineage_config(tmp_path / "config.yaml", db, _FULL_METADATA)
+
+        app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
+        async with app.run_test(size=(120, 60)) as pilot:
+            await _open_object_detail(pilot)
+            item = app.screen.query(".lineage-item.upstream").last()
+            (url,) = [
+                segment
+                for segment in item.render_line(0)
+                if segment.text.startswith("https://")
+            ]
+            assert url.style.color.triplet.hex == "#b7bdf8"  # lavender
+            assert url.style.underline
+
+    asyncio.run(scenario())
