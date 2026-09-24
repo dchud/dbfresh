@@ -24,15 +24,21 @@ from dbfresh.checks import Check, compile_metric_sql
 SQLSERVER_URL = os.environ.get("DBFRESH_SQLSERVER_URL")
 
 
-def test_module_imports_without_pymssql_installed():
-    # pymssql is an optional extra, not a core dependency; this test
-    # environment doesn't install it, so a bare import proves the module has
-    # no module-level `import pymssql`. Constructing an adapter still needs
-    # the driver -- see test_constructing_adapter_needs_pymssql below.
-    import dbfresh.adapters.sqlserver as _  # noqa: F401
+def test_module_imports_without_pymssql_installed(
+    missing_driver, import_fresh
+):
+    # pymssql is an optional extra, not a core dependency. With the driver
+    # blocked, a fresh import of the module proves it has no module-level
+    # `import pymssql`. Constructing an adapter still needs the driver --
+    # see test_constructing_adapter_needs_pymssql below.
+    missing_driver("pymssql")
+    import_fresh("dbfresh.adapters.sqlserver")
 
 
-def test_constructing_adapter_needs_pymssql_only_at_connect_time():
+def test_constructing_adapter_needs_pymssql_only_at_connect_time(
+    missing_driver,
+):
+    missing_driver("pymssql")
     with pytest.raises(ModuleNotFoundError):
         SqlServerAdapter("sqlserver://user:pass@localhost/mydb")
 

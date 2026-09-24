@@ -39,11 +39,12 @@ def test_create_adapter_ignores_timeout_for_an_adapter_that_does_not_accept_one(
     adapter.close()
 
 
-def test_sqlserver_type_resolves_to_the_sqlserver_adapter():
-    # pymssql isn't installed in this test environment, so construction
-    # fails past dispatch -- proving the factory routed to SqlServerAdapter
-    # rather than raising "unknown source type", and that the raw
-    # ModuleNotFoundError is reworded into a hint naming the extra.
+def test_sqlserver_type_resolves_to_the_sqlserver_adapter(missing_driver):
+    # With pymssql blocked, construction fails past dispatch -- proving the
+    # factory routed to SqlServerAdapter rather than raising "unknown source
+    # type", and that the raw ModuleNotFoundError is reworded into a hint
+    # naming the extra.
+    missing_driver("pymssql")
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter("sqlserver", {"url": "sqlserver://user:pass@host/db"})
     message = str(exc_info.value)
@@ -60,11 +61,11 @@ def test_supported_types_lists_every_registered_type_sorted():
     ]
 
 
-def test_databricks_type_resolves_to_the_databricks_adapter():
-    # databricks-sql-connector isn't installed in this test environment, so
-    # construction fails past dispatch -- proving the factory routed to
-    # DatabricksAdapter rather than raising "unknown source type", reworded
-    # into a hint naming the extra.
+def test_databricks_type_resolves_to_the_databricks_adapter(missing_driver):
+    # With databricks-sql-connector blocked, construction fails past
+    # dispatch -- proving the factory routed to DatabricksAdapter rather than
+    # raising "unknown source type", reworded into a hint naming the extra.
+    missing_driver("databricks", "databricks.sql")
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter(
             "databricks",
