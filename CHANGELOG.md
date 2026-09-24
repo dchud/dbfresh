@@ -38,6 +38,11 @@ once releases are tagged.
 
 ### Changed
 
+- The Quickstart covers the project-environment and tool installs
+  separately, recommending a tool install for machines that run against
+  live sources: it is invoked as bare `dbfresh`, keeps its driver extras
+  where `uv run` would prune them, and needs `uv tool update-shell` if the
+  command isn't found.
 - `dbfresh add` no longer edits config files. It runs the same live-source
   analysis and prints the proposed source and checks as YAML on stdout for
   you to paste; wizard prompts and guidance move to stderr so stdout holds
