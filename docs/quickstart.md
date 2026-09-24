@@ -53,15 +53,15 @@ project environment, pass them to `uv sync`:
 uv sync --extra sqlserver --extra databricks   # or: uv sync --all-extras
 ```
 
-The project environment is *exact*: `uv sync` makes it match precisely the
-extras you pass, so `--extra databricks` alone uninstalls the `sqlserver`
-extra. `uv run` re-syncs the same way, so a bare `uv run dbfresh ...`, or
-`just test`, or `just run`, will prune extras you installed earlier, and
-the next run against a SQL Server or Databricks source then fails on the
-missing driver with nothing having changed in your config. Either pass the
-extras every time, or use a tool install, whose environment is separate
-from the checkout's and so isn't affected. The latter is the better fit for
-a machine that runs dbfresh against live sources.
+`uv sync` is *exact*: it makes the project environment match precisely
+the extras you pass, so `--extra databricks` alone uninstalls the
+`sqlserver` extra, and a plain `uv sync` -- after a `git pull`, say --
+uninstalls them all. The next run against a SQL Server or Databricks
+source then fails on the missing driver with nothing having changed in
+your config. Pass the extras every time you sync; `uv sync --all-extras`
+is the simplest way. `uv run` is not exact: it installs anything missing
+but leaves other packages in place, so `uv run dbfresh ...`, `just test`,
+and `just run` keep the drivers you synced.
 
 The rest of this page writes `uv run dbfresh ...`; drop the prefix if you
 installed as a tool.
