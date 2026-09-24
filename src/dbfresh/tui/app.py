@@ -382,6 +382,13 @@ class DbfreshApp(App):
             message = f"{message} · {unobserved_summary(pending)}"
         self.notify(message)
 
+    def action_open_url(self, url: str) -> None:
+        """Open ``url`` in the browser -- the ``@click`` target of a link in
+        rendered text (see :func:`~dbfresh.tui.dashboard.lineage_ref_renderable`).
+        Textual's own :meth:`open_url` is a method, not an action, so a
+        style's ``@click`` meta cannot call it directly."""
+        self.open_url(url)
+
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
