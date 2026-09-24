@@ -4,6 +4,16 @@
 # Dependabot bumps both the pinned SHA and its version comment. Python deps are
 # already exact-pinned with hashes in uv.lock -- here Dependabot just proposes
 # versions.
+#
+# Each ecosystem batches its minor and patch updates into a single PR. Majors are
+# deliberately left out of the groups so they arrive as individual PRs and get
+# read on their own. Grouping also keeps concurrent uv.lock bumps from conflicting
+# with each other, which otherwise forces a rebase and a fresh CI run on every
+# sibling PR each time one of them merges.
+#
+# Groups cannot span ecosystems, so the ruff pinned in pyproject.toml and the
+# ruff-pre-commit rev always arrive as two separate PRs. Merge them together --
+# see the drift note in .pre-commit-config.yaml.
 version: 2
 updates:
   - package-ecosystem: "github-actions"
@@ -12,12 +22,23 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      python:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     ignore:
       # pytest-textual-snapshot 1.1.0 pins syrupy 4.8.0, which requires
       # pytest<9 -- incompatible with this project's pytest>=9.1.1, so the
@@ -26,6 +47,7 @@ updates:
       # does.
       - dependency-name: "pytest-textual-snapshot"
         versions: [">=1.1.0"]
+
   # The ruff hook rev in .pre-commit-config.yaml is a second ruff version,
   # separate from the one the "uv" ecosystem above bumps in pyproject.toml.
   # Without this block the rev only ever moves by hand, and the hooks (which
@@ -36,3 +58,8 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    groups:
+      pre-commit:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
