@@ -17,6 +17,9 @@ dependencies = [
     "sqlalchemy>=2.0.51",
     "structlog>=26.1.0",
     "textual>=8.2.8",
+    # zoneinfo has no system time zone database on Windows and falls back
+    # to this package; without it any configured timezone fails there.
+    "tzdata>=2026.3; sys_platform == 'win32'",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",

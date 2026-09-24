@@ -87,6 +87,9 @@ once releases are tagged.
 
 ### Fixed
 
+- On Windows, a configured `timezone` works without the `databricks`
+  extra installed. Windows has no system time zone database, and the
+  `tzdata` package it falls back to is now a dependency there.
 - Drilling into an object while a run is in flight now shows the results
   that run has already produced for it, instead of reading as never-run
   until the whole run finishes.

@@ -309,6 +309,7 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "structlog" },
     { name = "textual" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
 [package.optional-dependencies]
@@ -351,6 +352,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "structlog", specifier = ">=26.1.0" },
     { name = "textual", specifier = ">=8.2.8" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2026.3" },
 ]
 provides-extras = ["postgres", "sqlserver", "databricks"]
 
