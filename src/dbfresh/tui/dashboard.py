@@ -28,6 +28,7 @@ from textual.widgets.data_table import CellDoesNotExist
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.models import Status, worst_status
+from dbfresh.report import check_expectation_line, check_label
 from dbfresh.store import Store
 
 _TRAILING_DAYS = 7
@@ -192,62 +193,6 @@ def unobserved_summary(count: int) -> str:
     """The one-line phrase for ``count`` checks not yet run here (count >= 1)."""
     noun = "check" if count == 1 else "checks"
     return f"{count} {noun} not yet run on this machine"
-
-
-def check_label(check: Check) -> str:
-    """The label shown for one check's row.
-
-    Unlike the old nested tree (where a column/key node already grouped
-    same-column checks), this grid is flat, so a bare metric name like
-    'null_rate' would be ambiguous with more than one null_rate check on
-    the same object -- the column/key is appended in parens to disambiguate
-    whenever the check has one; a table-level check (row_count, schema, an
-    assertion) has none and stays bare.
-    """
-    if check.assert_ is not None:
-        return f"assert {check.assert_}"
-    if check.assert_sql is not None:
-        return f"assert_sql {check.assert_sql}"
-    label = check.metric or "check"
-    context = check.column or check.key
-    return f"{label} ({context})" if context else label
-
-
-def check_expectation_line(check: Check) -> str:
-    """A check's :func:`check_label` plus its expectation, when it has
-    one -- the one-line read-only rendering both
-    :class:`~dbfresh.tui.screens.ObjectDetailScreen` and
-    :class:`~dbfresh.tui.configure.ConfigureScreen` show for an
-    already-configured check, since neither screen edits one: enough to
-    find the matching block in the config file by eye. An assertion check
-    has no separate ``expect:`` -- its assertion text is already part of
-    its label.
-
-    A ``note:`` -- freeform author context, never validated beyond "is a
-    string" -- is appended after a ``·`` separator, the same joiner
-    :func:`_check_detail_text` uses for its own "expected ... observed
-    ..." pairing, so the two stay visually consistent rather than
-    inventing a second on-screen convention. Its own ``note:`` label makes
-    it identifiable at a glance without a dedicated color, and it comes
-    last so label and expectation -- which identify the check -- stay the
-    first thing read.
-
-    Returns plain text with no console markup of its own. Every part of it
-    is author-written -- an assertion's SQL, an object name, a note -- and
-    any of them may contain a literal ``[...]`` that console markup would
-    read as a style tag and swallow. Callers render it through
-    :func:`check_line_renderable` rather than escaping a field at a time,
-    so the whole line is literal and no future field has to remember.
-    """
-    label = check_label(check)
-    line = (
-        label
-        if check.expect is None
-        else f"{label}: {check.expect.describe()}"
-    )
-    if check.note:
-        line = f"{line} · note: {check.note}"
-    return line
 
 
 def check_line_renderable(check: Check) -> Text:

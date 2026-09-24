@@ -21,7 +21,7 @@ from rich.progress import (
 )
 
 from dbfresh.calendar import BusinessCalendar
-from dbfresh.checks import diff_fingerprints
+from dbfresh.checks import Check, check_id, diff_fingerprints
 from dbfresh.models import (
     ObservationReader,
     Result,
@@ -32,6 +32,8 @@ from dbfresh.models import (
 
 if TYPE_CHECKING:
     from typing import TextIO
+
+    from dbfresh.config import LineageRef, TableMeta
 
 
 def format_timestamp(when: datetime, tz: tzinfo | None = None) -> str:
@@ -433,6 +435,30 @@ def _schema_drift_note(
     return f"vs {baseline_ts}: {counts}: {listed}"
 
 
+def _stored_value_display(
+    metric: str | None, row: dict, tz: tzinfo | None
+) -> str:
+    """One stored observation's value as the history view shows it --
+    shared by :func:`render_history` and :func:`render_show`.
+
+    A freshness lag becomes the reconstructed absolute last-update time the
+    digest also shows (:func:`_format_freshness_observed`): the row's own
+    ``observed_at`` is the "now" that produced the lag, the role
+    ``run.started_at`` plays there, rendered in the same friendly form as
+    the ``observed_at`` column rather than the digest's ISO. A schema
+    fingerprint becomes a column count.
+    """
+    value = row["value"] if row["value"] is not None else row["value_text"]
+    if metric == "freshness" and isinstance(value, (int, float)):
+        reference = datetime.fromisoformat(row["observed_at"])
+        return _format_freshness_observed(
+            value, reference, tz, format_timestamp_friendly
+        )
+    if metric == "schema" and isinstance(value, str) and value:
+        return _summarize_fingerprint(value)
+    return _format_observed(metric, value)
+
+
 def render_history(
     candidate: dict,
     rows: list[dict],
@@ -487,25 +513,10 @@ def render_history(
     )
     prepared: list[tuple[str, str, str, str, str | None, str | None]] = []
     for row, baseline in zip(rows, baselines, strict=True):
-        value = row["value"] if row["value"] is not None else row["value_text"]
-        observed_at = row["observed_at"]
         observed = format_timestamp_friendly(
-            datetime.fromisoformat(observed_at), tz
+            datetime.fromisoformat(row["observed_at"]), tz
         )
-        if metric == "freshness" and isinstance(value, (int, float)):
-            # The reconstructed absolute last-update time the digest also
-            # shows (_format_freshness_observed): this row's own observed_at
-            # is the "now" that produced this lag, the role run.started_at
-            # plays there. The History view renders it in the same friendly
-            # form as the observed_at column, not the digest's ISO.
-            reference = datetime.fromisoformat(observed_at)
-            display = _format_freshness_observed(
-                value, reference, tz, format_timestamp_friendly
-            )
-        elif metric == "schema" and isinstance(value, str) and value:
-            display = _summarize_fingerprint(value)
-        else:
-            display = _format_observed(metric, value)
+        display = _stored_value_display(metric, row, tz)
         prepared.append(
             (
                 observed,
@@ -534,6 +545,151 @@ def render_history(
         elif drift:
             line += f"  — {drift}"
         lines.append(line)
+    return "\n".join(lines)
+
+
+def check_label(check: Check) -> str:
+    """The label shown for one check's row, in the TUI grids and in
+    ``dbfresh show``.
+
+    Unlike the old nested tree (where a column/key node already grouped
+    same-column checks), this grid is flat, so a bare metric name like
+    'null_rate' would be ambiguous with more than one null_rate check on
+    the same object -- the column/key is appended in parens to disambiguate
+    whenever the check has one; a table-level check (row_count, schema, an
+    assertion) has none and stays bare.
+    """
+    if check.assert_ is not None:
+        return f"assert {check.assert_}"
+    if check.assert_sql is not None:
+        return f"assert_sql {check.assert_sql}"
+    label = check.metric or "check"
+    context = check.column or check.key
+    return f"{label} ({context})" if context else label
+
+
+def check_expectation_line(check: Check) -> str:
+    """A check's :func:`check_label` plus its expectation, when it has
+    one -- the one-line read-only rendering both
+    :class:`~dbfresh.tui.screens.ObjectDetailScreen` and
+    :class:`~dbfresh.tui.configure.ConfigureScreen` show for an
+    already-configured check, since neither screen edits one: enough to
+    find the matching block in the config file by eye. Lives here rather
+    than in the TUI so ``dbfresh show`` can use it without importing
+    Textual. An assertion check has no separate ``expect:`` -- its
+    assertion text is already part of its label.
+
+    A ``note:`` -- freeform author context, never validated beyond "is a
+    string" -- is appended after a ``·`` separator, the same joiner
+    :func:`~dbfresh.tui.screens._check_detail_text` uses for its own
+    "expected ... observed ..." pairing, so the two stay visually
+    consistent rather than inventing a second on-screen convention. Its own ``note:`` label makes
+    it identifiable at a glance without a dedicated color, and it comes
+    last so label and expectation -- which identify the check -- stay the
+    first thing read.
+
+    Returns plain text with no console markup of its own. Every part of it
+    is author-written -- an assertion's SQL, an object name, a note -- and
+    any of them may contain a literal ``[...]`` that console markup would
+    read as a style tag and swallow. The TUI renders it through
+    :func:`~dbfresh.tui.dashboard.check_line_renderable` rather than
+    escaping a field at a time, so the whole line is literal and no future
+    field has to remember.
+    """
+    label = check_label(check)
+    line = (
+        label
+        if check.expect is None
+        else f"{label}: {check.expect.describe()}"
+    )
+    if check.note:
+        line = f"{line} · note: {check.note}"
+    return line
+
+
+def render_table_candidates(object_: str, pairs: list[tuple[str, str]]) -> str:
+    """List the configured tables an ambiguous ``dbfresh show OBJECT``
+    matches -- the same object name under more than one source."""
+    lines = [f"multiple tables match {object_!r} — narrow with --source:"]
+    lines.extend(f"  {source}.{obj}" for source, obj in pairs)
+    return "\n".join(lines)
+
+
+def _lineage_ref_line(ref: LineageRef) -> str:
+    line = ref.name
+    if ref.kind:
+        line += f" ({ref.kind})"
+    if ref.url:
+        line += f"  {ref.url}"
+    return line
+
+
+def render_show(
+    source: str,
+    object_: str,
+    meta: TableMeta | None,
+    checks: list[Check],
+    latest: dict[str, dict | None],
+    tz: tzinfo | None = None,
+) -> str:
+    """``dbfresh show``'s output: one table's lineage metadata, then each
+    of its checks with its latest stored status.
+
+    ``latest`` maps each check's ``check_id`` to its most recent stored
+    observation (:meth:`~dbfresh.store.Store.latest_observation`), or
+    ``None`` for a check that has never run. Metadata fields the entry
+    doesn't set are left out; a table with none gets one line saying so.
+    Checks keep config order. A check's line carries its status, when it
+    was observed, and either its value against what it expected or, for
+    an ERROR, the error text -- whitespace-collapsed to one line, as the
+    history view does.
+    """
+    lines = [f"{source}.{object_}"]
+    if meta is None:
+        lines.append(
+            "  no lineage recorded -- add description, tags, upstream, or "
+            "downstream to a tables: entry for it"
+        )
+    else:
+        if meta.description:
+            lines.append(f"  {meta.description}")
+        if meta.tags:
+            lines.append(f"  tags: {', '.join(meta.tags)}")
+        for heading, refs in (
+            ("upstream", meta.upstream),
+            ("downstream", meta.downstream),
+        ):
+            if refs:
+                lines.append("")
+                lines.append(heading)
+                lines.extend(f"  {_lineage_ref_line(ref)}" for ref in refs)
+
+    lines.append("")
+    lines.append("checks")
+    if not checks:
+        lines.append("  (no checks for this table)")
+        return "\n".join(lines)
+
+    labels = [check_label(check) for check in checks]
+    label_width = max(len(label) for label in labels)
+    for check, label in zip(checks, labels, strict=True):
+        row = latest.get(check_id(check))
+        if row is None:
+            lines.append(f"  {label:<{label_width}}  never run")
+            continue
+        observed = format_timestamp_friendly(
+            datetime.fromisoformat(row["observed_at"]), tz
+        )
+        if row.get("error"):
+            detail = " ".join(str(row["error"]).split())
+        else:
+            detail = _stored_value_display(check.metric, row, tz)
+            if row.get("expected"):
+                detail += f" · expected {row['expected']}"
+        lines.append(
+            f"  {label:<{label_width}}  {row['status']:<8} {observed:<28} "
+            f"{detail}"
+        )
     return "\n".join(lines)
 
 

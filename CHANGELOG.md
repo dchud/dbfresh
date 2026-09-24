@@ -9,6 +9,8 @@ once releases are tagged.
 
 ### Added
 
+- `dbfresh show OBJECT` prints a table's lineage metadata and each of its
+  checks' latest status, without connecting to a source.
 - A `tables:` entry can record lineage metadata: `description:`,
   `tags:`, and `upstream:`/`downstream:` lists naming what writes and
   reads the table, each item a bare name or a `name`/`kind`/`url`

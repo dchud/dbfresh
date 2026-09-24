@@ -16,6 +16,7 @@ import yaml
 from dbfresh import __version__
 from dbfresh.adapters.base import Adapter
 from dbfresh.adapters.factory import create_adapter, supported_types
+from dbfresh.checks import check_id
 from dbfresh.config import (
     Config,
     ConfigError,
@@ -55,6 +56,8 @@ from dbfresh.report import (
     render_digest,
     render_history,
     render_json,
+    render_show,
+    render_table_candidates,
     show_progress,
 )
 from dbfresh.runner import filter_checks, run_and_persist
@@ -157,6 +160,34 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("-c", "--config", default=None)
     history.add_argument(
         "--store", default=None, help="observation store path"
+    )
+
+    show = subcommands.add_parser(
+        "show",
+        help="show a table's lineage, its checks, and their latest status",
+        parents=[_verbosity_parent()],
+    )
+    show.add_argument(
+        "object", help="the table's object name, exactly as configured"
+    )
+    show.add_argument(
+        "--source",
+        default=None,
+        help="the table's source, when the name is configured under more "
+        "than one",
+    )
+    show.add_argument(
+        "-c",
+        "--config",
+        default=None,
+        help="config file (default: $DBFRESH_CONFIG, else the nearest "
+        "config.yaml at or above the current directory)",
+    )
+    show.add_argument(
+        "--store",
+        default=None,
+        help="observation store path (default: $DBFRESH_STORE, else the "
+        "config's store: path, else dbfresh.db beside the config)",
     )
 
     prune = subcommands.add_parser(
@@ -349,6 +380,69 @@ def _history_command(args: argparse.Namespace) -> int:
         return 0
     finally:
         store.close()
+
+
+def _show_command(args: argparse.Namespace) -> int:
+    """Print one table's lineage metadata and each of its checks' latest
+    status.
+
+    Loads the config tolerantly, as ``ui`` does: a lookup never connects
+    to a source, so an unset ``${VAR}`` secret must not stop it. Any other
+    config problem is still a config error. The table is matched by exact
+    object name among every table the config names -- by a check or by a
+    ``tables:`` entry's metadata -- narrowed by ``--source``. Exits 0 once
+    a table is shown, whatever its checks' statuses: ``show`` is a lookup,
+    and ``run`` is the command whose exit code reflects them.
+    """
+    try:
+        config, _missing = load_config_tolerant(Path(args.config))
+    except (ConfigError, OSError, yaml.YAMLError) as exc:
+        return _report_config_error(exc)
+
+    pairs = [
+        pair
+        for pair in dict.fromkeys(
+            [(c.source, c.object) for c in config.checks] + list(config.tables)
+        )
+        if pair[1] == args.object
+        and (args.source is None or pair[0] == args.source)
+    ]
+    if not pairs:
+        where = f" under source {args.source!r}" if args.source else ""
+        print(f"no table {args.object!r}{where} in config")
+        return 1
+    if len(pairs) > 1:
+        print(render_table_candidates(args.object, pairs))
+        return 2
+
+    source, object_ = pairs[0]
+    checks = [
+        c for c in config.checks if c.source == source and c.object == object_
+    ]
+    store_path = resolve_store_path(
+        config_dir=config.config_dir,
+        store_config=config.store,
+        cli_store=args.store,
+        env_store=os.environ.get("DBFRESH_STORE"),
+    )
+    store = Store(store_path)
+    try:
+        latest = {
+            check_id(c): store.latest_observation(check_id(c)) for c in checks
+        }
+    finally:
+        store.close()
+    print(
+        render_show(
+            source,
+            object_,
+            config.tables.get((source, object_)),
+            checks,
+            latest,
+            tz=display_timezone(config.calendar),
+        )
+    )
+    return 0
 
 
 def _prune_command(args: argparse.Namespace) -> int:
@@ -1009,7 +1103,7 @@ def _config_command(args: argparse.Namespace) -> int:
 
 
 _CONFIG_READING_COMMANDS = frozenset(
-    {"run", "history", "prune", "add", "ui", "env-template", "config"}
+    {"run", "history", "show", "prune", "add", "ui", "env-template", "config"}
 )
 
 _DEFAULT_CONFIG_FILENAME = "config.yaml"
@@ -1112,6 +1206,8 @@ def _dispatch(
         return _run_command(args)
     if args.command == "history":
         return _history_command(args)
+    if args.command == "show":
+        return _show_command(args)
     if args.command == "prune":
         return _prune_command(args)
     if args.command == "add":
