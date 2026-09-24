@@ -1,9 +1,12 @@
+import sys
+
 import pytest
 
 from dbfresh.adapters.factory import (
     MissingDriverError,
     adapter_class_for,
     create_adapter,
+    missing_driver_message,
     supported_types,
 )
 from dbfresh.adapters.sqlite import SqliteAdapter
@@ -48,8 +51,8 @@ def test_sqlserver_type_resolves_to_the_sqlserver_adapter(missing_driver):
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter("sqlserver", {"url": "sqlserver://user:pass@host/db"})
     message = str(exc_info.value)
-    assert "pymssql" in message
-    assert "dbfresh[sqlserver]" in message
+    assert "'pymssql' driver" in message
+    assert sys.prefix in message
 
 
 def test_supported_types_lists_every_registered_type_sorted():
@@ -75,7 +78,7 @@ def test_databricks_type_resolves_to_the_databricks_adapter(missing_driver):
                 "token": "t",
             },
         )
-    assert "dbfresh[databricks]" in str(exc_info.value)
+    assert "'databricks' driver" in str(exc_info.value)
 
 
 def test_create_adapter_rewords_a_missing_submodule_of_the_driver_package(
@@ -96,7 +99,7 @@ def test_create_adapter_rewords_a_missing_submodule_of_the_driver_package(
     monkeypatch.setitem(factory._ADAPTERS, "databricks", _MissingSdkSubmodule)
     with pytest.raises(MissingDriverError) as exc_info:
         create_adapter("databricks", {"host": "x"})
-    assert "dbfresh[databricks]" in str(exc_info.value)
+    assert "'databricks' driver" in str(exc_info.value)
 
 
 def test_create_adapter_does_not_reword_an_unrelated_missing_module(
@@ -116,3 +119,51 @@ def test_create_adapter_does_not_reword_an_unrelated_missing_module(
     with pytest.raises(ModuleNotFoundError) as exc_info:
         create_adapter("sqlserver", {"url": "x"})
     assert not isinstance(exc_info.value, MissingDriverError)
+
+
+def test_missing_driver_message_for_a_uv_tool_install(tmp_path):
+    # uv writes uv-receipt.toml into the root of every tool environment.
+    (tmp_path / "uv-receipt.toml").write_text("[tool]\n")
+    message = missing_driver_message(
+        "databricks", "databricks", "databricks", tmp_path
+    )
+    assert f"({tmp_path})" in message
+    assert "uv tool install" in message
+    assert 'uv tool install --force -e ".[sqlserver,databricks]"' in message
+    assert "including 'databricks'" in message
+    assert "uv sync" not in message
+    assert "\n" not in message
+
+
+def test_missing_driver_message_for_the_checkout_project_environment(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "dbfresh"\n')
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    message = missing_driver_message("sqlserver", "pymssql", "sqlserver", venv)
+    assert f"({venv})" in message
+    assert "uv sync --all-extras" in message
+    assert "uv run dbfresh" in message
+    assert "uv tool install" not in message
+    assert "\n" not in message
+
+
+def test_missing_driver_message_for_another_project_is_generic(tmp_path):
+    # A .venv beside some other project's pyproject.toml is not a dbfresh
+    # checkout, so `uv sync --all-extras` there would not install dbfresh's
+    # extras.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "other"\n')
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    message = missing_driver_message("sqlserver", "pymssql", "sqlserver", venv)
+    assert f"({venv})" in message
+    assert "Install dbfresh's 'sqlserver' extra into it." in message
+    assert "uv sync" not in message
+    assert "uv tool install" not in message
+
+
+def test_missing_driver_message_tolerates_an_unreadable_pyproject(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("not [valid toml")
+    venv = tmp_path / ".venv"
+    venv.mkdir()
+    message = missing_driver_message("sqlserver", "pymssql", "sqlserver", venv)
+    assert "Install dbfresh's 'sqlserver' extra into it." in message

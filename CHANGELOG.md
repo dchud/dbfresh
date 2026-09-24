@@ -38,6 +38,11 @@ once releases are tagged.
 
 ### Changed
 
+- The missing-driver error names the Python environment dbfresh is
+  running from and gives the install command that fits it: `uv sync
+  --all-extras` for a checkout's environment, `uv tool install --force -e`
+  with the extras for a tool install. Running a different install than the
+  one the driver went into is the usual cause.
 - The Quickstart covers the project-environment and tool installs
   separately, recommending a tool install for machines that run against
   live sources: it is invoked as bare `dbfresh`, keeps its driver extras
