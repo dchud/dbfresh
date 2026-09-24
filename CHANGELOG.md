@@ -9,6 +9,10 @@ once releases are tagged.
 
 ### Added
 
+- A `tables:` entry can record lineage metadata: `description:`,
+  `tags:`, and `upstream:`/`downstream:` lists naming what writes and
+  reads the table, each item a bare name or a `name`/`kind`/`url`
+  mapping. `config migrate` keeps it on regrouped entries.
 - A `check_sets:` block defines named, parameterized check batteries a
   `tables:` entry pulls in with `use:`, overriding parameters with `with:`
   and dropping items with `skip:`.

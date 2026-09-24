@@ -6,7 +6,7 @@ import inspect
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -50,18 +50,27 @@ _CHECK_KEYS = frozenset(
     }
 )
 
+# A `tables:` entry's lineage metadata -- annotation the user maintains by
+# hand, describing the table rather than checking it. In the order
+# `config migrate` writes them onto a regrouped entry.
+TABLE_METADATA_KEYS = ("description", "tags", "upstream", "downstream")
+
 # A `tables:` entry's own fields -- deliberately a separate set from
 # _CHECK_KEYS rather than a union with it: a table entry and a check block
 # are different things that happen to nest one inside the other, and
-# keeping their key sets apart is what lets `description`/`tags`/
-# `upstream`/`downstream` (a later addition, entry-level metadata with no
-# check-block equivalent) get added to this set alone, without touching
-# what a flat check accepts. `use`/`with`/`skip` are the same story for
-# check_sets: table-entry fields that select and parameterize a named
-# battery, with no equivalent on a hand-written check block.
+# keeping their key sets apart is what lets the lineage metadata keys
+# (entry-level, with no check-block equivalent) live in this set alone, so
+# a flat check using one is still rejected as an unknown field.
+# `use`/`with`/`skip` are the same story for check_sets: table-entry fields
+# that select and parameterize a named battery, with no equivalent on a
+# hand-written check block.
 _TABLE_ENTRY_KEYS = frozenset(
     {"source", "object", "checks", "use", "with", "skip"}
-)
+) | frozenset(TABLE_METADATA_KEYS)
+
+# An `upstream:`/`downstream:` item written as a mapping rather than a bare
+# name -- the form that exists so an item can carry a link.
+_LINEAGE_REF_KEYS = frozenset({"name", "kind", "url"})
 
 # The two fields a table entry states once for every check nested under
 # it. A nested check repeating either is rejected outright rather than
@@ -165,6 +174,32 @@ def _parse_store(raw: Any) -> StoreConfig | None:
     )
 
 
+@dataclass(frozen=True)
+class LineageRef:
+    """One ``upstream:``/``downstream:`` item on a ``tables:`` entry.
+
+    ``kind`` is free text (``pipeline``, ``dashboard``, ...) and ``url`` is
+    not validated beyond being a string -- dbfresh records lineage the user
+    maintains by hand; it never derives or checks it.
+    """
+
+    name: str
+    kind: str | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class TableMeta:
+    """A ``tables:`` entry's lineage metadata: what the table is, what
+    feeds it, and what reads it. Config only -- nothing here is persisted
+    to the observation store."""
+
+    description: str | None = None
+    tags: tuple[str, ...] = ()
+    upstream: tuple[LineageRef, ...] = ()
+    downstream: tuple[LineageRef, ...] = ()
+
+
 @dataclass
 class Config:
     sources: dict[str, SourceConfig]
@@ -172,6 +207,10 @@ class Config:
     config_dir: Path
     store: StoreConfig | None = None
     calendar: BusinessCalendar | None = None
+    # Lineage metadata by (source, object), holding only the tables whose
+    # `tables:` entry sets any -- at most one entry per table may (see
+    # _load_config).
+    tables: dict[tuple[str, str], TableMeta] = field(default_factory=dict)
 
 
 class ConfigError(ValueError):
@@ -638,7 +677,125 @@ def flatten_table_checks(
     return checks, problems
 
 
-def group_checks_by_table(checks: list[dict]) -> list[dict]:
+def entry_metadata(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """The lineage metadata fields set on a raw ``tables:`` entry, verbatim
+    and in :data:`TABLE_METADATA_KEYS` order. A key written with no value
+    (YAML ``null``) counts as unset."""
+    return {
+        key: entry[key]
+        for key in TABLE_METADATA_KEYS
+        if entry.get(key) is not None
+    }
+
+
+def _parse_lineage_refs(
+    label: str, key: str, raw: Any, problems: list[str]
+) -> tuple[LineageRef, ...]:
+    """An ``upstream:``/``downstream:`` list: each item a bare name or a
+    ``{name, kind, url}`` mapping. Malformed items are reported into
+    ``problems`` and left out."""
+    if not isinstance(raw, list):
+        problems.append(f"{label}: {key} must be a list, got {raw!r}")
+        return ()
+    refs: list[LineageRef] = []
+    for item in raw:
+        if isinstance(item, str):
+            refs.append(LineageRef(name=item))
+            continue
+        if not isinstance(item, dict):
+            problems.append(
+                f"{label}: {key} item must be a name or a mapping with "
+                f"name/kind/url, got {item!r}"
+            )
+            continue
+        extra = sorted(set(item) - _LINEAGE_REF_KEYS)
+        if extra:
+            problems.append(
+                f"{label}: {key} item {item!r} has unknown field(s): {extra}"
+            )
+            continue
+        if "name" not in item:
+            problems.append(f"{label}: {key} item {item!r} is missing 'name'")
+            continue
+        bad = [
+            field_name
+            for field_name in ("name", "kind", "url")
+            if field_name in item
+            and item[field_name] is not None
+            and not isinstance(item[field_name], str)
+        ]
+        if bad or item["name"] is None:
+            problems.append(
+                f"{label}: {key} item {item!r}: "
+                f"{', '.join(bad or ['name'])} must be a string"
+            )
+            continue
+        refs.append(
+            LineageRef(
+                name=item["name"], kind=item.get("kind"), url=item.get("url")
+            )
+        )
+    return tuple(refs)
+
+
+def parse_table_metadata(
+    entry: Mapping[str, Any],
+) -> tuple[TableMeta | None, list[str]]:
+    """The :class:`TableMeta` a raw ``tables:`` entry declares, or ``None``
+    when it sets no metadata, plus every problem found in it as plain text.
+
+    A malformed field is reported and left out rather than failing the
+    whole entry, so ``config validate`` sees every problem at once.
+    """
+    raw = entry_metadata(entry)
+    if not raw:
+        return None, []
+    label = _describe_table_entry(dict(entry))
+    problems: list[str] = []
+
+    description = raw.get("description")
+    if description is not None and not isinstance(description, str):
+        problems.append(
+            f"{label}: description must be a string, got {description!r}"
+        )
+        description = None
+
+    tags: tuple[str, ...] = ()
+    if "tags" in raw:
+        raw_tags = raw["tags"]
+        if isinstance(raw_tags, list) and all(
+            isinstance(tag, str) for tag in raw_tags
+        ):
+            tags = tuple(raw_tags)
+        else:
+            problems.append(
+                f"{label}: tags must be a list of strings, got {raw_tags!r}"
+            )
+
+    upstream = (
+        _parse_lineage_refs(label, "upstream", raw["upstream"], problems)
+        if "upstream" in raw
+        else ()
+    )
+    downstream = (
+        _parse_lineage_refs(label, "downstream", raw["downstream"], problems)
+        if "downstream" in raw
+        else ()
+    )
+    meta = TableMeta(
+        description=description,
+        tags=tags,
+        upstream=upstream,
+        downstream=downstream,
+    )
+    return (meta if meta != TableMeta() else None), problems
+
+
+def group_checks_by_table(
+    checks: list[dict],
+    metadata: Mapping[tuple[Any, Any], dict[str, Any]] | None = None,
+    order: list[tuple[Any, Any]] | None = None,
+) -> list[dict]:
     """The inverse of :func:`flatten_table_checks`: group raw check dicts
     -- each still carrying its own ``source``/``object`` -- into
     ``tables:`` entries, one per distinct pair.
@@ -653,26 +810,41 @@ def group_checks_by_table(checks: list[dict]) -> list[dict]:
     onto the entry and are dropped from the nested block, matching what a
     hand-written ``tables:`` entry looks like.
 
+    ``metadata`` maps a pair to the lineage fields its entry carried
+    (:func:`entry_metadata`); they are written back onto that pair's entry
+    between ``object`` and ``checks``, in :data:`TABLE_METADATA_KEYS`
+    order. ``order``, when given, is the document order of every pair --
+    including one whose entry carries metadata but no checks, which gets
+    an entry with no ``checks:`` key. Without it, pairs follow ``checks``
+    and any metadata-only pair follows them.
+
     Used by ``dbfresh config migrate`` to fold an existing file's checks
     into ``tables:``, and by
     :func:`~dbfresh.configurator.render_proposal` to group a freshly
     proposed bundle the same way -- both are "build ``tables:`` entries
     rather than consume them", just from different sources of raw checks.
     """
-    order: list[tuple[Any, Any]] = []
+    metadata = metadata or {}
     grouped: dict[tuple[Any, Any], list[dict]] = {}
     for raw in checks:
         pair = (raw.get("source"), raw.get("object"))
-        if pair not in grouped:
-            grouped[pair] = []
-            order.append(pair)
-        grouped[pair].append(
+        grouped.setdefault(pair, []).append(
             {k: v for k, v in raw.items() if k not in _TABLE_CHECK_OWN_FIELDS}
         )
-    return [
-        {"source": source, "object": obj, "checks": grouped[(source, obj)]}
-        for source, obj in order
-    ]
+    pairs = list(order) if order is not None else list(grouped)
+    pairs += [p for p in [*grouped, *metadata] if p not in pairs]
+
+    tables: list[dict] = []
+    for pair in dict.fromkeys(pairs):
+        if pair not in grouped and pair not in metadata:
+            continue
+        source, obj = pair
+        entry: dict[str, Any] = {"source": source, "object": obj}
+        entry.update(metadata.get(pair, {}))
+        if pair in grouped:
+            entry["checks"] = grouped[pair]
+        tables.append(entry)
+    return tables
 
 
 def _build_check(raw: dict, defaults: dict) -> Check:
@@ -861,6 +1033,66 @@ def _collect_file_checks(
     ]
     raw = [*flat, *table_checks]
     return raw, [file] * len(raw), problems
+
+
+def duplicate_metadata_message(entry: Mapping[str, Any]) -> str:
+    """The problem text for a second ``tables:`` entry setting lineage
+    metadata on a table another entry already describes."""
+    return (
+        f"{_describe_table_entry(dict(entry))}: lineage metadata "
+        "(description/tags/upstream/downstream) is set on more than one "
+        "tables: entry; set it on one"
+    )
+
+
+def _collect_table_metadata(
+    file_entries: list[tuple[Path, list[dict], list[Any], Any]],
+) -> tuple[
+    dict[tuple[str, str], TableMeta],
+    dict[tuple[str, str], Path],
+    list[ConfigProblem],
+]:
+    """Every file's ``tables:`` lineage metadata, composed across the root
+    config and each included file in order.
+
+    At most one entry per table may carry metadata -- a second one, in the
+    same file or another, is a problem naming both files, and the first
+    keeps it. That keeps "what is this table" answerable from one place
+    rather than merged from several. Further entries for the same table
+    without metadata stay legal. Returns the metadata by (source, object),
+    the file each came from, and the problems found.
+
+    An entry that is not a mapping, or lacks ``source``/``object``, is
+    skipped here: :func:`flatten_table_checks` already reports it.
+    """
+    table_meta: dict[tuple[str, str], TableMeta] = {}
+    owner: dict[tuple[str, str], Path] = {}
+    problems: list[ConfigProblem] = []
+    for file, _flat, tables, _raw_check_sets in file_entries:
+        for entry in tables:
+            if not isinstance(entry, dict) or not (
+                "source" in entry and "object" in entry
+            ):
+                continue
+            meta, texts = parse_table_metadata(entry)
+            problems.extend(
+                ConfigProblem(files=(file,), message=text) for text in texts
+            )
+            if not entry_metadata(entry):
+                continue
+            pair = (entry["source"], entry["object"])
+            if pair in owner:
+                problems.append(
+                    ConfigProblem(
+                        files=tuple(dict.fromkeys((owner[pair], file))),
+                        message=duplicate_metadata_message(entry),
+                    )
+                )
+                continue
+            owner[pair] = file
+            if meta is not None:
+                table_meta[pair] = meta
+    return table_meta, owner, problems
 
 
 def _load_config_or_raise(
@@ -1484,6 +1716,11 @@ def _load_config(
         check_files.extend(file_files)
         problems.extend(file_problems)
 
+    table_meta, table_meta_files, meta_problems = _collect_table_metadata(
+        file_entries
+    )
+    problems.extend(meta_problems)
+
     # A `tables:` problem found while assembling raw_checks above (an
     # unknown table field, a nested check restating `source`/`object`, a
     # malformed entry) is raised here -- after the undefined-variable
@@ -1548,6 +1785,23 @@ def _load_config(
 
     source_errors = _validate_sources(sources)
     check_errors = _validate_checks(checks_raw, checks, sources, calendar)
+    # A table with metadata but no checks has no check to catch a mistyped
+    # source, so its entry is checked here; a table that has checks is
+    # already covered by _validate_checks's own unknown-source error.
+    checked_pairs = {
+        (raw.get("source"), raw.get("object")) for raw in raw_checks
+    }
+    meta_source_errors = [
+        (
+            table_meta_files[pair],
+            ValueError(
+                f"table {pair[0]}.{pair[1]} references unknown source: "
+                f"{pair[0]!r}"
+            ),
+        )
+        for pair in table_meta
+        if pair[0] not in sources and pair not in checked_pairs
+    ]
 
     if collect_all_errors:
         # Sources are root-only (an included file may declare only
@@ -1570,6 +1824,10 @@ def _load_config(
             for indices, error in check_errors
         )
         problems.extend(
+            ConfigProblem(files=(file,), message=str(error))
+            for file, error in meta_source_errors
+        )
+        problems.extend(
             ConfigProblem(
                 files=(file,),
                 message=f"undefined environment variable: {name}",
@@ -1578,7 +1836,11 @@ def _load_config(
             for name in sorted(names)
         )
     else:
-        errors = source_errors + [error for _, error in check_errors]
+        errors = (
+            source_errors
+            + [error for _, error in check_errors]
+            + [error for _, error in meta_source_errors]
+        )
         if errors:
             _raise_validation_errors(errors)
 
@@ -1589,6 +1851,7 @@ def _load_config(
             config_dir=config_dir,
             store=_parse_store(data.get("store")),
             calendar=calendar,
+            tables=table_meta,
         ),
         frozenset(missing),
         problems,
