@@ -40,6 +40,14 @@ keybinding at either level). Below the grid, that drill-down also lists
 the object's checks again, each with its expectation, read-only, and
 names the config file to edit by hand to change or remove one.
 
+When the object's `tables:` entry records lineage metadata (see
+[Lineage metadata](configuration.md#lineage-metadata-on-a-tables-entry)),
+an **About this table** panel above that list shows it: the description,
+the tags, and the upstream and downstream items, each as `name (kind)`
+followed by its URL. A URL is shown in full and is also clickable, opening
+in the browser. Fields the entry doesn't set are left out, and the panel
+doesn't appear for an object with no metadata.
+
 ## Configure
 
 The Configure screen is the TUI surface of the [configurator](

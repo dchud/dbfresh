@@ -255,6 +255,25 @@ Select > SelectCurrent {
     margin-bottom: 1;
 }
 
+/* "About this table" -- lineage metadata above the Checks panel. Both
+ * panels are sized to their content so the scroll area scrolls them
+ * together; left at a Vertical's default 1fr, they split the area between
+ * them and a long lineage list clips one or the other. Its
+ * Upstream/Downstream sub-headings use the same muted tone as the other
+ * panel labels; each item's link and kind colors live in the renderable
+ * (dbfresh.tui.dashboard.lineage_ref_renderable), not here.
+ */
+#detail-about-section,
+#detail-checks-section,
+#detail-checks-list {
+    height: auto;
+}
+
+.lineage-heading {
+    color: $subtext1;
+    margin-top: 1;
+}
+
 ObjectDetailScreen Horizontal {
     height: auto;
     margin-bottom: 1;

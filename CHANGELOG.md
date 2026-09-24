@@ -9,6 +9,8 @@ once releases are tagged.
 
 ### Added
 
+- The TUI's object detail screen shows a table's lineage metadata in an
+  "About this table" panel, with clickable URLs.
 - A `tables:` entry can record lineage metadata: `description:`,
   `tags:`, and `upstream:`/`downstream:` lists naming what writes and
   reads the table, each item a bare name or a `name`/`kind`/`url`
@@ -96,6 +98,8 @@ once releases are tagged.
 
 ### Fixed
 
+- The TUI's object detail screen no longer cuts off its checks list when
+  the object has more checks than fit on screen; the list scrolls.
 - On Windows, a configured `timezone` works without the `databricks`
   extra installed. Windows has no system time zone database, and the
   `tzdata` package it falls back to is now a dependency there.
