@@ -9,6 +9,8 @@ once releases are tagged.
 
 ### Added
 
+- `dbfresh show OBJECT` prints a table's lineage metadata and each of its
+  checks' latest status, without connecting to a source.
 - The TUI's object detail screen shows a table's lineage metadata in an
   "About this table" panel, with clickable URLs.
 - A `tables:` entry can record lineage metadata: `description:`,

@@ -430,6 +430,21 @@ config only -- it is not written to the observation store, plays no part
 in `check_id`, and is left out of run output (the digest and
 `run --json`).
 
+To look a table up, `dbfresh show OBJECT` prints its metadata followed by
+each of its checks with the latest stored status, when it was observed,
+and its value against what it expected:
+
+```bash
+dbfresh show dbo.fct_sales [--source warehouse] [-c config.yaml]
+```
+
+It matches the object name exactly, as `history` does, and `--source`
+narrows a name configured under more than one source. It reads the config
+and the observation store only, never a source, so it works without the
+`${VAR}` secrets set. It exits 0 whenever it shows a table, whatever that
+table's checks' statuses are; `1` means no configured table matched and
+`2` that more than one did.
+
 ## Validating a config
 
 ```bash
