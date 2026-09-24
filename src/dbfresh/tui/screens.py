@@ -73,11 +73,12 @@ _SUBTEXT0 = "#a5adcb"
 
 # Shown above a Report reconstructed from the store rather than from an
 # in-session run, so a restart's report doesn't silently imply the fuller
-# detail (violating-row samples, schema diff) a live run's report can show
-# but a reconstruction never has -- see report.reconstruct_run.
+# detail (violating-row samples) a live run's report can show but a
+# reconstruction never has -- see report.reconstruct_run. Schema diff is
+# excepted: reconstruct_run recomputes it from the persisted fingerprints
+# when this screen passes it a store (see _render_body).
 _RECONSTRUCTED_NOTE = (
-    "(reconstructed from stored observations -- sample rows and schema diff "
-    "detail are not available)"
+    "(reconstructed from stored observations -- sample rows are not available)"
 )
 
 # render_history's own fixed-width columns (see dbfresh.report.render_history:
@@ -181,7 +182,10 @@ def _colorized_digest(run: RunResult, tz: tzinfo | None) -> Text:
 
 
 def _colorized_history(
-    candidate: dict, rows: list[dict], tz: tzinfo | None
+    candidate: dict,
+    rows: list[dict],
+    tz: tzinfo | None,
+    prior_fingerprint: dict | None = None,
 ) -> Text:
     """:func:`render_history`'s plain text, recolored for the History
     screen the same way :func:`_colorized_digest` recolors the Report
@@ -197,12 +201,19 @@ def _colorized_history(
     trailing ``(check_id)`` hash, which is noise on a screen already
     reached by selecting that exact check.
 
+    ``prior_fingerprint`` passes straight through to ``render_history`` --
+    see its own docstring; a schema drift annotation stays on the
+    observation's own line, so it does not disturb the one-line-per-row
+    mapping below.
+
     ``render_history`` appends exactly one line per row, in ``rows``
     order, after its header lines, so the last ``len(rows)`` lines line up
     with ``rows`` positionally without needing to locate the header by
     content.
     """
-    plain = render_history(candidate, rows, tz=tz)
+    plain = render_history(
+        candidate, rows, tz=tz, prior_fingerprint=prior_fingerprint
+    )
     lines = plain.split("\n")
     lines[0] = lines[0].removesuffix(f" ({candidate['check_id']})")
 
@@ -338,7 +349,9 @@ class ReportScreen(Screen):
                 observations = self._store.observations_for_run(
                     stored_run["run_id"]
                 )
-                reconstructed = reconstruct_run(stored_run, observations)
+                reconstructed = reconstruct_run(
+                    stored_run, observations, self._store
+                )
                 digest = _colorized_digest(reconstructed, tz=self._tz)
                 note = Text(_RECONSTRUCTED_NOTE, style=_SUBTEXT0)
                 return Text.assemble(note, "\n\n", digest)
@@ -439,7 +452,14 @@ class HistoryScreen(Screen):
             "metric": self._check.metric,
         }
         rows = self._store.history(cid)
-        text = _colorized_history(candidate, rows, tz=self._tz)
+        prior_fingerprint = None
+        if self._check.metric == "schema" and rows:
+            prior_fingerprint = self._store.latest_fingerprint_observation(
+                cid, before=rows[-1]["observed_at"]
+            )
+        text = _colorized_history(
+            candidate, rows, tz=self._tz, prior_fingerprint=prior_fingerprint
+        )
         yield Header()
         yield Static("History", classes="screen-heading")
         yield VerticalScroll(Static(text, id="history-text", markup=False))

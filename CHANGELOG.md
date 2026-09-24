@@ -81,6 +81,9 @@ once releases are tagged.
   run, then clears, so the change catches the eye.
 - The Home dashboard shows a progress bar that fills as a run's checks
   complete, alongside the existing "running checks: N/total" subtitle.
+- A `schema` check's drifted row in `dbfresh history`, the TUI History
+  screen, and a reconstructed Report now shows what it was compared
+  against and what changed, even across intervening ERROR/SKIPPED rows.
 
 ### Fixed
 

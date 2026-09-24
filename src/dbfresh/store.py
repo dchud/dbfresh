@@ -379,7 +379,9 @@ class Store:
         ).fetchall()
         return {row["check_id"] for row in rows}
 
-    def latest_fingerprint_observation(self, check_id: str) -> dict | None:
+    def latest_fingerprint_observation(
+        self, check_id: str, before: str | None = None
+    ) -> dict | None:
         """The most recent prior observation for ``check_id`` that recorded
         a fingerprint (``value_text IS NOT NULL``), or ``None``.
 
@@ -392,11 +394,22 @@ class Store:
         any such value-less row to the most recent one that actually
         recorded a fingerprint, regardless of that row's status -- an OK,
         WARN, or FAIL schema observation all carry one.
+
+        ``before``, when given, is an ``observed_at`` string exactly as
+        stored (ISO 8601) -- restricts the search to observations strictly
+        older than it. Used by the history and reconstructed-report views
+        to find the baseline for a specific past row instead of always the
+        newest fingerprinted observation.
         """
+        clause = "AND observed_at < ? " if before is not None else ""
+        params: tuple = (
+            (check_id, before) if before is not None else (check_id,)
+        )
         row = self._conn.execute(
             "SELECT * FROM observation WHERE check_id = ? AND value_text IS NOT NULL "
+            f"{clause}"
             "ORDER BY observed_at DESC LIMIT 1",
-            (check_id,),
+            params,
         ).fetchone()
         return dict(row) if row else None
 

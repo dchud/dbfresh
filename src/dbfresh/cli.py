@@ -329,9 +329,20 @@ def _history_command(args: argparse.Namespace) -> int:
         if len(candidates) > 1:
             print(render_candidates(args.object, candidates))
             return 2
-        rows = store.history(candidates[0]["check_id"], limit=args.n)
+        check_id = candidates[0]["check_id"]
+        rows = store.history(check_id, limit=args.n)
+        prior_fingerprint = None
+        if candidates[0].get("metric") == "schema" and rows:
+            prior_fingerprint = store.latest_fingerprint_observation(
+                check_id, before=rows[-1]["observed_at"]
+            )
         print(
-            render_history(candidates[0], rows, tz=display_timezone(calendar))
+            render_history(
+                candidates[0],
+                rows,
+                tz=display_timezone(calendar),
+                prior_fingerprint=prior_fingerprint,
+            )
         )
         return 0
     finally:
