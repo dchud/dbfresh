@@ -15,6 +15,7 @@ from dbfresh.report import (
     render_json,
     show_progress,
 )
+from dbfresh.store import Store
 
 
 def test_digest_header_and_failure_block():
@@ -393,6 +394,104 @@ def test_reconstruct_run_never_carries_samples_or_diff():
     run = reconstruct_run(_run_row(), [_observation()])
     assert run.results[0].samples is None
     assert run.results[0].diff is None
+
+
+def test_reconstruct_run_computes_schema_diff_with_a_store(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        Result(
+            source="s",
+            object="t",
+            metric="schema",
+            label="schema",
+            status=Status.OK,
+            value="email:TEXT|id:INTEGER",
+            expected="unchanged",
+            check_id="x",
+        ),
+        observed_at=datetime(2026, 8, 24, 14, 38, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        Result(
+            source="s",
+            object="t",
+            metric="schema",
+            label="schema",
+            status=Status.FAIL,
+            value="email:TEXT|id:INTEGER|new_col:TEXT",
+            expected="unchanged",
+            check_id="x",
+        ),
+        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+    observations = store.observations_for_run(run_id)
+    store.finish_run(run_id, Status.FAIL)
+    run_row = store.latest_run()
+
+    run = reconstruct_run(run_row, observations, store)
+    assert run.results[-1].diff == ["+ new_col (TEXT)"]
+    store.close()
+
+
+def test_reconstruct_run_schema_diff_is_none_without_a_store():
+    run = reconstruct_run(
+        _run_row(),
+        [
+            _observation(
+                metric="schema",
+                status="FAIL",
+                value=None,
+                value_text="email:TEXT|id:INTEGER|new_col:TEXT",
+                expected="unchanged",
+            )
+        ],
+    )
+    assert run.results[0].diff is None
+
+
+def test_reconstruct_run_digest_shows_schema_drift_block(tmp_path):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        Result(
+            source="s",
+            object="t",
+            metric="schema",
+            label="schema",
+            status=Status.OK,
+            value="email:TEXT|id:INTEGER",
+            expected="unchanged",
+            check_id="x",
+        ),
+        observed_at=datetime(2026, 8, 24, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        Result(
+            source="s",
+            object="t",
+            metric="schema",
+            label="schema",
+            status=Status.FAIL,
+            value="email:TEXT|id:INTEGER|new_col:TEXT",
+            expected="unchanged",
+            check_id="x",
+        ),
+        observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+    )
+    observations = store.observations_for_run(run_id)
+    store.finish_run(run_id, Status.FAIL)
+    run_row = store.latest_run()
+
+    run = reconstruct_run(run_row, observations, store)
+    text = render_digest(run, now=datetime(2026, 8, 26, tzinfo=UTC))
+    assert "schema drift:" in text
+    assert "+ new_col (TEXT)" in text
+    store.close()
 
 
 def test_reconstruct_run_digest_renders_through_render_digest():

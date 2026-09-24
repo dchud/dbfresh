@@ -21,7 +21,14 @@ from rich.progress import (
 )
 
 from dbfresh.calendar import BusinessCalendar
-from dbfresh.models import Result, RunResult, Status, split_value
+from dbfresh.checks import diff_fingerprints
+from dbfresh.models import (
+    ObservationReader,
+    Result,
+    RunResult,
+    Status,
+    split_value,
+)
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -226,7 +233,40 @@ def render_digest(
     return "\n".join(lines)
 
 
-def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
+def _reconstructed_schema_diff(
+    obs: dict, store: ObservationReader | None
+) -> list[str] | None:
+    """The schema drift lines for one reconstructed observation, recomputed
+    from persisted fingerprints via ``store`` rather than read back from the
+    observation itself, since a run's ``diff`` is never persisted.
+
+    ``None`` for anything that isn't a drifted schema ``unchanged``
+    observation: no ``store`` to query, a status other than FAIL/WARN, a
+    metric other than ``schema``, a pinned ``equals`` check (out of scope),
+    or a fingerprint-less (ERROR/SKIPPED) row -- and ``None`` again when
+    ``store`` has no fingerprinted baseline older than this observation to
+    diff against.
+    """
+    if store is None:
+        return None
+    if obs["metric"] != "schema" or obs.get("expected") != "unchanged":
+        return None
+    if Status(obs["status"]) not in (Status.FAIL, Status.WARN):
+        return None
+    current = obs.get("value_text")
+    if current is None:
+        return None
+    baseline = store.latest_fingerprint_observation(
+        obs["check_id"], before=obs["observed_at"]
+    )
+    if baseline is None or baseline.get("value_text") is None:
+        return None
+    return diff_fingerprints(current, baseline["value_text"])
+
+
+def reconstruct_run(
+    run: dict, observations: list[dict], store: ObservationReader | None = None
+) -> RunResult:
     """Rebuild a :class:`~dbfresh.models.RunResult` from a store run row and
     that run's observation rows (:meth:`~dbfresh.store.Store.latest_run`,
     :meth:`~dbfresh.store.Store.observations_for_run`).
@@ -235,11 +275,16 @@ def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
     persisted data alone -- e.g. the TUI's Report screen after a restart,
     when no in-session ``RunResult`` survived it. The observation table only
     ever persists a scalar/fingerprint per check plus its ``expected`` and
-    ``error`` text, never the violating rows or schema diff a live run
-    collects, so every reconstructed ``Result`` has ``samples=None`` and
-    ``diff=None`` -- ``render_digest`` already falls back to its "observed:
-    <value>" line whenever both are absent, so the reconstruction renders
-    without either, rather than raising or faking them.
+    ``error`` text, never the violating sample rows a live run collects, so
+    every reconstructed ``Result`` has ``samples=None`` -- ``render_digest``
+    already falls back to its "observed: <value>" line when both ``samples``
+    and ``diff`` are absent. ``diff`` itself is recomputed rather than
+    reread: a FAIL/WARN ``schema`` ``unchanged`` observation's full
+    fingerprint survives in ``value_text``, so when ``store`` is given its
+    drift against ``store.latest_fingerprint_observation``'s baseline is
+    recomputed via :func:`~dbfresh.checks.diff_fingerprints`
+    (:func:`_reconstructed_schema_diff`); every other observation, and any
+    schema observation when ``store`` is omitted, gets ``diff=None``.
     """
     results = [
         Result(
@@ -254,6 +299,7 @@ def reconstruct_run(run: dict, observations: list[dict]) -> RunResult:
             expected=obs["expected"],
             error=obs["error"],
             check_id=obs["check_id"],
+            diff=_reconstructed_schema_diff(obs, store),
         )
         for obs in observations
     ]
@@ -320,8 +366,78 @@ def _summarize_fingerprint(fingerprint: str) -> str:
     return f"{n} col{'s' if n != 1 else ''}"
 
 
+def _schema_baselines(
+    rows: list[dict], prior_fingerprint: dict | None
+) -> list[dict | None]:
+    """For each of ``rows`` (newest first), the observation dict its
+    schema-fingerprint baseline would be drawn from: the next *older* row in
+    ``rows`` that recorded one (``value_text`` non-null), or
+    ``prior_fingerprint`` once the walk runs past the oldest displayed row,
+    or ``None`` when neither is available.
+    """
+    baselines: list[dict | None] = [None] * len(rows)
+    baseline = prior_fingerprint
+    for i in range(len(rows) - 1, -1, -1):
+        baselines[i] = baseline
+        if rows[i].get("value_text") is not None:
+            baseline = rows[i]
+    return baselines
+
+
+# A history row's drift note lists at most this many column changes, after
+# per-kind counts. A table rebuilt with renamed columns can change dozens at
+# once, and the note shares one line with the row; the counts alone show
+# whether it was one new column or a rebuild. The run digest keeps the full
+# list, one change per line.
+_HISTORY_DRIFT_LIMIT = 3
+
+
+def _schema_drift_note(
+    row: dict, baseline: dict | None, tz: tzinfo | None
+) -> str | None:
+    """The ``vs <baseline time>: <counts>: <changes>`` suffix for one schema
+    ``unchanged`` row whose fingerprint differs from ``baseline`` -- the
+    live digest's drift detail, reconstructed at display time via
+    :func:`~dbfresh.checks.diff_fingerprints` since a stored observation
+    never persists it (:func:`reconstruct_run` recomputes the same detail
+    for the reconstructed run digest).
+
+    ``None`` for anything that isn't a drifted ``unchanged`` schema row: a
+    pinned ``equals`` check (out of scope), a fingerprint-less
+    (ERROR/SKIPPED) row, one with no baseline to compare against, or one
+    whose fingerprint actually matches its baseline.
+    """
+    current = row.get("value_text")
+    if (
+        row.get("expected") != "unchanged"
+        or current is None
+        or baseline is None
+        or baseline.get("value_text") is None
+    ):
+        return None
+    prior = baseline["value_text"]
+    if current == prior:
+        return None
+    changes = diff_fingerprints(current, prior)
+    counts = " ".join(
+        f"{marker}{sum(c.startswith(marker) for c in changes)}"
+        for marker in ("+", "-", "~")
+    )
+    listed = ", ".join(changes[:_HISTORY_DRIFT_LIMIT])
+    hidden = len(changes) - _HISTORY_DRIFT_LIMIT
+    if hidden > 0:
+        listed += f", … {hidden} more"
+    baseline_ts = format_timestamp_friendly(
+        datetime.fromisoformat(baseline["observed_at"]), tz
+    )
+    return f"vs {baseline_ts}: {counts}: {listed}"
+
+
 def render_history(
-    candidate: dict, rows: list[dict], tz: tzinfo | None = None
+    candidate: dict,
+    rows: list[dict],
+    tz: tzinfo | None = None,
+    prior_fingerprint: dict | None = None,
 ) -> str:
     """A check's recent values, expectations, and statuses.
 
@@ -335,7 +451,17 @@ def render_history(
     against; a row with an ``error`` (an ERROR observation -- source
     unreachable, query failed) appends that text after the fixed-width
     columns rather than truncating it to fit one, since it is the row's
-    most important content when present.
+    most important content when present. A schema ``unchanged`` row whose
+    fingerprint drifted from its baseline gets the same treatment: what it
+    was compared against and what changed, via :func:`_schema_drift_note`.
+    The baseline for every row but the oldest one shown is another row in
+    ``rows``; the oldest displayed row's baseline may lie further back than
+    this call was given, so the caller passes it in as ``prior_fingerprint``
+    (an observation dict from
+    :meth:`~dbfresh.store.Store.latest_fingerprint_observation`) when it has
+    one. This function stays pure -- it never queries the store itself.
+    Both annotations stay on the observation's own line: the TUI History
+    screen maps one rendered line to each row positionally.
     """
     header = (
         f"{candidate['source']}.{candidate['object']} · {candidate['label']}"
@@ -354,8 +480,13 @@ def render_history(
     # and wants a wide column, while a number or a "N cols" schema summary
     # wants a narrow one -- padding every metric to the widest (freshness)
     # would waste most of the line for the rest.
-    prepared: list[tuple[str, str, str, str, str | None]] = []
-    for row in rows:
+    baselines = (
+        _schema_baselines(rows, prior_fingerprint)
+        if metric == "schema"
+        else [None] * len(rows)
+    )
+    prepared: list[tuple[str, str, str, str, str | None, str | None]] = []
+    for row, baseline in zip(rows, baselines, strict=True):
         value = row["value"] if row["value"] is not None else row["value_text"]
         observed_at = row["observed_at"]
         observed = format_timestamp_friendly(
@@ -382,6 +513,7 @@ def render_history(
                 display,
                 row.get("expected") or "",
                 row.get("error"),
+                _schema_drift_note(row, baseline, tz),
             )
         )
     value_width = max([len("value")] + [len(p[2]) for p in prepared])
@@ -389,7 +521,7 @@ def render_history(
         f"{'observed_at':<28} {'status':<8} {'value':<{value_width}} "
         f"{'expected':<{_HISTORY_EXPECTED_WIDTH}}"
     )
-    for observed, status, display, expected, error in prepared:
+    for observed, status, display, expected, error, drift in prepared:
         line = (
             f"{observed:<28} {status:<8} {display:<{value_width}} "
             f"{expected:<{_HISTORY_EXPECTED_WIDTH}}"
@@ -399,6 +531,8 @@ def render_history(
             # traceback), and both this table and the TUI History screen map
             # one line per observation, so the row stays on a single line.
             line += f"  — {' '.join(str(error).split())}"
+        elif drift:
+            line += f"  — {drift}"
         lines.append(line)
     return "\n".join(lines)
 

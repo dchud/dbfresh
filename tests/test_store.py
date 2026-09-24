@@ -605,6 +605,82 @@ def test_latest_fingerprint_observation_returns_none_when_only_value_less_rows(
     store.close()
 
 
+def test_latest_fingerprint_observation_before_returns_the_strictly_older_row(
+    tmp_path,
+):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-old", status=Status.OK),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-new", status=Status.FAIL),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    newest = store.latest_fingerprint_observation("x")
+    obs = store.latest_fingerprint_observation(
+        "x", before=newest["observed_at"]
+    )
+    assert obs["value_text"] == "fp-old"
+    store.close()
+
+
+def test_latest_fingerprint_observation_before_skips_value_less_rows(tmp_path):
+    # The same value-less (SKIPPED/ERROR) skip-past applies with `before`:
+    # the row strictly older than it that this call should land on is the
+    # last one that actually recorded a fingerprint, not the nearer but
+    # empty SKIPPED/ERROR rows in between.
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-1", status=Status.OK),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value=None, status=Status.SKIPPED),
+        observed_at=datetime(2026, 7, 2, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value=None, status=Status.ERROR, error="boom"),
+        observed_at=datetime(2026, 7, 3, tzinfo=UTC),
+    )
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-2", status=Status.FAIL),
+        observed_at=datetime(2026, 7, 4, tzinfo=UTC),
+    )
+    obs = store.latest_fingerprint_observation(
+        "x", before="2026-07-04T00:00:00+00:00"
+    )
+    assert obs["value_text"] == "fp-1"
+    store.close()
+
+
+def test_latest_fingerprint_observation_before_the_oldest_row_returns_none(
+    tmp_path,
+):
+    store = Store(tmp_path / "obs.db")
+    run_id = store.start_run()
+    store.record_observation(
+        run_id,
+        _result(check_id="x", value="fp-1", status=Status.OK),
+        observed_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    assert (
+        store.latest_fingerprint_observation(
+            "x", before="2026-07-01T00:00:00+00:00"
+        )
+        is None
+    )
+    store.close()
+
+
 def test_record_observation_round_trips_freshness_lag_seconds(tmp_path):
     adapter = SqliteAdapter()
     adapter.rows("CREATE TABLE t (created_at TEXT)")

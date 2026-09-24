@@ -20,7 +20,12 @@ from dbfresh.config import load_config_tolerant
 from dbfresh.engine import Result, Status
 from dbfresh.store import Store
 from dbfresh.tui.app import DbfreshApp, RunProgress
-from dbfresh.tui.dashboard import header_key, is_header_key
+from dbfresh.tui.dashboard import (
+    header_key,
+    is_header_key,
+    status_glyph,
+    status_style,
+)
 from dbfresh.tui.screens import HistoryScreen, ObjectDetailScreen, ReportScreen
 
 _OBJECT_ROW_KEY = (
@@ -1491,6 +1496,112 @@ def test_selecting_a_check_row_opens_history_with_its_observations(tmp_path):
             # a screen already reached by selecting this exact check (the
             # CLI's `dbfresh history` output keeps it; see render_history).
             assert cid not in text
+
+    asyncio.run(scenario())
+
+
+def _schema_config(path, db):
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "calendar:\n"
+        "  timezone: UTC\n"
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: schema\n"
+        "    expect: { unchanged: true }\n"
+    )
+    return path
+
+
+def test_history_screen_colors_a_schema_drift_annotated_row(tmp_path):
+    """A schema `unchanged` row whose fingerprint drifted from its baseline
+    -- with an ERROR row (no fingerprint of its own) sitting between them --
+    carries the same status coloring as every other History row, with the
+    drift annotation appended to its own line rather than disturbing it."""
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _schema_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        schema_check = Check(source="s", object="t", metric="schema")
+        cid = check_id(schema_check)
+        run_id = store.start_run()
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="schema",
+                status=Status.OK,
+                source="s",
+                value="email:TEXT|id:INTEGER",
+                expected="unchanged",
+                check_id=cid,
+            ),
+            observed_at=datetime(2026, 8, 24, 14, 38, tzinfo=UTC),
+        )
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="schema",
+                status=Status.ERROR,
+                source="s",
+                value=None,
+                error="connection refused",
+                check_id=cid,
+            ),
+            observed_at=datetime(2026, 8, 25, tzinfo=UTC),
+        )
+        store.record_observation(
+            run_id,
+            Result(
+                object="t",
+                metric="schema",
+                status=Status.FAIL,
+                source="s",
+                value="email:TEXT|id:INTEGER|new_col:TEXT",
+                expected="unchanged",
+                check_id=cid,
+            ),
+            observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+        )
+        store.finish_run(run_id, Status.FAIL)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            await pilot.press("enter")  # Home -> ObjectDetailScreen
+            await pilot.pause()
+            assert isinstance(app.screen, ObjectDetailScreen)
+            await pilot.press("enter")  # single check -> HistoryScreen
+            await pilot.pause()
+            assert isinstance(app.screen, HistoryScreen)
+
+            content = app.screen.query_one("#history-text").content
+            text = content.plain
+            assert (
+                "vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (TEXT)"
+                in text
+            )
+            # the ERROR row between the FAIL and its baseline keeps its own
+            # suffix, unaffected by the annotation on the FAIL row.
+            assert "connection refused" in text
+
+            fail_style = status_style(Status.FAIL)
+            fail_glyph = status_glyph(Status.FAIL)
+            colored = [
+                text[span.start : span.end]
+                for span in content.spans
+                if span.style == fail_style
+            ]
+            assert any(
+                segment.strip().startswith(fail_glyph) and "FAIL" in segment
+                for segment in colored
+            )
 
     asyncio.run(scenario())
 

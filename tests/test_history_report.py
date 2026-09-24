@@ -313,6 +313,179 @@ def test_summarize_fingerprint_counts_and_pluralizes():
     assert _summarize_fingerprint("id:INTEGER|email:TEXT") == "2 cols"
 
 
+def test_render_history_annotates_schema_drift_across_intervening_error_rows():
+    # newest first: a FAIL whose fingerprint gained a column, an ERROR with
+    # no fingerprint of its own sitting in between, then the older OK row
+    # that actually recorded the baseline fingerprint.
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "FAIL",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+            "expected": "unchanged",
+            "error": None,
+        },
+        {
+            "observed_at": "2026-08-25T00:00:00+00:00",
+            "status": "ERROR",
+            "value": None,
+            "value_text": None,
+            "expected": "unchanged",
+            "error": "connection refused",
+        },
+        {
+            "observed_at": "2026-08-24T14:38:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    lines = render_history(candidate, rows).split("\n")
+    assert (
+        "vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (TEXT)" in lines[3]
+    )
+    # the intervening ERROR row keeps its own suffix, not a drift note
+    assert "connection refused" in lines[4]
+    assert "vs " not in lines[4]
+    # the older OK row -- the baseline itself -- gets no annotation
+    assert "vs " not in lines[5]
+
+
+def test_render_history_unchanged_schema_rows_are_not_annotated():
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    rows = [
+        {
+            "observed_at": "2026-07-09T00:00:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": "unchanged",
+            "error": None,
+        },
+        {
+            "observed_at": "2026-07-08T00:00:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    text = render_history(candidate, rows)
+    assert "vs " not in text
+
+
+def test_render_history_schema_drift_baseline_outside_displayed_rows():
+    # Only one row is displayed here -- its baseline is older than
+    # anything in `rows`, so the caller must supply it via
+    # `prior_fingerprint` (Store.latest_fingerprint_observation's shape).
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "FAIL",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    prior_fingerprint = {
+        "observed_at": "2026-08-24T14:38:00+00:00",
+        "value_text": "email:TEXT|id:INTEGER",
+    }
+    text = render_history(candidate, rows, prior_fingerprint=prior_fingerprint)
+    assert "vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (TEXT)" in text
+
+
+def test_render_history_no_baseline_means_no_annotation():
+    """A schema row with a drifted-looking fingerprint but no baseline at
+    all (the very first fingerprinted observation ever recorded, and no
+    `prior_fingerprint` supplied) gets no annotation -- there is nothing
+    to compare it against."""
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    text = render_history(candidate, rows)
+    assert "vs " not in text
+
+
+def test_render_history_line_count_equals_header_plus_rows():
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "FAIL",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+            "expected": "unchanged",
+            "error": None,
+        },
+        {
+            "observed_at": "2026-08-25T00:00:00+00:00",
+            "status": "ERROR",
+            "value": None,
+            "value_text": None,
+            "expected": "unchanged",
+            "error": "connection refused",
+        },
+        {
+            "observed_at": "2026-08-24T14:38:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    lines = render_history(candidate, rows).split("\n")
+    # title, blank, column header, then exactly one line per row -- the
+    # drift annotation stays on its row's own line rather than adding one.
+    assert len(lines) == 3 + len(rows)
+
+
 def test_render_history_collapses_a_multiline_error_onto_one_row():
     """A driver error is often multi-line; it must be collapsed onto the
     observation's own row rather than spilling across new lines, or the
@@ -341,3 +514,42 @@ def test_render_history_collapses_a_multiline_error_onto_one_row():
     assert len(lines) == 4
     assert "no such table: t" in lines[-1]
     assert "[SQL: SELECT 1]" in lines[-1]  # detail kept, collapsed inline
+
+
+def test_render_history_schema_drift_note_caps_the_listed_changes():
+    # A rebuilt table can change dozens of columns at once; the row keeps
+    # per-kind counts but lists only the first few changes.
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    old = "|".join(f"old_{i:02}:INTEGER" for i in range(40))
+    new = "|".join(f"new_{i:02}:INTEGER" for i in range(40))
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "FAIL",
+            "value": None,
+            "value_text": new,
+            "expected": "unchanged",
+            "error": None,
+        },
+        {
+            "observed_at": "2026-08-24T14:38:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": old,
+            "expected": "unchanged",
+            "error": None,
+        },
+    ]
+    fail_line = render_history(candidate, rows).split("\n")[3]
+    assert (
+        "+40 -40 ~0: + new_00 (INTEGER), + new_01 (INTEGER), "
+        "+ new_02 (INTEGER), … 77 more"
+    ) in fail_line
+    assert "new_03" not in fail_line
+    assert "old_" not in fail_line

@@ -254,3 +254,54 @@ def test_history_works_without_config_file(
         ]
     )
     assert code == 0
+
+
+def test_history_annotates_schema_drift_against_a_baseline_beyond_n(
+    tmp_path, capsys, seed_observations
+):
+    # The OK row the FAIL was compared against sits outside the -n window,
+    # behind an ERROR row that recorded no fingerprint -- the command has to
+    # look the baseline up rather than find it among the displayed rows.
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("sources: {}\ncalendar:\n  timezone: UTC\nchecks: []\n")
+    store_path = tmp_path / "obs.db"
+    schema = {"metric": "schema", "expected": "unchanged"}
+    seed_observations(
+        store_path,
+        [
+            (
+                _result(**schema, value="a:int|b:text"),
+                datetime(2026, 7, 1, tzinfo=UTC),
+            ),
+            (
+                _result(
+                    **schema, status=Status.ERROR, value=None, error="boom"
+                ),
+                datetime(2026, 7, 2, tzinfo=UTC),
+            ),
+            (
+                _result(
+                    **schema, status=Status.FAIL, value="a:int|b:text|c:int"
+                ),
+                datetime(2026, 7, 3, tzinfo=UTC),
+            ),
+        ],
+    )
+    code = main(
+        [
+            "history",
+            "dbo.fct_sales",
+            "-c",
+            str(cfg),
+            "--store",
+            str(store_path),
+            "-n",
+            "2",
+        ]
+    )
+    assert code == 0
+    fail_line = next(
+        line for line in capsys.readouterr().out.splitlines() if "FAIL" in line
+    )
+    assert "vs 2026-07-01" in fail_line
+    assert "+ c (int)" in fail_line
