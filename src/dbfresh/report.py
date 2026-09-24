@@ -384,10 +384,18 @@ def _schema_baselines(
     return baselines
 
 
+# A history row's drift note lists at most this many column changes, after
+# per-kind counts. A table rebuilt with renamed columns can change dozens at
+# once, and the note shares one line with the row; the counts alone show
+# whether it was one new column or a rebuild. The run digest keeps the full
+# list, one change per line.
+_HISTORY_DRIFT_LIMIT = 3
+
+
 def _schema_drift_note(
     row: dict, baseline: dict | None, tz: tzinfo | None
 ) -> str | None:
-    """The ``vs <baseline time>: <changes>`` suffix for one schema
+    """The ``vs <baseline time>: <counts>: <changes>`` suffix for one schema
     ``unchanged`` row whose fingerprint differs from ``baseline`` -- the
     live digest's drift detail, reconstructed at display time via
     :func:`~dbfresh.checks.diff_fingerprints` since a stored observation
@@ -410,11 +418,19 @@ def _schema_drift_note(
     prior = baseline["value_text"]
     if current == prior:
         return None
-    changes = ", ".join(diff_fingerprints(current, prior))
+    changes = diff_fingerprints(current, prior)
+    counts = " ".join(
+        f"{marker}{sum(c.startswith(marker) for c in changes)}"
+        for marker in ("+", "-", "~")
+    )
+    listed = ", ".join(changes[:_HISTORY_DRIFT_LIMIT])
+    hidden = len(changes) - _HISTORY_DRIFT_LIMIT
+    if hidden > 0:
+        listed += f", … {hidden} more"
     baseline_ts = format_timestamp_friendly(
         datetime.fromisoformat(baseline["observed_at"]), tz
     )
-    return f"vs {baseline_ts}: {changes}"
+    return f"vs {baseline_ts}: {counts}: {listed}"
 
 
 def render_history(

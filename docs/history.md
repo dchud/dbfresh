@@ -71,9 +71,11 @@ A `schema` check's row shows `unchanged` in the `expected` column and a
 column count in `value` -- not the full fingerprint. When a row's
 fingerprint drifted from its baseline (the same comparison `unchanged`
 itself makes), the row is annotated with what changed and what it was
-compared against, e.g. `vs 2026-08-24  2:38 PM (Mon): + new_col (string)`,
+compared against, e.g. `vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (string)`,
 even when ERROR or SKIPPED rows (which record no fingerprint) sit between
-the two.
+the two. The counts are columns added, removed, and retyped; at most three
+changes are listed, followed by `… N more` when there are others. The run's
+report lists every change.
 
 `OBJECT` may match checks across multiple sources or metrics on the same
 object name; an ambiguous match lists the candidates (with their

@@ -1583,7 +1583,10 @@ def test_history_screen_colors_a_schema_drift_annotated_row(tmp_path):
 
             content = app.screen.query_one("#history-text").content
             text = content.plain
-            assert "vs 2026-08-24  2:38 PM (Mon): + new_col (TEXT)" in text
+            assert (
+                "vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (TEXT)"
+                in text
+            )
             # the ERROR row between the FAIL and its baseline keeps its own
             # suffix, unaffected by the annotation on the FAIL row.
             assert "connection refused" in text
