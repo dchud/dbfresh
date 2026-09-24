@@ -53,6 +53,18 @@ check_sets:
 tables:
   - source: warehouse
     object: dbo.fct_sales
+    description: Nightly sales fact, one row per line item.
+    tags: [tier1, finance]
+    upstream: # what writes this table -- a name, or name/kind/url
+      - usp_load_fct_sales
+      - name: pl_sales_ingest
+        kind: pipeline
+        url: https://adf.azure.com/pipelines/pl_sales_ingest
+    downstream: # what reads it
+      - name: Sales Exec Daily
+        kind: dashboard
+        url: https://app.powerbi.com/groups/me/reports/sales-exec-daily
+      - dbo.agg_sales_monthly
     checks:
       - id: sales_amount_nonneg # optional stable id
         assert: "amount >= 0"
@@ -247,7 +259,8 @@ under a flat `checks:` list, minus `source:` and `object:` -- a nested
 check declaring either of those itself is a validation error, naming the
 table entry, since the entry already states them once for every check
 under it. A table entry with no `checks:` at all is valid and
-contributes nothing.
+contributes no checks; it can still carry lineage metadata (see Lineage
+metadata on a `tables:` entry, below).
 
 `tables:` and a flat `checks:` list may coexist in the same file, in the
 same config, or split across root and included files -- `tables:` is
@@ -369,6 +382,54 @@ written directly on a set item is shared verbatim by every table that
 pulls that set in with `use:` -- there is no per-table override of a
 set's own literal text, only what a placeholder lets a table supply.
 
+## Lineage metadata on a `tables:` entry
+
+```yaml
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    description: Nightly sales fact, one row per line item.
+    tags: [tier1, finance]
+    upstream:
+      - usp_load_fct_sales
+      - name: pl_sales_ingest
+        kind: pipeline
+        url: https://adf.azure.com/pipelines/pl_sales_ingest
+    downstream:
+      - name: Sales Exec Daily
+        kind: dashboard
+        url: https://app.powerbi.com/groups/me/reports/sales-exec-daily
+      - dbo.agg_sales_monthly
+    use: standard
+```
+
+A `tables:` entry can record what the table is, what writes it, and what
+reads it, so that when one of its checks fails the answer to "what feeds
+this, and what does a bad load break" is in the config instead of in
+someone's memory. dbfresh records this as written; it never derives or
+verifies lineage.
+
+- `description:` -- a string.
+- `tags:` -- a list of strings, descriptive only.
+- `upstream:` / `downstream:` -- lists whose items are either a bare name
+  or a mapping with `name:` (required) and optional `kind:` and `url:`. A
+  bare name is the common case; the mapping form exists so an item can
+  carry a link. `kind:` is free text (`pipeline`, `job`, `dashboard`,
+  ...), and `url:` is not checked beyond being a string.
+
+Any of the four may be set alone, and an entry may carry metadata with no
+`checks:` or `use:` at all, to describe a table that has no checks yet --
+its `source:` must still name a configured source. The keys belong to
+`tables:` entries only: on a flat `checks:` item they are unknown fields.
+
+At most one `tables:` entry per table may carry metadata, across the root
+config and every included file; a second entry setting any of these keys
+for the same `source:`/`object:` is a validation error naming both files.
+Other entries for the same table without metadata stay valid. Metadata is
+config only -- it is not written to the observation store, plays no part
+in `check_id`, and is left out of run output (the digest and
+`run --json`).
+
 ## Validating a config
 
 ```bash
@@ -446,15 +507,22 @@ a config
 this way never changes a check's `check_id` (see `check_id` and
 identity, above), so it never orphans a stored observation.
 
-A `tables:` entry that pulls in a `check_sets:` battery via `use:` is
-carried over unchanged, keeping its `use:`/`with:`/`skip:` -- migrate
-never expands it into literal checks, since that would undo the factoring
-`check_sets:` exists for and grow the file instead of shrinking it.
+A `tables:` entry's lineage metadata (`description:`, `tags:`,
+`upstream:`, `downstream:`) is carried onto the regrouped entry verbatim,
+written between `object:` and `checks:`. An entry carrying metadata but
+no checks keeps its place in the block. A file whose `tables:` block is
+already grouped and annotated reports that there is nothing to migrate.
 
-Comments attached to the individual checks being regrouped are not
-carried over -- the block is re-rendered from parsed data, not copied
-text. Comments elsewhere in the file are untouched, since migrate never
-renders those parts.
+A `tables:` entry that pulls in a `check_sets:` battery via `use:` is
+carried over unchanged, keeping its `use:`/`with:`/`skip:` and any
+metadata -- migrate never expands it into literal checks, since that
+would undo the factoring `check_sets:` exists for and grow the file
+instead of shrinking it.
+
+Comments attached to the individual checks and the lineage metadata
+being regrouped are not carried over -- the block is re-rendered from
+parsed data, not copied text. Comments elsewhere in the file are
+untouched, since migrate never renders those parts.
 
 `config migrate` operates on the one file `-c` resolves to, never the
 composed config: a config using `include:` keeps checks spread across

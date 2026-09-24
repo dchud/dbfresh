@@ -56,6 +56,18 @@ check_sets:
 tables:
   - source: warehouse
     object: dbo.fct_sales
+    description: Nightly sales fact, one row per line item.
+    tags: [tier1, finance]
+    upstream: # what writes this table -- a name, or name/kind/url
+      - usp_load_fct_sales
+      - name: pl_sales_ingest
+        kind: pipeline
+        url: https://adf.azure.com/pipelines/pl_sales_ingest
+    downstream: # what reads it
+      - name: Sales Exec Daily
+        kind: dashboard
+        url: https://app.powerbi.com/groups/me/reports/sales-exec-daily
+      - dbo.agg_sales_monthly
     checks:
       - id: sales_amount_nonneg # optional stable id
         assert: "amount >= 0"

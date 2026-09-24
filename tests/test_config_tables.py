@@ -229,7 +229,7 @@ def test_unknown_key_on_table_entry_is_an_error(tmp_path):
 tables:
   - source: s
     object: t
-    tags: [important]
+    owner: data-eng
     checks:
       - metric: row_count
         expect: { max: 5 }
@@ -239,13 +239,14 @@ tables:
         load_config(path, env={})
     message = str(excinfo.value)
     assert "table s.t" in message
-    assert "tags" in message
+    assert "owner" in message
 
 
 def test_unknown_key_still_rejected_on_a_flat_check(tmp_path):
-    # The same key ("tags") is rejected on a flat check too, via its own
-    # unknown-field validation -- table entries and check blocks validate
-    # against separate key sets, but neither silently accepts it.
+    # A table entry's lineage metadata key ("tags") is rejected on a flat
+    # check, via its own unknown-field validation -- table entries and check
+    # blocks validate against separate key sets, so metadata a table entry
+    # accepts never becomes silently acceptable on a check.
     path = write_config(
         tmp_path,
         _SOURCES
@@ -340,7 +341,7 @@ def test_validate_collects_malformed_table_entry_without_aborting(tmp_path):
 tables:
   - source: s
     object: bad_table
-    tags: [oops]
+    owner: oops
     checks:
       - metric: row_count
         expect: { max: 5 }
@@ -355,6 +356,6 @@ tables:
     messages = [p.message for p in result.problems]
     assert len(messages) == 1
     assert "table s.bad_table" in messages[0]
-    assert "tags" in messages[0]
+    assert "owner" in messages[0]
     # The malformed entry doesn't block the well-formed one alongside it.
     assert "good_table" in {c.object for c in result.config.checks}

@@ -410,7 +410,7 @@ def test_malformed_table_entry_is_a_config_error(tmp_path, capsys):
 tables:
   - source: s
     object: orders
-    tags: [oops]
+    owner: oops
     checks:
       - metric: row_count
         expect: { max: 5 }
@@ -422,4 +422,160 @@ tables:
 
     assert code == 3
     assert captured.out == ""
-    assert "tags" in captured.err
+    assert "owner" in captured.err
+
+
+def test_lineage_metadata_rides_onto_the_regrouped_entry(tmp_path, capsys):
+    # A partially-migrated file: flat checks plus an annotated tables:
+    # entry for the same table. The regrouped entry keeps the annotation,
+    # written between object: and checks:.
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+checks:
+  - source: s
+    object: orders
+    metric: row_count
+    expect: { max: 500 }
+tables:
+  - source: s
+    object: orders
+    description: One row per order.
+    upstream:
+      - usp_load_orders
+      - name: orders_pipeline
+        kind: pipeline
+        url: https://example.com/orders
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "lineage metadata carried over on 1 tables: entry" in captured.err
+
+    (entry,) = yaml.safe_load(captured.out)["tables"]
+    assert list(entry) == [
+        "source",
+        "object",
+        "description",
+        "upstream",
+        "checks",
+    ]
+    assert entry["description"] == "One row per order."
+    assert entry["upstream"] == [
+        "usp_load_orders",
+        {
+            "name": "orders_pipeline",
+            "kind": "pipeline",
+            "url": "https://example.com/orders",
+        },
+    ]
+    assert len(entry["checks"]) == 2
+
+    migrated = write_file(tmp_path / "migrated.yaml", _SOURCES + captured.out)
+    assert load_config(migrated, env={}).tables == (
+        load_config(cfg, env={}).tables
+    )
+
+
+def test_already_grouped_annotated_file_needs_no_migration(tmp_path, capsys):
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+tables:
+  - source: s
+    object: orders
+    description: One row per order.
+    tags: [tier1]
+    checks:
+      - metric: row_count
+        expect: { max: 5 }
+  - source: s
+    object: staging_orders
+    upstream: [sftp_drop]
+  - source: s
+    object: customers
+    checks:
+      - metric: row_count
+        expect: { max: 5 }
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    assert captured.out == ""
+    assert "already" in captured.err.lower()
+
+
+def test_metadata_only_entry_keeps_its_place(tmp_path, capsys):
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+checks:
+  - source: s
+    object: orders
+    metric: row_count
+    expect: { max: 500 }
+tables:
+  - source: s
+    object: staging_orders
+    upstream: [sftp_drop]
+  - source: s
+    object: customers
+    checks:
+      - metric: row_count
+        expect: { max: 5 }
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    tables = yaml.safe_load(capsys.readouterr().out)["tables"]
+
+    assert code == 0
+    assert [t["object"] for t in tables] == [
+        "orders",
+        "staging_orders",
+        "customers",
+    ]
+    assert tables[1] == {
+        "source": "s",
+        "object": "staging_orders",
+        "upstream": ["sftp_drop"],
+    }
+
+
+def test_metadata_on_two_entries_for_one_table_is_a_config_error(
+    tmp_path, capsys
+):
+    cfg = write_file(
+        tmp_path / "config.yaml",
+        _SOURCES
+        + """
+tables:
+  - source: s
+    object: orders
+    description: First.
+    checks:
+      - metric: row_count
+        expect: { max: 5 }
+  - source: s
+    object: orders
+    tags: [second]
+""",
+    )
+
+    code = main(["config", "migrate", "-c", str(cfg)])
+    captured = capsys.readouterr()
+
+    assert code == 3
+    assert captured.out == ""
+    assert "more than one tables: entry" in captured.err
