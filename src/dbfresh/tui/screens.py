@@ -45,11 +45,13 @@ from dbfresh.tui.dashboard import (
     check_line_renderable,
     check_rows,
     flash_cell,
+    hide_empty_off_days,
     lineage_ref_renderable,
     populate_grid,
     status_glyph,
     status_legend,
     status_style,
+    trailing_dates,
 )
 
 # dbfresh.tui.app is deliberately absent from this block. app.py imports
@@ -726,8 +728,11 @@ class ObjectDetailScreen(Screen[None]):
             today,
             self._tz,
         )
+        rows, dates = hide_empty_off_days(
+            rows, trailing_dates(today), today, self._config.calendar
+        )
         rows = self._seed_live_statuses(rows)
-        populate_grid(table, rows, today, label_header="check")
+        populate_grid(table, rows, today, label_header="check", dates=dates)
         self._rows_by_key = {row.key: row for row in rows}
         self._sync_check_detail_line(self._current_row_key(table))
         # Keep the button label and the footer's run-affordance label (see

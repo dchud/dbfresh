@@ -50,6 +50,9 @@ once releases are tagged.
 
 ### Changed
 
+- The TUI status grids leave out a weekend or holiday column that has no
+  observations, using the calendar's business days (Monday to Friday
+  without one). A day with any data, and today, are always shown.
 - The missing-driver error names the Python environment dbfresh is
   running from and gives the install command that fits it: `uv sync
   --all-extras` for a checkout's environment, `uv tool install --force -e`

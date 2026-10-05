@@ -15,6 +15,16 @@ calendar days, each colored from the worst status observed that day --
 or no run that day). Selecting a row drills into that object's individual
 checks at the same `[overall, last 7 days]` shape, one row per check.
 
+A day column with nothing in it is left out when that day is not a
+business day: a weekend or holiday with no observation in any row of the
+grid is dropped, so a deployment that only runs on business days doesn't
+carry two empty weekend columns. A day with any data is always shown, and
+so is today, so nothing is ever hidden; the window still covers the last 7
+calendar days, just in fewer columns. Business days come from the
+`calendar:` block (see [Calendar & scheduling](calendar.md)), or Monday
+through Friday when none is configured. Each grid decides from its own
+rows, and the non-OK filter and search never change which columns appear.
+
 ## Keybindings
 
 | key | action |

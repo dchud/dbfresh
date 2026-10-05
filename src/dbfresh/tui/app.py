@@ -49,11 +49,13 @@ from dbfresh.tui.dashboard import (
     _worst_or_unknown,
     cancel_flashes,
     flash_cell,
+    hide_empty_off_days,
     is_header_key,
     last_run_line,
     object_rows,
     populate_grid,
     status_legend,
+    trailing_dates,
     unobserved_count,
     unobserved_summary,
 )
@@ -435,10 +437,20 @@ class DbfreshApp(App):
         # this repaint would otherwise fire afterward and overwrite a cell
         # populate_grid below just freshly painted -- see cancel_flashes.
         cancel_flashes(self._cell_flash_timers)
-        rows = object_rows(config, store, today, tz)
+        rows, dates = hide_empty_off_days(
+            object_rows(config, store, today, tz),
+            trailing_dates(today),
+            today,
+            config.calendar,
+        )
         visible = self._view.apply(rows)
         populate_grid(
-            table, visible, today, label_header="object", group_headers=True
+            table,
+            visible,
+            today,
+            label_header="object",
+            group_headers=True,
+            dates=dates,
         )
         self._rows_by_key = {row.key: row for row in visible}
         self._skip_leading_header_cursor(table)
