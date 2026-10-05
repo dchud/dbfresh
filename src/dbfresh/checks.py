@@ -216,6 +216,9 @@ class Check:
     on_holiday: Expectation | None = None
     calendar: str | None = None
     skip_off_schedule: bool = False
+    # False pauses the check: it records SKIPPED without running. Not part
+    # of check_id, so pausing and resuming keeps the check's history.
+    active: bool = True
     freshness_source: str = "column"
     source_timezone: str = "UTC"
 

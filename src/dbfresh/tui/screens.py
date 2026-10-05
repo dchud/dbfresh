@@ -487,7 +487,8 @@ def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
     ``#check-detail-line`` CSS color (app.tcss): status colors stay reserved
     for the glyph, never a bespoke "error" color.
 
-    ERROR shows the persisted error message; WARN/FAIL show what the check
+    ERROR shows the persisted error message, and a SKIPPED the reason it
+    recorded; WARN/FAIL show what the check
     expected against what it actually observed, reusing
     :func:`~dbfresh.report._format_observed`/``_format_freshness_observed``
     -- the same value formatting the digest already uses (see
@@ -505,6 +506,11 @@ def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
     if status == Status.ERROR:
         error = " ".join(str(obs["error"] or "").split())
         text.append(f"error: {error}")
+        return text
+    if status == Status.SKIPPED:
+        # The reason a skip records (e.g. "inactive in config") -- it ran
+        # no query, so there is nothing observed to compare.
+        text.append(" ".join(str(obs["error"] or "").split()))
         return text
     value = obs["value"] if obs["value"] is not None else obs["value_text"]
     if check.metric == "freshness" and isinstance(value, (int, float)):
@@ -827,8 +833,10 @@ class ObjectDetailScreen(Screen[None]):
 
         Hidden for a header row (``row_key`` not in ``_rows_by_key``, never
         actually reached here since this grid has none), for a check never
-        observed on this machine (``obs is None``), and for OK/SKIPPED
-        (nothing to review) -- shown only for WARN/FAIL/ERROR, via
+        observed on this machine (``obs is None``), for OK, and for a
+        SKIPPED with no reason recorded (an off-schedule skip) -- nothing to
+        review. Shown for WARN/FAIL/ERROR and for a SKIPPED that carries a
+        reason, such as a check paused with ``active: false``, via
         :func:`_check_detail_text`.
         """
         line = self.query_one("#check-detail-line", Static)
@@ -837,7 +845,12 @@ class ObjectDetailScreen(Screen[None]):
             line.display = False
             return
         obs = self._store.latest_observation(check_id(row.check))
-        if obs is None or Status(obs["status"]) in (Status.OK, Status.SKIPPED):
+        status = None if obs is None else Status(obs["status"])
+        if (
+            obs is None
+            or status == Status.OK
+            or (status == Status.SKIPPED and not obs["error"])
+        ):
             line.display = False
             return
         line.update(_check_detail_text(row.check, obs, self._tz))

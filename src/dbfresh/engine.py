@@ -140,6 +140,26 @@ def _should_skip(
     return not calendar.is_business_day(run_date)
 
 
+# The reason a paused check's SKIPPED result carries, in its error text --
+# the field history, `show`, and the TUI already print for a row, so the
+# pause is explained wherever the SKIPPED status appears.
+INACTIVE_REASON = "inactive in config"
+
+
+def _inactive_result(check: Check) -> Result:
+    """The SKIPPED result for a check paused with ``active: false``: no
+    query runs and its source is never touched, but an observation is still
+    recorded, so a paused check stays visible instead of disappearing."""
+    result = _result(
+        check,
+        Status.SKIPPED,
+        label=_assertion_label(check),
+        error=INACTIVE_REASON,
+    )
+    result.check_id = check_id(check)
+    return result
+
+
 def _evaluate_check(
     check: Check,
     adapter: Adapter,
@@ -552,6 +572,11 @@ def run_checks(
     sources evaluate normally, so one unreachable source never blocks the
     rest of the run.
 
+    A check with ``active: false`` becomes a ``Status.SKIPPED`` Result
+    carrying :data:`INACTIVE_REASON` without touching ``adapters`` or
+    ``failed_sources``, so a source whose checks are all paused needs no
+    adapter at all.
+
     ``on_result``, when given, is called once per check as its Result
     becomes available -- e.g. to advance a progress bar -- rather than once
     per source at the end. Sources evaluate concurrently on separate
@@ -568,7 +593,9 @@ def run_checks(
         exc = failed_sources.get(source)
         results = []
         for check in source_checks:
-            if exc is not None:
+            if not check.active:
+                result = _inactive_result(check)
+            elif exc is not None:
                 result = _connect_error_result(check, exc)
             else:
                 result = evaluate_check(

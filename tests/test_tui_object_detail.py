@@ -1083,3 +1083,77 @@ def test_lineage_url_is_rendered_in_the_link_color(tmp_path):
             assert url.style.underline
 
     asyncio.run(scenario())
+
+
+# -- paused (active: false) checks -----------------------------------------
+
+
+def _paused_row_count_config(path, db):
+    path.write_text(
+        f'sources:\n  s: {{ type: sqlite, database: "{db}" }}\n'
+        "checks:\n"
+        "  - source: s\n"
+        "    object: t\n"
+        "    metric: row_count\n"
+        "    expect:\n"
+        "      between: [1, 1000]\n"
+        "    active: false\n"
+        "    note: paused while the load is rebuilt\n"
+    )
+    return path
+
+
+def test_object_detail_explains_a_paused_check(tmp_path):
+    async def scenario():
+        from dbfresh.engine import INACTIVE_REASON
+
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _paused_row_count_config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store, row_count_check(), Status.SKIPPED, error=INACTIVE_REASON
+        )
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert line.display
+            assert str(line.render()).endswith(INACTIVE_REASON)
+
+            (entry,) = [
+                str(child.render())
+                for child in app.screen.query_one(
+                    "#detail-checks-list"
+                ).children
+            ]
+            assert entry == (
+                "row_count: between 1 and 1000 · inactive"
+                " · note: paused while the load is rebuilt"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_hides_the_line_for_a_skip_with_no_reason(tmp_path):
+    # An off-schedule skip records no reason; there is nothing to show.
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(store, row_count_check(), Status.SKIPPED)
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert not line.display
+
+    asyncio.run(scenario())

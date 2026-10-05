@@ -906,6 +906,7 @@ class _MigrateInput(NamedTuple):
     problems: list[str]
     set_backed_tables: list[dict]
     metadata: dict[tuple[Any, Any], dict[str, Any]]
+    active: dict[tuple[Any, Any], bool]
     order: list[tuple[Any, Any]]
 
 
@@ -932,6 +933,14 @@ def _document_order_raw_checks(data: dict) -> _MigrateInput:
     checks keeps its place instead of being dropped. A second entry
     setting metadata on the same table is reported, as loading does.
 
+    An entry-level ``active:`` is the default for every check under the
+    entry. It stays on the regrouped entry, returned in ``active``, only
+    when that keeps its meaning: every plain entry for the table sets the
+    same value and no flat ``checks:`` item names the table, since all of
+    those checks are folded into one entry. Otherwise it is written onto
+    each of that entry's checks instead (as flattening does on load), so
+    regrouping never pauses or resumes a check.
+
     Used only by ``config migrate``: a partially-migrated file's regrouped
     ``tables:`` block should come out in the order the user already sees
     in the file, not an arbitrary flat-then-grouped convention.
@@ -942,6 +951,29 @@ def _document_order_raw_checks(data: dict) -> _MigrateInput:
     metadata: dict[tuple[Any, Any], dict[str, Any]] = {}
     order: list[tuple[Any, Any]] = []
     described: set[tuple[Any, Any]] = set()
+
+    flat_pairs = {
+        (item.get("source"), item.get("object"))
+        for item in data.get("checks") or []
+        if isinstance(item, dict)
+    }
+    entry_actives: dict[tuple[Any, Any], set[Any]] = {}
+    for entry in data.get("tables") or []:
+        if isinstance(entry, dict) and "use" not in entry:
+            pair = (entry.get("source"), entry.get("object"))
+            value = entry.get("active")
+            # A non-boolean (possibly unhashable) value is never carried;
+            # flattening reports it.
+            entry_actives.setdefault(pair, set()).add(
+                value
+                if value is None or isinstance(value, bool)
+                else "invalid"
+            )
+    active: dict[tuple[Any, Any], bool] = {}
+    for pair, values in entry_actives.items():
+        (value,) = values if len(values) == 1 else (None,)
+        if isinstance(value, bool) and pair not in flat_pairs:
+            active[pair] = value
     for key in data:
         if key == "checks":
             for item in data.get("checks") or []:
@@ -955,13 +987,20 @@ def _document_order_raw_checks(data: dict) -> _MigrateInput:
         elif key == "tables":
             plain_tables = []
             for entry in data.get("tables") or []:
-                if isinstance(entry, dict) and "use" in entry:
-                    set_backed_tables.append(entry)
-                else:
-                    plain_tables.append(entry)
                 if not isinstance(entry, dict):
+                    plain_tables.append(entry)
                     continue
                 pair = (entry.get("source"), entry.get("object"))
+                if "use" in entry:
+                    set_backed_tables.append(entry)
+                elif pair in active:
+                    # Kept on the regrouped entry, so not copied onto each
+                    # check as flattening would.
+                    plain_tables.append(
+                        {k: v for k, v in entry.items() if k != "active"}
+                    )
+                else:
+                    plain_tables.append(entry)
                 fields = entry_metadata(entry)
                 if fields:
                     if pair in described:
@@ -976,7 +1015,7 @@ def _document_order_raw_checks(data: dict) -> _MigrateInput:
             raw_checks.extend(flattened)
             problems.extend(table_problems)
     return _MigrateInput(
-        raw_checks, problems, set_backed_tables, metadata, order
+        raw_checks, problems, set_backed_tables, metadata, active, order
     )
 
 
@@ -1018,7 +1057,7 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
             ConfigError(f"invalid YAML in {config_path}: {exc}")
         )
 
-    raw_checks, problems, set_backed_tables, metadata, order = (
+    raw_checks, problems, set_backed_tables, metadata, active, order = (
         _document_order_raw_checks(data)
     )
     if problems:
@@ -1041,7 +1080,12 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
         for included_path in included:
             _say(f"  {included_path}")
 
-    if not raw_checks and not set_backed_tables and not metadata:
+    if (
+        not raw_checks
+        and not set_backed_tables
+        and not metadata
+        and not active
+    ):
         _say(f"{config_path}: no checks found; nothing to migrate")
         return 0
 
@@ -1049,7 +1093,14 @@ def _config_migrate_command(args: argparse.Namespace) -> int:
     # _document_order_raw_checks) and appended after the regrouped flat
     # entries, never merged into them -- it is not built from raw_checks
     # at all, so group_checks_by_table has no reason to know about it.
-    grouped = group_checks_by_table(raw_checks, metadata, order)
+    entry_fields = {
+        pair: {
+            **({"active": active[pair]} if pair in active else {}),
+            **metadata.get(pair, {}),
+        }
+        for pair in [*active, *metadata]
+    }
+    grouped = group_checks_by_table(raw_checks, entry_fields, order)
     tables = grouped + set_backed_tables
     already_grouped = not data.get("checks") and tables == list(
         data.get("tables") or []

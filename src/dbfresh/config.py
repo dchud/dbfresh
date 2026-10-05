@@ -47,6 +47,7 @@ _CHECK_KEYS = frozenset(
         "skip_off_schedule",
         "skip_on_holiday",
         "freshness_source",
+        "active",
     }
 )
 
@@ -63,9 +64,11 @@ TABLE_METADATA_KEYS = ("description", "tags", "upstream", "downstream")
 # a flat check using one is still rejected as an unknown field.
 # `use`/`with`/`skip` are the same story for check_sets: table-entry fields
 # that select and parameterize a named battery, with no equivalent on a
-# hand-written check block.
+# hand-written check block. `active` is the one key both accept: on an
+# entry it is the default for every check under it (see
+# flatten_table_checks), and a check's own value wins.
 _TABLE_ENTRY_KEYS = frozenset(
-    {"source", "object", "checks", "use", "with", "skip"}
+    {"source", "object", "checks", "use", "with", "skip", "active"}
 ) | frozenset(TABLE_METADATA_KEYS)
 
 # An `upstream:`/`downstream:` item written as a mapping rather than a bare
@@ -565,6 +568,15 @@ def _expand_check_set(
     return expanded, problems
 
 
+def _with_entry_active(block: dict, entry_active: bool | None) -> dict:
+    """``block`` with its table entry's ``active`` filled in when the block
+    sets none of its own -- the entry's value is a default, never an
+    override."""
+    if entry_active is not None and "active" not in block:
+        block["active"] = entry_active
+    return block
+
+
 def flatten_table_checks(
     tables: list[Any],
     check_sets: Mapping[str, dict[str, Any]] | None = None,
@@ -632,11 +644,24 @@ def flatten_table_checks(
             )
             continue
 
+        # An entry-level `active` is the default for every check under it,
+        # inline or expanded from a set; a check that sets its own keeps
+        # it. A non-boolean is reported once, here, rather than copied onto
+        # every check to be reported again per check.
+        entry_active = entry.get("active")
+        if "active" in entry and not isinstance(entry_active, bool):
+            problems.append(
+                f"{label}: active must be true or false, got {entry_active!r}"
+            )
+            entry_active = None
+
         if "use" in entry:
             set_checks, set_problems = _expand_check_set(
                 label, entry, check_sets
             )
-            checks.extend(set_checks)
+            checks.extend(
+                _with_entry_active(block, entry_active) for block in set_checks
+            )
             problems.extend(set_problems)
         elif "with" in entry or "skip" in entry:
             problems.append(
@@ -672,7 +697,7 @@ def flatten_table_checks(
                 expanded["source"] = entry["source"]
             if "object" in entry:
                 expanded["object"] = entry["object"]
-            checks.append(expanded)
+            checks.append(_with_entry_active(expanded, entry_active))
 
     return checks, problems
 
@@ -810,10 +835,10 @@ def group_checks_by_table(
     onto the entry and are dropped from the nested block, matching what a
     hand-written ``tables:`` entry looks like.
 
-    ``metadata`` maps a pair to the lineage fields its entry carried
-    (:func:`entry_metadata`); they are written back onto that pair's entry
-    between ``object`` and ``checks``, in :data:`TABLE_METADATA_KEYS`
-    order. ``order``, when given, is the document order of every pair --
+    ``metadata`` maps a pair to the entry-level fields its entry carried --
+    ``active`` and the lineage fields (:func:`entry_metadata`) -- written
+    back onto that pair's entry between ``object`` and ``checks``, in the
+    order given. ``order``, when given, is the document order of every pair --
     including one whose entry carries metadata but no checks, which gets
     an entry with no ``checks:`` key. Without it, pairs follow ``checks``
     and any metadata-only pair follows them.
@@ -885,6 +910,7 @@ def _build_check(raw: dict, defaults: dict) -> Check:
             raw.get("calendar", defaults.get("calendar"))
         ),
         skip_off_schedule=_resolve_skip_off_schedule(raw, defaults),
+        active=raw.get("active", True),
         freshness_source=_parse_freshness_source(raw),
     )
 
@@ -1392,6 +1418,14 @@ def _validate_checks(
             check_errors.append(
                 ValueError(
                     f"{label}: note must be a string, got {check.note!r}"
+                )
+            )
+
+        if not isinstance(check.active, bool):
+            check_errors.append(
+                ValueError(
+                    f"{label}: active must be true or false, got "
+                    f"{check.active!r}"
                 )
             )
 

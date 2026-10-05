@@ -70,7 +70,7 @@ def run_and_persist(
     object within ``only`` (see :func:`filter_checks`).
 
     Builds one adapter per source actually referenced by the (possibly
-    ``only``-filtered) checks (never every configured source -- an
+    ``only``-filtered) active checks (never every configured source -- an
     unrelated, unreachable source must not affect a run that never touches
     it), evaluates every check via :func:`~dbfresh.engine.run_checks`, and
     always closes the adapters afterward. When ``store`` is given, records
@@ -90,7 +90,9 @@ def run_and_persist(
     now = now or datetime.now(UTC)
     checks = filter_checks(config.checks, only, object_)
 
-    referenced = {check.source for check in checks}
+    # A paused check (active: false) never touches its source, so a source
+    # whose checks are all paused is not connected to.
+    referenced = {check.source for check in checks if check.active}
     adapters: dict[str, Adapter] = {}
     failed_sources: dict[str, BaseException] = {}
     for name in referenced:
