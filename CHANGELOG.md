@@ -9,6 +9,10 @@ once releases are tagged.
 
 ### Added
 
+- `active: false` pauses a check, or every check on a `tables:` entry,
+  without removing it from the config. A paused check runs no query and
+  records SKIPPED with the reason "inactive in config", so it stays
+  visible in the TUI, `history`, and `dbfresh show`.
 - `dbfresh show OBJECT` prints a table's lineage metadata and each of its
   checks' latest status, without connecting to a source.
 - The TUI's object detail screen shows a table's lineage metadata in an

@@ -586,7 +586,9 @@ def check_expectation_line(check: Check) -> str:
     consistent rather than inventing a second on-screen convention. Its own ``note:`` label makes
     it identifiable at a glance without a dedicated color, and it comes
     last so label and expectation -- which identify the check -- stay the
-    first thing read.
+    first thing read. A check paused with ``active: false`` is marked
+    ``· inactive`` before the note, which is where the reason for the pause
+    belongs.
 
     Returns plain text with no console markup of its own. Every part of it
     is author-written -- an assertion's SQL, an object name, a note -- and
@@ -602,6 +604,8 @@ def check_expectation_line(check: Check) -> str:
         if check.expect is None
         else f"{label}: {check.expect.describe()}"
     )
+    if not check.active:
+        line = f"{line} · inactive"
     if check.note:
         line = f"{line} · note: {check.note}"
     return line

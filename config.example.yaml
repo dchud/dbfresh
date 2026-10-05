@@ -78,6 +78,7 @@ tables:
       - metric: row_count
         expect: { between: [10000, 500000] }
         note: dips legitimately on month-end close
+        # active: false # pause without removing; records SKIPPED each run
         by_weekday:
           mon: { between: [0, 500000] }
           sat: { max: 100 }

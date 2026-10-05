@@ -382,6 +382,48 @@ written directly on a set item is shared verbatim by every table that
 pulls that set in with `use:` -- there is no per-table override of a
 set's own literal text, only what a placeholder lets a table supply.
 
+## `active:` -- pausing a check without removing it
+
+```yaml
+checks:
+  - source: warehouse
+    object: dbo.fct_sales
+    metric: row_count
+    expect: { between: [10000, 500000] }
+    active: false
+    note: paused while the nightly load is rebuilt
+```
+
+`active: false` keeps a check in the config but stops running it. A paused
+check runs no query; each run records a `SKIPPED` observation for it with
+the reason `inactive in config`, so it stays visible in the TUI grids,
+`history`, and `dbfresh show` instead of disappearing the way a
+commented-out block does, and the digest counts it as skipped. A source
+whose checks are all paused is not connected to at all. `active` defaults
+to `true` and must be `true` or `false`.
+
+On a `tables:` entry, `active:` is the default for every check under it,
+including checks pulled in with `use:`; a check that sets its own `active:`
+keeps it, so one check under a paused table can stay running:
+
+```yaml
+tables:
+  - source: warehouse
+    object: dbo.fct_sales
+    active: false
+    use: standard
+    checks:
+      - metric: schema
+        expect: { unchanged: true }
+        active: true
+```
+
+`active` plays no part in `check_id`, so pausing and resuming a check never
+orphans its stored observations, and `unchanged` / `vs_previous` already
+skip `SKIPPED` rows when choosing a baseline. Use `note:` to record why a
+check is paused; the TUI's checks panel marks a paused check `· inactive`
+ahead of its note.
+
 ## Lineage metadata on a `tables:` entry
 
 ```yaml
@@ -527,6 +569,11 @@ A `tables:` entry's lineage metadata (`description:`, `tags:`,
 written between `object:` and `checks:`. An entry carrying metadata but
 no checks keeps its place in the block. A file whose `tables:` block is
 already grouped and annotated reports that there is nothing to migrate.
+
+An entry-level `active:` stays on the regrouped entry when every plain
+entry for that table sets the same value and no flat `checks:` item names
+the table. Otherwise it is written onto each of that entry's checks
+instead, so folding checks together never pauses or resumes one.
 
 A `tables:` entry that pulls in a `check_sets:` battery via `use:` is
 carried over unchanged, keeping its `use:`/`with:`/`skip:` and any
