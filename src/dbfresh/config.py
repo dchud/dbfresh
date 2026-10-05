@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import inspect
 import os
 import re
@@ -969,6 +970,85 @@ def resolve_includes(config_dir: Path, patterns: Any) -> list[Path]:
 
 _INCLUDED_FILE_ALLOWED_KEYS = frozenset({"checks", "tables", "check_sets"})
 
+# The keys each part of the root config accepts -- checked so a misspelled
+# key is an error instead of a setting that silently keeps its default
+# (see _unknown_config_keys). The root list matches the "Top-level keys"
+# table in configuration.md; the section lists match what _load_config,
+# _build_check (defaults), _parse_store, and build_calendar read.
+_ROOT_KEYS = frozenset(
+    {
+        "version",
+        "include",
+        "store",
+        "calendar",
+        "sources",
+        "defaults",
+        "checks",
+        "tables",
+        "check_sets",
+    }
+)
+_SECTION_KEYS: dict[str, frozenset[str]] = {
+    "defaults": frozenset(
+        {
+            "severity",
+            "calendar",
+            "where",
+            "allow_empty",
+            "skip_off_schedule",
+            "skip_on_holiday",
+        }
+    ),
+    "store": frozenset({"path", "retain_days"}),
+    "calendar": frozenset({"timezone", "workdays", "holidays"}),
+    "calendar.holidays": frozenset(
+        {"country", "subdivision", "extra", "remove"}
+    ),
+}
+
+
+def _unknown_key_message(where: str, key: Any, known: frozenset[str]) -> str:
+    """One unknown-key problem, naming the closest known key when there is
+    an obvious one -- a misspelling is the usual cause."""
+    message = f"{where}unknown key {key!r}"
+    close = difflib.get_close_matches(str(key), sorted(known), n=1)
+    if close:
+        message += f" -- did you mean {close[0]!r}?"
+    return message
+
+
+def _unknown_config_keys(data: Mapping[str, Any]) -> list[str]:
+    """Every key the root config, or its ``defaults:``, ``store:``, or
+    ``calendar:`` section, does not recognize, as problem text.
+
+    Without this a misspelled key is ignored and the setting it meant to
+    configure keeps its default -- a ``workdyas:`` under ``calendar:``
+    leaves the default workdays in force for every business-day rule. A
+    section that is not a mapping is left to the code that reads it
+    (``store:`` may be a bare path string).
+    """
+    problems = [
+        _unknown_key_message("top level: ", key, _ROOT_KEYS)
+        for key in data
+        if key not in _ROOT_KEYS
+    ]
+    sections: list[tuple[str, Any]] = [
+        (name, data.get(name)) for name in ("defaults", "store", "calendar")
+    ]
+    calendar = data.get("calendar")
+    if isinstance(calendar, dict):
+        sections.append(("calendar.holidays", calendar.get("holidays")))
+    for name, section in sections:
+        if not isinstance(section, dict):
+            continue
+        known = _SECTION_KEYS[name]
+        problems.extend(
+            _unknown_key_message(f"{name}: ", key, known)
+            for key in section
+            if key not in known
+        )
+    return problems
+
 
 def _load_included_checks(
     raw: Any, path: Path
@@ -1655,7 +1735,13 @@ def _load_config(
     # `tables:` entry can be malformed (an unknown table field, a nested
     # check restating `source`/`object`) before a single Check is ever
     # built from it, and `collect_all_errors` must see those problems too.
+    # So can a misspelled key in the root config or one of its sections.
     problems: list[ConfigProblem] = []
+    if isinstance(data, dict):
+        problems.extend(
+            ConfigProblem(files=(path,), message=text)
+            for text in _unknown_config_keys(data)
+        )
 
     # Every file is read before any `tables:` is flattened -- root first,
     # then each included file in resolved order -- because a table in one
