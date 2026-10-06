@@ -50,6 +50,11 @@ once releases are tagged.
 
 ### Changed
 
+- An unknown key at the top level of the config, or inside `defaults:`,
+  `store:`, or `calendar:`, is now a config error that suggests the
+  closest known key. A misspelling such as `workdyas:` used to be ignored
+  while the setting kept its default; a config carrying a stray key there
+  now fails to load until the key is fixed or removed.
 - The missing-driver error names the Python environment dbfresh is
   running from and gives the install command that fits it: `uv sync
   --all-extras` for a checkout's environment, `uv tool install --force -e`
