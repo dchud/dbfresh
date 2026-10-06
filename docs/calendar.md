@@ -31,6 +31,10 @@ Any check that uses `by_weekday`, `on_holiday`, `calendar: business`, or
 `skip_off_schedule` requires a top-level `calendar:` block to be configured
 -- using one of those fields with no calendar is a validation error.
 
+The TUI's status grids use the same business days to decide which empty
+day columns to leave out: a non-business day with no observations is
+dropped from the grid (see [the TUI](tui.md)).
+
 ## Per-weekday / holiday expectation overrides
 
 A check can override its expectation based on the weekday of the run:

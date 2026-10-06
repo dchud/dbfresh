@@ -50,6 +50,9 @@ once releases are tagged.
 
 ### Changed
 
+- The TUI status grids leave out a weekend or holiday column that has no
+  observations, using the calendar's business days (Monday to Friday
+  without one). A day with any data, and today, are always shown.
 - An unknown key at the top level of the config, or inside `defaults:`,
   `store:`, or `calendar:`, is now a config error that suggests the
   closest known key. A misspelling such as `workdyas:` used to be ignored

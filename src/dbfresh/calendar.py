@@ -10,7 +10,9 @@ import holidays as holidays_pkg
 
 WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 _WEEKDAY_INDEX = {name: index for index, name in enumerate(WEEKDAY_NAMES)}
-_DEFAULT_WORKDAYS = ("mon", "tue", "wed", "thu", "fri")
+# The workdays a calendar: block without its own `workdays:` uses -- and the
+# business days the TUI grids assume when no calendar is configured.
+DEFAULT_WORKDAYS = ("mon", "tue", "wed", "thu", "fri")
 
 
 def weekday_key(day: dt.date) -> str:
@@ -81,7 +83,7 @@ class BusinessCalendar:
 
 
 def _parse_workdays(raw: Any) -> frozenset[int]:
-    names = raw if raw is not None else _DEFAULT_WORKDAYS
+    names = raw if raw is not None else DEFAULT_WORKDAYS
     try:
         return frozenset(_WEEKDAY_INDEX[name] for name in names)
     except KeyError as exc:

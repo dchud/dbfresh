@@ -14,7 +14,7 @@ losing that information outright.
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, tzinfo
 
 from rich.style import Style
@@ -26,6 +26,7 @@ from textual.timer import Timer
 from textual.widgets import DataTable
 from textual.widgets.data_table import CellDoesNotExist
 
+from dbfresh.calendar import DEFAULT_WORKDAYS, BusinessCalendar, weekday_key
 from dbfresh.checks import Check, check_id
 from dbfresh.config import Config, LineageRef
 from dbfresh.models import Status, worst_status
@@ -298,6 +299,49 @@ def trailing_dates(today: date, days: int = _TRAILING_DAYS) -> list[date]:
     return [
         today - timedelta(days=offset) for offset in range(days - 1, -1, -1)
     ]
+
+
+def _is_business_day(day: date, calendar: BusinessCalendar | None) -> bool:
+    """Whether ``day`` is a business day: per the configured calendar
+    (its workdays minus its holidays), else Monday through Friday."""
+    if calendar is not None:
+        return calendar.is_business_day(day)
+    return weekday_key(day) in DEFAULT_WORKDAYS
+
+
+def hide_empty_off_days(
+    rows: list[GridRow],
+    dates: list[date],
+    today: date,
+    calendar: BusinessCalendar | None,
+) -> tuple[list[GridRow], list[date]]:
+    """``rows`` and ``dates`` without the day columns that carry nothing:
+    a date that is not today, not a business day, and has no observation
+    in any of ``rows``.
+
+    Each row's ``days`` must line up with ``dates`` (as
+    :func:`object_rows` and :func:`check_rows` build them), and is trimmed
+    to the kept dates. A day with any data is always kept, so this never
+    hides information -- an occasional weekend run still shows -- which is
+    why it has no setting. Today is always kept because the live
+    today-cell update and the run-start check for a stale window
+    (``DbfreshApp._repaint_stale_day_columns``) both need its column.
+    Callers pass the grid's full row list, before any filter or search,
+    so narrowing the view never changes which columns exist.
+
+    ``today`` and ``dates`` are in the display timezone, which is the
+    calendar's own when one is configured, so the business-day test runs
+    on the same dates the columns show.
+    """
+    keep = [
+        i
+        for i, day in enumerate(dates)
+        if day == today
+        or _is_business_day(day, calendar)
+        or any(row.days[i][0] is not None for row in rows)
+    ]
+    trimmed = [replace(row, days=[row.days[i] for i in keep]) for row in rows]
+    return trimmed, [dates[i] for i in keep]
 
 
 def bucket_by_day(
@@ -703,6 +747,7 @@ def populate_grid(
     today: date,
     label_header: str,
     group_headers: bool = False,
+    dates: list[date] | None = None,
 ) -> None:
     """(Re)populate ``table`` from ``rows``. Safe to call repeatedly: clears
     both rows and columns first, since the trailing-day column headers
@@ -722,6 +767,10 @@ def populate_grid(
     drill-in scope, where rows have no ``source``), rows render exactly as
     given -- one row per GridRow, labeled with ``row.label`` -- unchanged
     from before grouping existed.
+
+    ``dates`` are the day columns, oldest first, matching each row's
+    ``days`` -- as :func:`hide_empty_off_days` returns them. Omitted, the
+    columns are the full trailing window ending ``today``.
     """
     table.clear(columns=True)
     table.add_column(label_header, key="label")
@@ -732,7 +781,7 @@ def populate_grid(
     # its own 3-7 character header left just the table's cell_padding as
     # breathing room around the glyph.
     table.add_column("overall", key="overall", width=7)
-    for day in trailing_dates(today):
+    for day in dates if dates is not None else trailing_dates(today):
         table.add_column(day.strftime("%a"), key=day.isoformat(), width=3)
     previous_source: str | None = None
     for row in rows:
