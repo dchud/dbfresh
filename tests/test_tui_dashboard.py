@@ -702,16 +702,18 @@ def test_populate_grid_builds_label_overall_and_seven_day_columns():
         async with app.run_test():
             table = app.query_one(DataTable)
             populate_grid(table, rows, _TODAY, label_header="object")
+            # Both header lines are centered over each day column, as the
+            # day cells are: a two-digit day sits one place right (" 10").
             assert [str(c.label) for c in table.columns.values()] == [
                 "object",
                 "overall",
-                "Wed",
-                "Thu",
-                "Fri",
-                "Sat",
-                "Sun",
-                "Mon",
-                "Tue",
+                "Wed\n7/8",
+                "Thu\n 9 ",
+                "Fri\n 10",
+                "Sat\n 11",
+                "Sun\n 12",
+                "Mon\n 13",
+                "Tue\n 14",
             ]
 
     asyncio.run(scenario())

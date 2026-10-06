@@ -741,6 +741,30 @@ def cancel_flashes(timers: dict[tuple[str, str], Timer]) -> None:
     timers.clear()
 
 
+def day_column_labels(dates: list[date]) -> list[tuple[str, str]]:
+    """Each day column's (day name, date) header lines, for ``dates``
+    oldest first.
+
+    The date is month/day (``9/29``) on the first column and on any column
+    whose month differs from the column before it -- including across
+    hidden non-business columns (Fri ``10/30``, then Mon ``11/2``) -- and
+    just the day number (``30``) otherwise, so the month is always stated
+    where it could be in doubt while the headers stay narrow. Built from
+    ``month``/``day`` rather than ``strftime("%-m")``, which is not
+    available on Windows.
+    """
+    labels: list[tuple[str, str]] = []
+    previous: date | None = None
+    for day in dates:
+        if previous is None or day.month != previous.month:
+            date_text = f"{day.month}/{day.day}"
+        else:
+            date_text = str(day.day)
+        labels.append((day.strftime("%a"), date_text))
+        previous = day
+    return labels
+
+
 def populate_grid(
     table: DataTable,
     rows: list[GridRow],
@@ -773,6 +797,9 @@ def populate_grid(
     columns are the full trailing window ending ``today``.
     """
     table.clear(columns=True)
+    # Two header lines: each day column's name, and its date beneath (see
+    # day_column_labels); the label and overall headers use the first.
+    table.header_height = 2
     table.add_column(label_header, key="label")
     # Explicit widths (content width, before cell_padding is added on top
     # by the table) rather than auto-sizing to the header text -- the
@@ -781,8 +808,23 @@ def populate_grid(
     # its own 3-7 character header left just the table's cell_padding as
     # breathing room around the glyph.
     table.add_column("overall", key="overall", width=7)
-    for day in dates if dates is not None else trailing_dates(today):
-        table.add_column(day.strftime("%a"), key=day.isoformat(), width=3)
+    day_dates = dates if dates is not None else trailing_dates(today)
+    for day, (name, date_text) in zip(
+        day_dates, day_column_labels(day_dates), strict=True
+    ):
+        # Sized to the wider of the cell (a glyph plus a one-character
+        # marker, within 3) and the date line, so a day-number column stays
+        # as narrow as before and only a month/day column widens. Both
+        # header lines are centered in the column. str.center rather than
+        # Rich's justify: it puts a two-digit day one place right in a
+        # 3-wide column (" 30"), under the middle of the day name, where
+        # Rich would leave it at the left edge.
+        width = max(3, len(date_text))
+        table.add_column(
+            Text(f"{name.center(width)}\n{date_text.center(width)}"),
+            key=day.isoformat(),
+            width=width,
+        )
     previous_source: str | None = None
     for row in rows:
         source = row.source
