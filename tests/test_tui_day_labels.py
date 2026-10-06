@@ -85,7 +85,11 @@ def test_both_grids_show_the_date_under_each_day_name(tmp_path, monkeypatch):
     app = DbfreshApp(config_path=cfg, store_path=str(tmp_path / "obs.db"))
 
     def day_headers(table):
-        return [str(c.label) for c in list(table.columns.values())[2:]]
+        # Each header line without its centering padding.
+        return [
+            "\n".join(line.strip() for line in str(c.label).split("\n"))
+            for c in list(table.columns.values())[2:]
+        ]
 
     async def scenario():
         async with app.run_test() as pilot:

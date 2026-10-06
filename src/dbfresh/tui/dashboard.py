@@ -814,11 +814,16 @@ def populate_grid(
     ):
         # Sized to the wider of the cell (a glyph plus a one-character
         # marker, within 3) and the date line, so a day-number column stays
-        # as narrow as before and only a month/day column widens.
+        # as narrow as before and only a month/day column widens. Both
+        # header lines are centered in the column. str.center rather than
+        # Rich's justify: it puts a two-digit day one place right in a
+        # 3-wide column (" 30"), under the middle of the day name, where
+        # Rich would leave it at the left edge.
+        width = max(3, len(date_text))
         table.add_column(
-            Text(f"{name}\n{date_text}"),
+            Text(f"{name.center(width)}\n{date_text.center(width)}"),
             key=day.isoformat(),
-            width=max(3, len(date_text)),
+            width=width,
         )
     previous_source: str | None = None
     for row in rows:

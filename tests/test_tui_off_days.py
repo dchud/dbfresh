@@ -153,7 +153,10 @@ def test_populate_grid_builds_columns_from_the_given_dates():
             assert keys == ["label", "overall"] + [
                 d.isoformat() for d in dates
             ]
-            headers = [str(c.label) for c in table.columns.values()]
+            headers = [
+                "\n".join(line.strip() for line in str(c.label).split("\n"))
+                for c in table.columns.values()
+            ]
             assert headers[2:] == [
                 "Wed\n7/8",
                 "Thu\n9",
@@ -227,7 +230,8 @@ def _setup(tmp_path, monkeypatch, now, seeded):
 def _day_headers(table):
     """Each day column's day name -- the first of its two header lines."""
     return [
-        str(c.label).split("\n")[0] for c in list(table.columns.values())[2:]
+        str(c.label).split("\n")[0].strip()
+        for c in list(table.columns.values())[2:]
     ]
 
 
