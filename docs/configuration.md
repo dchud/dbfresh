@@ -140,6 +140,15 @@ A per-check value always overrides the corresponding `defaults:` entry,
 including an explicit falsy value (`allow_empty: false` on a check wins over
 a `defaults: {allow_empty: true}`).
 
+Any other top-level key is a validation error, as is an unknown key inside
+`defaults:` (which accepts `severity`, `calendar`, `where`, `allow_empty`,
+and `skip_off_schedule` / `skip_on_holiday`), `store:` (`path`,
+`retain_days`), or `calendar:` and its `holidays:` (see Calendar &
+scheduling). The error names the closest known key when there is one --
+`top level: unknown key 'calender' -- did you mean 'calendar'?` -- since a
+misspelled key would otherwise leave its setting at the default without
+saying so.
+
 ## Source types
 
 `sources.<name>.type` selects the adapter; every other key under a source

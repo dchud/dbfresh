@@ -93,10 +93,11 @@ checks:
     assert cfg.checks[0].note is None
 
 
-def test_note_is_not_merged_from_defaults(tmp_path):
+def test_note_in_defaults_is_reported_not_merged(tmp_path):
     # Unlike severity/calendar/where/allow_empty/skip_off_schedule, a
-    # note: in defaults: is simply never read -- it belongs to the check
-    # that carries it, not every check that omits its own.
+    # note: belongs to the check that carries it, never to every check that
+    # omits its own -- so defaults: does not accept one, and says so rather
+    # than ignoring it.
     path = write_config(
         tmp_path,
         _SOURCES
@@ -110,8 +111,8 @@ checks:
     expect: { max: 5 }
 """,
     )
-    cfg = load_config(path, env={})
-    assert cfg.checks[0].note is None
+    with pytest.raises(ConfigError, match="defaults: unknown key 'note'"):
+        load_config(path, env={})
 
 
 def test_note_per_table_via_check_set_templating(tmp_path):
