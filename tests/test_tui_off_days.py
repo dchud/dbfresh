@@ -154,7 +154,13 @@ def test_populate_grid_builds_columns_from_the_given_dates():
                 d.isoformat() for d in dates
             ]
             headers = [str(c.label) for c in table.columns.values()]
-            assert headers[2:] == ["Wed", "Thu", "Fri", "Mon", "Tue"]
+            assert headers[2:] == [
+                "Wed\n7/8",
+                "Thu\n9",
+                "Fri\n10",
+                "Mon\n13",
+                "Tue\n14",
+            ]
             # The source header row is as wide as the trimmed columns.
             assert len(table.get_row(header_key("s"))) == len(keys)
 
@@ -219,7 +225,10 @@ def _setup(tmp_path, monkeypatch, now, seeded):
 
 
 def _day_headers(table):
-    return [str(c.label) for c in list(table.columns.values())[2:]]
+    """Each day column's day name -- the first of its two header lines."""
+    return [
+        str(c.label).split("\n")[0] for c in list(table.columns.values())[2:]
+    ]
 
 
 _MONDAY_NOON = datetime(2026, 7, 13, 12, tzinfo=UTC)

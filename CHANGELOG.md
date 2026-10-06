@@ -50,6 +50,9 @@ once releases are tagged.
 
 ### Changed
 
+- The TUI status grids show the date under each day name: month/day on
+  the first column and wherever the month changes, the day number
+  elsewhere.
 - The TUI status grids leave out a weekend or holiday column that has no
   observations, using the calendar's business days (Monday to Friday
   without one). A day with any data, and today, are always shown.

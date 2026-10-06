@@ -15,6 +15,12 @@ calendar days, each colored from the worst status observed that day --
 or no run that day). Selecting a row drills into that object's individual
 checks at the same `[overall, last 7 days]` shape, one row per check.
 
+Each day column's header has two lines: the day name, and the date below
+it. The date is month/day (`9/29`) on the first day column and wherever
+the month changes from the column before, and just the day number (`30`)
+otherwise, so the month is stated wherever it could be in doubt -- after
+a gap in runs, or at a month boundary.
+
 A day column with nothing in it is left out when that day is not a
 business day: a weekend or holiday with no observation in any row of the
 grid is dropped, so a deployment that only runs on business days doesn't

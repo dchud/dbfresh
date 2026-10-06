@@ -705,13 +705,13 @@ def test_populate_grid_builds_label_overall_and_seven_day_columns():
             assert [str(c.label) for c in table.columns.values()] == [
                 "object",
                 "overall",
-                "Wed",
-                "Thu",
-                "Fri",
-                "Sat",
-                "Sun",
-                "Mon",
-                "Tue",
+                "Wed\n7/8",
+                "Thu\n9",
+                "Fri\n10",
+                "Sat\n11",
+                "Sun\n12",
+                "Mon\n13",
+                "Tue\n14",
             ]
 
     asyncio.run(scenario())
