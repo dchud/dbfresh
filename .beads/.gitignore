@@ -44,3 +44,10 @@ redirect
 
 # bv (beads viewer) lock file
 .bv.lock
+
+# fsqlite engine sidecars: namespace gates, schema migration state, and
+# WAL certificates
+*fsqlite-ns-*
+*.fsqlite-migration-state
+*.db-wal-cert
+*.db-wal-cert-head
