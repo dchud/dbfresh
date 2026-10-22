@@ -53,7 +53,12 @@ def category_for(sqla_type: Any) -> Category:
     """Map a reflected SQLAlchemy type to a canonical :class:`Category`."""
     if isinstance(sqla_type, sqltypes.Boolean):
         return Category.BOOLEAN
-    if isinstance(sqla_type, (sqltypes.Integer, sqltypes.Numeric)):
+    # Float is listed alongside Numeric: since SQLAlchemy 2.1 it no longer
+    # subclasses Numeric (both derive from NumericCommon), so REAL, FLOAT,
+    # and DOUBLE PRECISION columns would otherwise fall through to OTHER.
+    if isinstance(
+        sqla_type, (sqltypes.Integer, sqltypes.Numeric, sqltypes.Float)
+    ):
         return Category.NUMERIC
     if isinstance(
         sqla_type, (sqltypes.Date, sqltypes.DateTime, sqltypes.Time)
