@@ -115,6 +115,9 @@ once releases are tagged.
 
 ### Fixed
 
+- With SQLAlchemy 2.1 installed, floating-point columns (`REAL`, `FLOAT`,
+  `DOUBLE PRECISION`) are classified as numeric again, so they get
+  numeric check suggestions and are rejected as freshness columns.
 - The TUI's object detail screen no longer cuts off its checks list when
   the object has more checks than fit on screen; the list scrolls.
 - On Windows, a configured `timezone` works without the `databricks`

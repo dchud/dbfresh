@@ -1,7 +1,9 @@
 from sqlalchemy import (
+    REAL,
     Boolean,
     Date,
     DateTime,
+    Double,
     Float,
     Integer,
     LargeBinary,
@@ -17,6 +19,8 @@ def test_numeric_types():
     assert category_for(Integer()) == Category.NUMERIC
     assert category_for(Float()) == Category.NUMERIC
     assert category_for(Numeric()) == Category.NUMERIC
+    assert category_for(REAL()) == Category.NUMERIC
+    assert category_for(Double()) == Category.NUMERIC
 
 
 def test_temporal_types():
