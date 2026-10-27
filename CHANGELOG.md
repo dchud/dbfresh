@@ -115,6 +115,16 @@ once releases are tagged.
 
 ### Fixed
 
+- A schema check that detects a change no longer shows the raw column
+  fingerprint on the TUI's object detail screen. It shows the column count,
+  then the baseline it was compared against and the added, removed, and
+  retyped columns, as History does. The run digest shows a column count
+  instead of the fingerprint when it has no baseline to diff against.
+- A schema check pinned with `equals`/`eq` shows its expectation as
+  `equals pinned (N cols)` instead of the full fingerprint in the digest,
+  History, `dbfresh show`, and the TUI. History, the TUI's object detail
+  screen, and a Report rebuilt after a restart now list its column changes
+  against the pinned fingerprint. JSON output keeps the full text.
 - With SQLAlchemy 2.1 installed, floating-point columns (`REAL`, `FLOAT`,
   `DOUBLE PRECISION`) are classified as numeric again, so they get
   numeric check suggestions and are rejected as freshness columns.

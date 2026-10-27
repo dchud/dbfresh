@@ -3,6 +3,7 @@ checks panel below it, and the object-scoped run affordance -- reached
 straight from the Home grid's drill-in."""
 
 import asyncio
+from datetime import UTC, datetime
 
 from helpers import null_rate_check, overall_glyph, row_count_check
 from textual.widgets import Button, DataTable, Input, Static
@@ -49,13 +50,20 @@ def _seed_db(path):
 
 
 def _seed_observation(
-    store, check, status, value=None, expected=None, error=None
+    store,
+    check,
+    status,
+    value=None,
+    expected=None,
+    error=None,
+    observed_at=None,
 ):
     """One completed run with a single observation for ``check`` -- the
     minimum needed for Store.latest_observation(check_id(check)) to return
     it, mirroring test_tui_app.py's own ``_seed_status`` but carrying
     ``expected``/``error``/``value`` too, since the check-detail line reads
-    all three.
+    all three. ``observed_at`` pins the timestamp when a test needs one row
+    to be a known amount older than another (a schema baseline).
     """
     run_id = store.start_run()
     store.record_observation(
@@ -70,6 +78,7 @@ def _seed_observation(
             error=error,
             check_id=check_id(check),
         ),
+        observed_at=observed_at,
     )
     store.finish_run(run_id, status)
 
@@ -256,6 +265,107 @@ def test_object_detail_highlighting_a_fail_check_shows_expected_and_observed(
             assert "5000" in text
 
     asyncio.run(scenario())
+
+
+def test_object_detail_highlighting_a_drifted_schema_shows_column_changes(
+    tmp_path, monkeypatch
+):
+    # display_timezone() defaults to the local zone; pin it so the
+    # baseline's rendered time doesn't depend on where the test runs.
+    monkeypatch.setattr("dbfresh.tui.app.display_timezone", lambda cal: UTC)
+
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store,
+            _schema_check(),
+            Status.OK,
+            value="amount:INTEGER|email:TEXT|id:INTEGER",
+            expected="unchanged",
+            observed_at=datetime(2026, 8, 24, 14, 38, tzinfo=UTC),
+        )
+        _seed_observation(
+            store,
+            _schema_check(),
+            Status.FAIL,
+            value="amount:BIGINT|email:TEXT|id:INTEGER|new_col:TEXT",
+            expected="unchanged",
+            observed_at=datetime(2026, 8, 26, tzinfo=UTC),
+        )
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            await pilot.press("down", "down")  # row_count -> schema (2)
+            await pilot.pause()
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert line.display
+            assert str(line.render()) == (
+                "✗ expected unchanged · observed 4 cols"
+                " · vs 2026-08-24  2:38 PM (Mon): +1 -0 ~1:"
+                " + new_col (TEXT), ~ amount (INTEGER -> BIGINT)"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_object_detail_schema_with_no_baseline_shows_only_a_column_count(
+    tmp_path,
+):
+    # Nothing older to compare against: the fingerprint still never shows.
+    async def scenario():
+        db = tmp_path / "data.db"
+        _seed_db(db)
+        cfg = _config(tmp_path / "config.yaml", db)
+        store_path = tmp_path / "obs.db"
+        store = Store(store_path)
+        _seed_observation(
+            store,
+            _schema_check(),
+            Status.FAIL,
+            value="email:TEXT|id:INTEGER",
+            expected="unchanged",
+        )
+        store.close()
+
+        app = DbfreshApp(config_path=cfg, store_path=str(store_path))
+        async with app.run_test() as pilot:
+            await _open_object_detail(pilot)
+
+            await pilot.press("down", "down")  # row_count -> schema (2)
+            await pilot.pause()
+
+            line = app.screen.query_one("#check-detail-line", Static)
+            assert str(line.render()) == (
+                "✗ expected unchanged · observed 2 cols"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_check_detail_text_pinned_schema_diffs_against_its_expected_text():
+    from dbfresh.tui.screens import _check_detail_text
+
+    obs = {
+        "status": "FAIL",
+        "value": None,
+        "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+        "expected": "equals email:TEXT|id:INTEGER",
+        "error": None,
+        "observed_at": "2026-08-26T00:00:00+00:00",
+    }
+    text = _check_detail_text(_schema_check(), obs, UTC)
+    assert text.plain == (
+        "✗ expected equals pinned (2 cols) · observed 3 cols"
+        " · vs pinned: +1 -0 ~0: + new_col (TEXT)"
+    )
 
 
 def test_object_detail_highlighting_an_error_check_shows_the_error_message(

@@ -29,8 +29,10 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.report import (
+    _display_expected,
     _format_freshness_observed,
     _format_observed,
+    _schema_drift_note,
     reconstruct_run,
     render_digest,
     render_history,
@@ -476,7 +478,12 @@ _DETAIL_GRID_ID = "object-detail-grid"
 _RUN_OBJECT_BUTTON_ID = "detail-run-object-btn"
 
 
-def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
+def _check_detail_text(
+    check: Check,
+    obs: dict,
+    tz: tzinfo | None,
+    baseline: dict | None = None,
+) -> Text:
     """The text for ``#check-detail-line`` -- the currently-highlighted
     check's WARN/FAIL/ERROR detail on :class:`ObjectDetailScreen`, so why a
     check is in that state is visible without the extra hop into
@@ -500,6 +507,18 @@ def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
     ``render_history`` makes per row. A long error is whitespace-collapsed
     to one line, the same way ``render_history`` collapses its own error
     column.
+
+    A drifted schema observation shows a column count as its observed
+    value, then the same baseline and column changes ``render_history``
+    appends to that row (:func:`~dbfresh.report._schema_drift_note`). For
+    ``unchanged``, ``baseline`` is the fingerprinted observation that row
+    is compared against
+    (:meth:`~dbfresh.store.Store.latest_fingerprint_observation` before
+    ``obs``), passed in by the caller so this function stays pure; without
+    one, only the column count shows. A pinned ``equals``/``eq`` row
+    compares against the fingerprint in its own ``expected`` text, which
+    shows as a column count too
+    (:func:`~dbfresh.report._display_expected`).
     """
     status = Status(obs["status"])
     text = Text()
@@ -520,7 +539,12 @@ def _check_detail_text(check: Check, obs: dict, tz: tzinfo | None) -> Text:
         observed = _format_freshness_observed(value, reference, tz)
     else:
         observed = _format_observed(check.metric, value)
-    text.append(f"expected {obs['expected']} · observed {observed}")
+    expected = _display_expected(check.metric, obs["expected"])
+    text.append(f"expected {expected} · observed {observed}")
+    if check.metric == "schema":
+        drift = _schema_drift_note(obs, baseline, tz)
+        if drift:
+            text.append(f" · {drift}")
     return text
 
 
@@ -858,7 +882,12 @@ class ObjectDetailScreen(Screen[None]):
         ):
             line.display = False
             return
-        line.update(_check_detail_text(row.check, obs, self._tz))
+        baseline = None
+        if row.check.metric == "schema":
+            baseline = self._store.latest_fingerprint_observation(
+                check_id(row.check), before=obs["observed_at"]
+            )
+        line.update(_check_detail_text(row.check, obs, self._tz, baseline))
         line.display = True
 
     def action_run_object(self) -> None:

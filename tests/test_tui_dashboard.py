@@ -452,6 +452,18 @@ def test_check_expectation_line_appends_the_note_labeled_and_separated():
     )
 
 
+def test_check_expectation_line_summarizes_a_pinned_schema():
+    check = Check(
+        source="s",
+        object="orders",
+        metric="schema",
+        expect=parse_expectation(
+            {"equals": "email:TEXT|id:INTEGER|name:TEXT"}, "schema"
+        ),
+    )
+    assert check_expectation_line(check) == "schema: equals pinned (3 cols)"
+
+
 def test_check_expectation_line_note_on_an_assert_check_with_no_expectation():
     check = Check(
         source="s", object="orders", assert_="amount >= 0", note="see ticket"

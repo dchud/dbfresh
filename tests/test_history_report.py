@@ -420,6 +420,42 @@ def test_render_history_schema_drift_baseline_outside_displayed_rows():
     assert "vs 2026-08-24  2:38 PM (Mon): +1 -0 ~0: + new_col (TEXT)" in text
 
 
+def test_render_history_pinned_schema_diffs_against_its_expected_text():
+    # An equals row compares against the fingerprint its own expected text
+    # recorded, not the row before it; a row matching its pin gets no note.
+    candidate = {
+        "check_id": "aaa111222333",
+        "source": "warehouse",
+        "object": "dbo.fct_sales",
+        "metric": "schema",
+        "label": "schema",
+    }
+    pinned = "equals email:TEXT|id:INTEGER"
+    rows = [
+        {
+            "observed_at": "2026-08-26T00:00:00+00:00",
+            "status": "FAIL",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+            "expected": pinned,
+            "error": None,
+        },
+        {
+            "observed_at": "2026-08-24T14:38:00+00:00",
+            "status": "OK",
+            "value": None,
+            "value_text": "email:TEXT|id:INTEGER",
+            "expected": pinned,
+            "error": None,
+        },
+    ]
+    lines = render_history(candidate, rows).split("\n")
+    assert "equals pinned (2 cols)" in lines[3]
+    assert lines[3].endswith("— vs pinned: +1 -0 ~0: + new_col (TEXT)")
+    assert "email:TEXT" not in "\n".join(lines)
+    assert "vs " not in lines[4]
+
+
 def test_render_history_no_baseline_means_no_annotation():
     """A schema row with a drifted-looking fingerprint but no baseline at
     all (the very first fingerprinted observation ever recorded, and no
