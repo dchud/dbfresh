@@ -436,6 +436,26 @@ def test_reconstruct_run_computes_schema_diff_with_a_store(tmp_path):
     store.close()
 
 
+def test_reconstruct_run_computes_pinned_schema_diff_without_a_store():
+    # The pinned fingerprint rides in the observation's own expected text.
+    run = reconstruct_run(
+        _run_row(),
+        [
+            _observation(
+                metric="schema",
+                status="FAIL",
+                value=None,
+                value_text="email:TEXT|id:BIGINT|new_col:TEXT",
+                expected="equals email:TEXT|id:INTEGER",
+            )
+        ],
+    )
+    assert run.results[0].diff == [
+        "+ new_col (TEXT)",
+        "~ id (INTEGER -> BIGINT)",
+    ]
+
+
 def test_reconstruct_run_schema_diff_is_none_without_a_store():
     run = reconstruct_run(
         _run_row(),

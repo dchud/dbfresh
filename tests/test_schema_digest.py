@@ -40,8 +40,47 @@ def test_digest_schema_fail_without_diff_falls_back_to_expected_observed():
         status=Status.FAIL,
     )
     text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
-    assert "✗ s.t · schema — expected equals id:BIGINT" in text
+    assert "✗ s.t · schema — expected equals pinned (1 col)" in text
     assert "observed: 1 col" in text
+
+
+def test_digest_schema_equals_header_summarizes_the_pinned_fingerprint():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="t",
+                metric="schema",
+                status=Status.FAIL,
+                value="email:TEXT|id:BIGINT|name:TEXT",
+                expected="eq email:TEXT|id:INTEGER",
+                diff=["+ name (TEXT)", "~ id (INTEGER -> BIGINT)"],
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "✗ s.t · schema — expected equals pinned (2 cols)" in text
+    assert "+ name (TEXT)" in text
+    assert "email:TEXT" not in text
+
+
+def test_digest_non_schema_equals_is_shown_as_written():
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="t",
+                metric="row_count",
+                status=Status.FAIL,
+                value=4,
+                expected="equals 5",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "✗ s.t · row_count — expected equals 5" in text
 
 
 def test_digest_schema_unchanged_without_diff_shows_a_column_count():

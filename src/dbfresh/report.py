@@ -212,7 +212,8 @@ def render_digest(
         label = result.label or result.metric or "assert"
         header = f"✗ {obj} · {label}"
         if result.expected:
-            header += f" — expected {result.expected}"
+            expected = _display_expected(result.metric, result.expected)
+            header += f" — expected {expected}"
         lines.append("")
         lines.append(header)
         if result.error:
@@ -244,24 +245,31 @@ def _reconstructed_schema_diff(
     obs: dict, store: ObservationReader | None
 ) -> list[str] | None:
     """The schema drift lines for one reconstructed observation, recomputed
-    from persisted fingerprints via ``store`` rather than read back from the
-    observation itself, since a run's ``diff`` is never persisted.
+    from persisted fingerprints rather than read back from the observation
+    itself, since a run's ``diff`` is never persisted.
 
-    ``None`` for anything that isn't a drifted schema ``unchanged``
-    observation: no ``store`` to query, a status other than FAIL/WARN, a
-    metric other than ``schema``, a pinned ``equals`` check (out of scope),
-    or a fingerprint-less (ERROR/SKIPPED) row -- and ``None`` again when
-    ``store`` has no fingerprinted baseline older than this observation to
-    diff against.
+    A pinned ``equals``/``eq`` observation diffs against the fingerprint
+    its own ``expected`` text recorded (:func:`_pinned_fingerprint`) and
+    needs no ``store``. An ``unchanged`` one diffs against
+    ``store.latest_fingerprint_observation`` older than it.
+
+    ``None`` for anything that isn't a drifted schema observation: a status
+    other than FAIL/WARN, a metric other than ``schema``, or a
+    fingerprint-less (ERROR/SKIPPED) row -- and, for ``unchanged``, no
+    ``store`` to query or no fingerprinted baseline older than this
+    observation to diff against.
     """
-    if store is None:
-        return None
-    if obs["metric"] != "schema" or obs.get("expected") != "unchanged":
+    if obs["metric"] != "schema":
         return None
     if Status(obs["status"]) not in (Status.FAIL, Status.WARN):
         return None
     current = obs.get("value_text")
     if current is None:
+        return None
+    pinned = _pinned_fingerprint(obs.get("expected"))
+    if pinned is not None:
+        return diff_fingerprints(current, pinned)
+    if store is None or obs.get("expected") != "unchanged":
         return None
     baseline = store.latest_fingerprint_observation(
         obs["check_id"], before=obs["observed_at"]
@@ -286,12 +294,14 @@ def reconstruct_run(
     every reconstructed ``Result`` has ``samples=None`` -- ``render_digest``
     already falls back to its "observed: <value>" line when both ``samples``
     and ``diff`` are absent. ``diff`` itself is recomputed rather than
-    reread: a FAIL/WARN ``schema`` ``unchanged`` observation's full
-    fingerprint survives in ``value_text``, so when ``store`` is given its
-    drift against ``store.latest_fingerprint_observation``'s baseline is
-    recomputed via :func:`~dbfresh.checks.diff_fingerprints`
-    (:func:`_reconstructed_schema_diff`); every other observation, and any
-    schema observation when ``store`` is omitted, gets ``diff=None``.
+    reread: a FAIL/WARN ``schema`` observation's full fingerprint survives
+    in ``value_text``, so its drift is recomputed via
+    :func:`~dbfresh.checks.diff_fingerprints`
+    (:func:`_reconstructed_schema_diff`) -- against the pinned fingerprint
+    in its ``expected`` text for ``equals``/``eq``, or, when ``store`` is
+    given, against ``store.latest_fingerprint_observation``'s baseline for
+    ``unchanged``. Every other observation, and an ``unchanged`` one when
+    ``store`` is omitted, gets ``diff=None``.
     """
     results = [
         Result(
@@ -373,6 +383,39 @@ def _summarize_fingerprint(fingerprint: str) -> str:
     return f"{n} col{'s' if n != 1 else ''}"
 
 
+_PINNED_OPERATORS = frozenset({"equals", "eq"})
+
+
+def _pinned_fingerprint(expected: str | None) -> str | None:
+    """The fingerprint a schema ``equals``/``eq`` expectation pins, read
+    back from its :meth:`~dbfresh.checks.Expectation.describe` text
+    (``"equals <fingerprint>"``) -- the persisted ``expected`` of the
+    observation, so a row diffs against what it was actually compared to,
+    even if the config has since been re-pinned. ``None`` for ``unchanged``
+    or no expectation. Only meaningful for a schema observation: a numeric
+    ``equals 5`` would read as the fingerprint ``"5"``, so callers check
+    the metric first.
+    """
+    if expected is None:
+        return None
+    operator, _, operand = expected.partition(" ")
+    return operand if operator in _PINNED_OPERATORS else None
+
+
+def _display_expected(metric: str | None, expected: str | None) -> str | None:
+    """``expected`` as a person reads it. A schema ``equals``/``eq``
+    expectation's operand is a whole fingerprint, so it shows as ``equals
+    pinned (<n> cols)`` instead of the raw ``name:type|...`` string; every
+    other expectation is returned unchanged. Display only -- the persisted
+    ``expected`` and the JSON report keep the full text."""
+    if metric != "schema":
+        return expected
+    pinned = _pinned_fingerprint(expected)
+    if pinned is None:
+        return expected
+    return f"equals pinned ({_summarize_fingerprint(pinned)})"
+
+
 def _schema_baselines(
     rows: list[dict], prior_fingerprint: dict | None
 ) -> list[dict | None]:
@@ -402,27 +445,40 @@ _HISTORY_DRIFT_LIMIT = 3
 def _schema_drift_note(
     row: dict, baseline: dict | None, tz: tzinfo | None
 ) -> str | None:
-    """The ``vs <baseline time>: <counts>: <changes>`` suffix for one schema
-    ``unchanged`` row whose fingerprint differs from ``baseline`` -- the
+    """The ``vs <baseline>: <counts>: <changes>`` suffix for one schema row
+    whose fingerprint differs from what it was compared against -- the
     live digest's drift detail, reconstructed at display time via
     :func:`~dbfresh.checks.diff_fingerprints` since a stored observation
     never persists it (:func:`reconstruct_run` recomputes the same detail
     for the reconstructed run digest).
 
-    ``None`` for anything that isn't a drifted ``unchanged`` schema row: a
-    pinned ``equals`` check (out of scope), a fingerprint-less
-    (ERROR/SKIPPED) row, one with no baseline to compare against, or one
-    whose fingerprint actually matches its baseline.
+    An ``unchanged`` row is compared against ``baseline`` and names its
+    time; a pinned ``equals``/``eq`` row is compared against the
+    fingerprint its own ``expected`` text recorded
+    (:func:`_pinned_fingerprint`), reads ``vs pinned``, and ignores
+    ``baseline``. Callers pass only schema rows.
+
+    ``None`` for a fingerprint-less (ERROR/SKIPPED) row, an ``unchanged``
+    row with no baseline to compare against, or a row whose fingerprint
+    actually matches what it was compared against.
     """
     current = row.get("value_text")
-    if (
-        row.get("expected") != "unchanged"
-        or current is None
-        or baseline is None
-        or baseline.get("value_text") is None
-    ):
+    if current is None:
         return None
-    prior = baseline["value_text"]
+    pinned = _pinned_fingerprint(row.get("expected"))
+    if pinned is not None:
+        prior, against = pinned, "pinned"
+    elif (
+        row.get("expected") == "unchanged"
+        and baseline is not None
+        and baseline.get("value_text") is not None
+    ):
+        prior = baseline["value_text"]
+        against = format_timestamp_friendly(
+            datetime.fromisoformat(baseline["observed_at"]), tz
+        )
+    else:
+        return None
     if current == prior:
         return None
     changes = diff_fingerprints(current, prior)
@@ -434,10 +490,7 @@ def _schema_drift_note(
     hidden = len(changes) - _HISTORY_DRIFT_LIMIT
     if hidden > 0:
         listed += f", … {hidden} more"
-    baseline_ts = format_timestamp_friendly(
-        datetime.fromisoformat(baseline["observed_at"]), tz
-    )
-    return f"vs {baseline_ts}: {counts}: {listed}"
+    return f"vs {against}: {counts}: {listed}"
 
 
 def _stored_value_display(
@@ -525,9 +578,11 @@ def render_history(
                 observed,
                 row["status"],
                 display,
-                row.get("expected") or "",
+                _display_expected(metric, row.get("expected")) or "",
                 row.get("error"),
-                _schema_drift_note(row, baseline, tz),
+                _schema_drift_note(row, baseline, tz)
+                if metric == "schema"
+                else None,
             )
         )
     value_width = max([len("value")] + [len(p[2]) for p in prepared])
@@ -605,7 +660,7 @@ def check_expectation_line(check: Check) -> str:
     line = (
         label
         if check.expect is None
-        else f"{label}: {check.expect.describe()}"
+        else f"{label}: {_display_expected(check.metric, check.expect.describe())}"
     )
     if not check.active:
         line = f"{line} · inactive"
@@ -692,7 +747,8 @@ def render_show(
         else:
             detail = _stored_value_display(check.metric, row, tz)
             if row.get("expected"):
-                detail += f" · expected {row['expected']}"
+                expected = _display_expected(check.metric, row["expected"])
+                detail += f" · expected {expected}"
         lines.append(
             f"  {label:<{label_width}}  {row['status']:<8} {observed:<28} "
             f"{detail}"

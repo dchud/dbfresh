@@ -350,6 +350,24 @@ def test_object_detail_schema_with_no_baseline_shows_only_a_column_count(
     asyncio.run(scenario())
 
 
+def test_check_detail_text_pinned_schema_diffs_against_its_expected_text():
+    from dbfresh.tui.screens import _check_detail_text
+
+    obs = {
+        "status": "FAIL",
+        "value": None,
+        "value_text": "email:TEXT|id:INTEGER|new_col:TEXT",
+        "expected": "equals email:TEXT|id:INTEGER",
+        "error": None,
+        "observed_at": "2026-08-26T00:00:00+00:00",
+    }
+    text = _check_detail_text(_schema_check(), obs, UTC)
+    assert text.plain == (
+        "✗ expected equals pinned (2 cols) · observed 3 cols"
+        " · vs pinned: +1 -0 ~0: + new_col (TEXT)"
+    )
+
+
 def test_object_detail_highlighting_an_error_check_shows_the_error_message(
     tmp_path,
 ):

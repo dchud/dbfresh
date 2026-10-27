@@ -29,6 +29,7 @@ from dbfresh.checks import Check, check_id
 from dbfresh.config import Config
 from dbfresh.models import Result, RunResult, Status
 from dbfresh.report import (
+    _display_expected,
     _format_freshness_observed,
     _format_observed,
     _schema_drift_note,
@@ -509,11 +510,15 @@ def _check_detail_text(
 
     A drifted schema observation shows a column count as its observed
     value, then the same baseline and column changes ``render_history``
-    appends to that row (:func:`~dbfresh.report._schema_drift_note`).
-    ``baseline`` is the fingerprinted observation that row is compared
-    against (:meth:`~dbfresh.store.Store.latest_fingerprint_observation`
-    before ``obs``), passed in by the caller so this function stays pure;
-    without one, only the column count shows.
+    appends to that row (:func:`~dbfresh.report._schema_drift_note`). For
+    ``unchanged``, ``baseline`` is the fingerprinted observation that row
+    is compared against
+    (:meth:`~dbfresh.store.Store.latest_fingerprint_observation` before
+    ``obs``), passed in by the caller so this function stays pure; without
+    one, only the column count shows. A pinned ``equals``/``eq`` row
+    compares against the fingerprint in its own ``expected`` text, which
+    shows as a column count too
+    (:func:`~dbfresh.report._display_expected`).
     """
     status = Status(obs["status"])
     text = Text()
@@ -534,10 +539,12 @@ def _check_detail_text(
         observed = _format_freshness_observed(value, reference, tz)
     else:
         observed = _format_observed(check.metric, value)
-    text.append(f"expected {obs['expected']} · observed {observed}")
-    drift = _schema_drift_note(obs, baseline, tz)
-    if drift:
-        text.append(f" · {drift}")
+    expected = _display_expected(check.metric, obs["expected"])
+    text.append(f"expected {expected} · observed {observed}")
+    if check.metric == "schema":
+        drift = _schema_drift_note(obs, baseline, tz)
+        if drift:
+            text.append(f" · {drift}")
     return text
 
 

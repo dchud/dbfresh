@@ -187,3 +187,31 @@ def test_show_reports_a_broken_config(tmp_path, capsys):
     code = main(["show", "orders", "-c", str(cfg)])
     assert code == 3
     assert "config error" in capsys.readouterr().err
+
+
+def test_show_summarizes_a_pinned_schema_expectation():
+    from dbfresh.checks import Check, parse_expectation
+    from dbfresh.report import render_show
+
+    pinned = "email:TEXT|id:INTEGER"
+    check = Check(
+        source="s",
+        object="orders",
+        metric="schema",
+        expect=parse_expectation({"equals": pinned}, "schema"),
+    )
+    row = {
+        "observed_at": "2026-09-24T09:09:00+00:00",
+        "status": "FAIL",
+        "value": None,
+        "value_text": "email:TEXT|id:INTEGER|name:TEXT",
+        "expected": f"equals {pinned}",
+        "error": None,
+    }
+    out = render_show(
+        "s", "orders", None, [check], {check_id(check): row}, UTC
+    )
+    assert out.splitlines()[-1].endswith(
+        "3 cols · expected equals pinned (2 cols)"
+    )
+    assert "email:TEXT" not in out
