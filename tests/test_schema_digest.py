@@ -41,7 +41,27 @@ def test_digest_schema_fail_without_diff_falls_back_to_expected_observed():
     )
     text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
     assert "✗ s.t · schema — expected equals id:BIGINT" in text
-    assert "observed: id:INTEGER" in text
+    assert "observed: 1 col" in text
+
+
+def test_digest_schema_unchanged_without_diff_shows_a_column_count():
+    # No baseline to diff against: the fingerprint itself never prints.
+    run = RunResult(
+        results=[
+            Result(
+                source="s",
+                object="t",
+                metric="schema",
+                status=Status.FAIL,
+                value="email:TEXT|id:BIGINT|name:TEXT",
+                expected="unchanged",
+            ),
+        ],
+        status=Status.FAIL,
+    )
+    text = render_digest(run, now=datetime(2026, 7, 10, tzinfo=UTC))
+    assert "observed: 3 cols" in text
+    assert "email:TEXT" not in text
 
 
 def test_digest_schema_error_shows_message_not_diff():

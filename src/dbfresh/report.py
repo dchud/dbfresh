@@ -141,7 +141,12 @@ def _format_observed(metric: str | None, value: Any) -> str:
 
     Freshness is handled separately (:func:`_format_freshness_observed`) --
     its value is a lag in seconds needing a duration, not a plain number.
+    A schema fingerprint becomes a column count
+    (:func:`_summarize_fingerprint`): what changed is the drift diff's job,
+    and the raw ``name:type|...`` string is unreadable at any width.
     """
+    if metric == "schema" and isinstance(value, str):
+        return _summarize_fingerprint(value)
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return str(value)
     if metric in _INTEGER_METRICS:
@@ -360,10 +365,10 @@ _HISTORY_EXPECTED_WIDTH = 24
 
 def _summarize_fingerprint(fingerprint: str) -> str:
     """A schema fingerprint (``name:type|name:type|...``) shown as a column
-    count. The full column list would dwarf every other value in the table,
-    and the run digest's schema diff already carries that detail; here only
-    the shape matters. An empty fingerprint (nothing reflected) reads as
-    ``0 cols``."""
+    count. The full column list would dwarf every other value on its line,
+    and the schema drift diff already carries the column-level detail;
+    wherever an observed value is shown, only the shape matters. An empty
+    fingerprint (nothing reflected) reads as ``0 cols``."""
     n = fingerprint.count("|") + 1 if fingerprint else 0
     return f"{n} col{'s' if n != 1 else ''}"
 
@@ -446,7 +451,7 @@ def _stored_value_display(
     ``observed_at`` is the "now" that produced the lag, the role
     ``run.started_at`` plays there, rendered in the same friendly form as
     the ``observed_at`` column rather than the digest's ISO. A schema
-    fingerprint becomes a column count.
+    fingerprint becomes a column count, via :func:`_format_observed`.
     """
     value = row["value"] if row["value"] is not None else row["value_text"]
     if metric == "freshness" and isinstance(value, (int, float)):
@@ -454,8 +459,6 @@ def _stored_value_display(
         return _format_freshness_observed(
             value, reference, tz, format_timestamp_friendly
         )
-    if metric == "schema" and isinstance(value, str) and value:
-        return _summarize_fingerprint(value)
     return _format_observed(metric, value)
 
 
